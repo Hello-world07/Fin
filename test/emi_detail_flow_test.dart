@@ -2,7 +2,6 @@ import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:personal_finance/src/core/formatters.dart';
 import 'package:personal_finance/src/core/providers.dart';
 import 'package:personal_finance/src/data/database.dart';
 import 'package:personal_finance/src/data/repositories.dart';
@@ -43,41 +42,30 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(
-      find.text('Mark November 2026 EMI paid early • ${formatMoney(500000)}'),
-      findsOneWidget,
-    );
-    await tester.tap(
-      find.text('Mark November 2026 EMI paid early • ${formatMoney(500000)}'),
-    );
+    expect(find.text('Mark November 2026 paid'), findsOneWidget);
+    expect(find.text('Pay early'), findsOneWidget);
+    await tester.tap(find.text('Pay early'));
     await tester.pumpAndSettle();
-    expect(find.textContaining('Originally due: 01 Nov 2026'), findsOneWidget);
-    expect(find.textContaining('Installment 1'), findsNWidgets(2));
+    expect(find.textContaining('due 01 Nov 2026'), findsOneWidget);
     expect(find.text('18 Dec 2026'), findsNothing);
-    await tester.tap(find.text('Mark as paid • ${formatMoney(500000)}'));
+    await tester.tap(find.text('Mark paid'));
     await tester.pumpAndSettle();
 
     expect(find.text('Scheduled: 01 Nov 2026'), findsOneWidget);
-    expect(find.textContaining('Paid early:'), findsOneWidget);
-    expect(
-      find.text('Mark December 2026 EMI paid early • ${formatMoney(500000)}'),
-      findsOneWidget,
-    );
-    expect(find.textContaining('Originally due: 01 Dec 2026'), findsNothing);
+    expect(find.text('Paid early'), findsOneWidget);
+    expect(find.text('Mark December 2026 paid'), findsOneWidget);
+    expect(find.textContaining('due 01 Dec 2026'), findsNothing);
 
-    await tester.tap(
-      find.text('Mark December 2026 EMI paid early • ${formatMoney(500000)}'),
-    );
+    await tester.tap(find.text('Pay early'));
     await tester.pumpAndSettle();
-    expect(find.textContaining('Originally due: 01 Dec 2026'), findsOneWidget);
-    await tester.tap(find.text('Mark as paid • ${formatMoney(500000)}'));
+    expect(find.textContaining('due 01 Dec 2026'), findsOneWidget);
+    await tester.tap(find.text('Mark paid'));
     await tester.pumpAndSettle();
 
-    expect(
-      find.text('Mark December 2026 EMI paid early • ${formatMoney(500000)}'),
-      findsNothing,
-    );
+    expect(find.text('Mark December 2026 paid'), findsNothing);
     expect(find.text('Scheduled: 01 Dec 2026'), findsOneWidget);
     expect((await repository.emiDetail(emiId)).payments, hasLength(2));
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 1));
   });
 }

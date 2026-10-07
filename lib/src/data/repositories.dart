@@ -192,9 +192,9 @@ class FinanceRepository {
           subscriptions.add(stream.listen((_) => emit()));
         }
       },
-      onCancel: () async {
+      onCancel: () {
         for (final subscription in subscriptions) {
-          await subscription.cancel();
+          unawaited(subscription.cancel());
         }
       },
     );
@@ -251,9 +251,9 @@ class FinanceRepository {
           subscriptions.add(stream.listen((_) => emit()));
         }
       },
-      onCancel: () async {
+      onCancel: () {
         for (final subscription in subscriptions) {
-          await subscription.cancel();
+          unawaited(subscription.cancel());
         }
       },
     );
@@ -809,6 +809,60 @@ class FinanceRepository {
     });
   }
 
+  Future<bool> revertEmiPayment(int emiId, int paymentId) async {
+    return db.transaction(() async {
+      final emi = await (db.select(
+        db.emis,
+      )..where((t) => t.id.equals(emiId))).getSingleOrNull();
+      final payment =
+          await (db.select(db.emiPayments)
+                ..where((t) => t.id.equals(paymentId) & t.emiId.equals(emiId)))
+              .getSingleOrNull();
+      if (emi == null || payment == null || await _isEmiArchived(emiId)) {
+        return false;
+      }
+      await (db.delete(
+        db.emiPayments,
+      )..where((t) => t.id.equals(paymentId))).go();
+      final remainingPayments = await (db.select(
+        db.emiPayments,
+      )..where((t) => t.emiId.equals(emiId))).get();
+      final paidNumbers =
+          remainingPayments.map((item) => item.installmentNumber).toSet()
+            ..addAll(
+              Iterable<int>.generate(
+                emi.initialPaidInstallments,
+                (index) => index + 1,
+              ),
+            );
+      final schedule = buildEmiInstallments(
+        startDate: emi.startDate,
+        tenure: emi.tenureMonths,
+        frequency: emi.frequency,
+        paidInstallmentNumbers: paidNumbers,
+        alreadyPaidCount: emi.initialPaidInstallments,
+      );
+      final next = schedule.where((item) => !item.isPaid).firstOrNull;
+      await (db.update(db.emis)..where((t) => t.id.equals(emiId))).write(
+        EmisCompanion(
+          status: Value(next == null ? EmiStatus.completed : EmiStatus.active),
+          nextDueDate: next == null
+              ? const Value.absent()
+              : Value(next.dueDate),
+          updatedAt: Value(DateTime.now()),
+        ),
+      );
+      await _logActivity(
+        type: ActivityType.emiEdited,
+        title: 'EMI Payment Reverted',
+        description: '${emi.name} · installment ${payment.installmentNumber}',
+        entityType: 'emi',
+        entityId: emiId,
+      );
+      return true;
+    });
+  }
+
   Future<int> saveMoneyRecord(MoneyRecordsCompanion item) async {
     final isEdit = item.id.present;
     if (isEdit) {
@@ -864,12 +918,11 @@ class FinanceRepository {
             ? ActivityType.moneyGiven
             : ActivityType.moneyBorrowed,
         title: isEdit
-            ? 'Money Record Edited'
+            ? 'Updated ${displayName(saved.personName)}\'s record'
             : saved.direction == MoneyDirection.given
-            ? 'Money Given'
-            : 'Money Borrowed',
-        description:
-            '${displayName(saved.personName)} · ${formatMoney(saved.amountPaise)}',
+            ? 'You gave ${displayName(saved.personName)} ${formatMoney(saved.amountPaise)}'
+            : 'You borrowed ${formatMoney(saved.amountPaise)} from ${displayName(saved.personName)}',
+        description: saved.notes,
         entityType: 'money',
         entityId: id,
       );
@@ -885,14 +938,38 @@ class FinanceRepository {
     await db.transaction(() async {
       await _logActivity(
         type: ActivityType.moneyDeleted,
-        title: 'Money Record Deleted',
-        description: existing.personName,
+        title: 'Deleted ${displayName(existing.personName)}\'s record',
+        description: null,
         entityType: 'money',
         entityId: id,
       );
       await (db.delete(
         db.moneyRecords,
       )..where((item) => item.id.equals(id))).go();
+    });
+  }
+
+  Future<void> updateMoneyDueDate(int id, DateTime dueDate) async {
+    await db.transaction(() async {
+      final record = await (db.select(
+        db.moneyRecords,
+      )..where((item) => item.id.equals(id))).getSingleOrNull();
+      if (record == null) throw StateError('Money record no longer exists');
+      await (db.update(
+        db.moneyRecords,
+      )..where((item) => item.id.equals(id))).write(
+        MoneyRecordsCompanion(
+          dueDate: Value(dueDate),
+          updatedAt: Value(DateTime.now()),
+        ),
+      );
+      await _logActivity(
+        type: ActivityType.moneyEdited,
+        title: 'Extended ${displayName(record.personName)}\'s due date',
+        description: 'Now due ${formatDate(dueDate)}',
+        entityType: 'money',
+        entityId: id,
+      );
     });
   }
 
@@ -933,9 +1010,10 @@ class FinanceRepository {
           );
       await _logActivity(
         type: ActivityType.moneyRepayment,
-        title: 'Repayment Recorded',
-        description:
-            '${displayName(record.personName)} · ${formatMoney(amountPaise)}',
+        title: record.direction == MoneyDirection.given
+            ? '${displayName(record.personName)} repaid ${formatMoney(amountPaise)}'
+            : 'You repaid ${formatMoney(amountPaise)} to ${displayName(record.personName)}',
+        description: notes,
         entityType: 'money',
         entityId: moneyRecordId,
       );

@@ -1,7 +1,7 @@
 import 'package:drift/drift.dart' hide Column;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../../core/formatters.dart';
 import '../../core/app_theme.dart';
@@ -9,11 +9,13 @@ import '../../core/providers.dart';
 import '../../data/database.dart';
 import '../../data/repositories.dart';
 import '../../domain/enums.dart';
+import '../../domain/due_status.dart';
 import '../../shared/async_view.dart';
 import '../../shared/calculator_sheet.dart';
 import '../../shared/empty_state.dart';
 import '../../shared/forms.dart';
 import '../../shared/finance_form_widgets.dart';
+import '../../shared/finance_display_widgets.dart';
 
 class MoneyScreen extends ConsumerStatefulWidget {
   const MoneyScreen({super.key});
@@ -23,6 +25,79 @@ class MoneyScreen extends ConsumerStatefulWidget {
 }
 
 enum _MoneyFilter { all, unpaid, partial, overdue, settled }
+
+class _PersonBalance {
+  _PersonBalance(this.name, this.records);
+
+  final String name;
+  final List<MoneyRecordDetail> records;
+
+  int get total =>
+      records.fold(0, (sum, item) => sum + item.record.amountPaise);
+  int get remaining =>
+      records.fold(0, (sum, item) => sum + item.summary.remainingAmountPaise);
+  int get repaid => total - remaining;
+  DateTime? get nearestDue {
+    final dates =
+        records
+            .where(
+              (item) =>
+                  item.summary.remainingAmountPaise > 0 &&
+                  item.record.dueDate != null,
+            )
+            .map((item) => item.record.dueDate!)
+            .toList()
+          ..sort();
+    return dates.firstOrNull;
+  }
+
+  bool get overdue =>
+      remaining > 0 &&
+      nearestDue != null &&
+      DateTime(nearestDue!.year, nearestDue!.month, nearestDue!.day).isBefore(
+        DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day),
+      );
+
+  String get statusLabel {
+    if (remaining == 0) return 'Settled';
+    if (overdue) return 'Overdue';
+    if (repaid > 0) return 'Partially paid';
+    if (nearestDue != null) {
+      final relative = relativeDueText(nearestDue!, DateTime.now());
+      return relative.startsWith('in ') ? 'Due $relative' : relative;
+    }
+    return 'Unpaid';
+  }
+}
+
+List<_PersonBalance> _groupMoneyRecords(List<MoneyRecordDetail> records) {
+  final grouped = <String, List<MoneyRecordDetail>>{};
+  for (final item in records) {
+    grouped
+        .putIfAbsent(item.record.personName.trim().toLowerCase(), () => [])
+        .add(item);
+  }
+  final people = [
+    for (final group in grouped.values)
+      _PersonBalance(group.first.record.personName.trim(), group),
+  ];
+  people.sort((a, b) {
+    if (a.overdue != b.overdue) return a.overdue ? -1 : 1;
+    if ((a.remaining == 0) != (b.remaining == 0)) {
+      return a.remaining == 0 ? 1 : -1;
+    }
+    final aDue = a.nearestDue;
+    final bDue = b.nearestDue;
+    if (aDue == null && bDue != null) return 1;
+    if (aDue != null && bDue == null) return -1;
+    if (aDue != null && bDue != null) {
+      final order = aDue.compareTo(bDue);
+      if (order != 0) return order;
+    }
+    return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+  });
+  return people;
+}
 
 class _MoneyScreenState extends ConsumerState<MoneyScreen> {
   MoneyDirection _direction = MoneyDirection.given;
@@ -61,22 +136,17 @@ class _MoneyScreenState extends ConsumerState<MoneyScreen> {
               ? coming
               : payable;
           final query = _search.text.trim().toLowerCase();
-          final visible = selected.where((item) {
-            final status = item.summary.status;
+          final people = _groupMoneyRecords(selected);
+          final visible = people.where((person) {
             final matchesFilter = switch (_filter) {
               _MoneyFilter.all => true,
-              _MoneyFilter.unpaid =>
-                status != MoneyStatus.settled &&
-                    item.summary.repaidAmountPaise == 0,
-              _MoneyFilter.partial =>
-                item.summary.repaidAmountPaise > 0 &&
-                    status != MoneyStatus.settled,
-              _MoneyFilter.overdue => status == MoneyStatus.overdue,
-              _MoneyFilter.settled => status == MoneyStatus.settled,
+              _MoneyFilter.unpaid => person.remaining > 0 && person.repaid == 0,
+              _MoneyFilter.partial => person.remaining > 0 && person.repaid > 0,
+              _MoneyFilter.overdue => person.overdue,
+              _MoneyFilter.settled => person.remaining == 0,
             };
             return matchesFilter &&
-                (query.isEmpty ||
-                    item.record.personName.toLowerCase().contains(query));
+                (query.isEmpty || person.name.toLowerCase().contains(query));
           }).toList();
           final originalTotal = selected.fold<int>(
             0,
@@ -90,7 +160,7 @@ class _MoneyScreenState extends ConsumerState<MoneyScreen> {
           return ListView(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
             children: [
-              SegmentedButton<MoneyDirection>(
+              SegmentedToggle<MoneyDirection>(
                 segments: const [
                   ButtonSegment(
                     value: MoneyDirection.given,
@@ -102,24 +172,35 @@ class _MoneyScreenState extends ConsumerState<MoneyScreen> {
                   ),
                 ],
                 selected: {_direction},
+                filled: true,
+                selectedBackground: _direction == MoneyDirection.given
+                    ? financeSelectedFill(context)
+                    : AppTheme.pay.withValues(alpha: 0.12),
+                selectedForeground: _direction == MoneyDirection.given
+                    ? AppTheme.seed
+                    : AppTheme.pay,
                 onSelectionChanged: (value) =>
                     setState(() => _direction = value.single),
               ),
               const SizedBox(height: 20),
               Text(
-                _direction == MoneyDirection.given
-                    ? 'TOTAL TO RECEIVE'
-                    : 'TOTAL TO PAY',
+                _direction == MoneyDirection.given ? 'TO RECEIVE' : 'TO PAY',
                 style: Theme.of(context).textTheme.labelLarge?.copyWith(
                   color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
               ),
               const SizedBox(height: 3),
-              Text(
-                formatMoney(outstanding),
+              AmountText(
+                outstanding,
                 style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                   fontWeight: FontWeight.w800,
                 ),
+              ),
+              const SizedBox(height: 16),
+              _MoneySplitBar(
+                repaid: repaid,
+                outstanding: outstanding,
+                direction: _direction,
               ),
               const SizedBox(height: 14),
               Row(
@@ -146,15 +227,16 @@ class _MoneyScreenState extends ConsumerState<MoneyScreen> {
               TextField(
                 controller: _search,
                 onChanged: (_) => setState(() {}),
-                decoration: const InputDecoration(
-                  hintText: 'Search people',
-                  prefixIcon: Icon(Icons.search),
-                  isDense: true,
+                decoration: financeFieldDecoration(
+                  context,
+                  hint: 'Search people',
+                  icon: Icons.search,
                 ),
               ),
               const SizedBox(height: 10),
               SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
+                clipBehavior: Clip.none,
                 child: Row(
                   children: [
                     for (final entry in const [
@@ -170,6 +252,8 @@ class _MoneyScreenState extends ConsumerState<MoneyScreen> {
                           label: Text(entry.$2),
                           selected: _filter == entry.$1,
                           onSelected: (_) => setState(() => _filter = entry.$1),
+                          selectedColor: financeSelectedFill(context),
+                          side: BorderSide.none,
                         ),
                       ),
                     ],
@@ -191,7 +275,10 @@ class _MoneyScreenState extends ConsumerState<MoneyScreen> {
                   ),
                 )
               else
-                for (final item in visible) _MoneyRecordTile(item: item),
+                for (final person in visible) ...[
+                  _MoneyPersonTile(person: person, direction: _direction),
+                  const Divider(height: 1),
+                ],
             ],
           );
         },
@@ -213,17 +300,14 @@ class _SummaryValue extends StatelessWidget {
       children: [
         Text(label, style: Theme.of(context).textTheme.labelSmall),
         const SizedBox(height: 4),
-        Text(
-          formatMoney(value),
-          style: Theme.of(context).textTheme.titleSmall?.copyWith(
-            fontWeight: FontWeight.w800,
-            color: label == 'Net position'
-                ? value > 0
-                      ? Theme.of(context).colorScheme.tertiary
-                      : value < 0
-                      ? Theme.of(context).colorScheme.error
-                      : Theme.of(context).colorScheme.onSurface
-                : null,
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: AmountText(
+            value,
+            style: Theme.of(
+              context,
+            ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
           ),
         ),
       ],
@@ -231,85 +315,273 @@ class _SummaryValue extends StatelessWidget {
   }
 }
 
-class _MoneyRecordTile extends StatelessWidget {
-  const _MoneyRecordTile({required this.item});
+class _MoneySplitBar extends StatelessWidget {
+  const _MoneySplitBar({
+    required this.repaid,
+    required this.outstanding,
+    required this.direction,
+  });
+  final int repaid;
+  final int outstanding;
+  final MoneyDirection direction;
 
-  final MoneyRecordDetail item;
+  @override
+  Widget build(BuildContext context) => Column(
+    children: [
+      ClipRRect(
+        borderRadius: BorderRadius.circular(4),
+        child: SizedBox(
+          height: 6,
+          child: Row(
+            children: [
+              if (repaid + outstanding == 0)
+                Expanded(
+                  child: ColoredBox(
+                    color: Theme.of(context).colorScheme.outlineVariant,
+                  ),
+                )
+              else ...[
+                if (repaid > 0)
+                  Expanded(
+                    flex: repaid,
+                    child: const ColoredBox(color: AppTheme.receive),
+                  ),
+                if (outstanding > 0)
+                  Expanded(
+                    flex: outstanding,
+                    child: ColoredBox(
+                      color: direction == MoneyDirection.given
+                          ? AppTheme.seed
+                          : AppTheme.pay,
+                    ),
+                  ),
+              ],
+            ],
+          ),
+        ),
+      ),
+      const SizedBox(height: 6),
+      Row(
+        children: [
+          Expanded(
+            child: Text(
+              '${direction == MoneyDirection.given ? 'Received' : 'Paid'} ${formatMoney(repaid)}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(
+                context,
+              ).textTheme.labelSmall?.copyWith(color: AppTheme.mutedText),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Outstanding ${formatMoney(outstanding)}',
+              textAlign: TextAlign.end,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(
+                context,
+              ).textTheme.labelSmall?.copyWith(color: AppTheme.mutedText),
+            ),
+          ),
+        ],
+      ),
+    ],
+  );
+}
+
+class _MoneyPersonTile extends StatelessWidget {
+  const _MoneyPersonTile({required this.person, required this.direction});
+
+  final _PersonBalance person;
+  final MoneyDirection direction;
 
   @override
   Widget build(BuildContext context) {
-    final paid = item.summary.repaidAmountPaise;
-    final total = item.record.amountPaise;
-    final progress = total == 0 ? 0.0 : (paid / total).clamp(0.0, 1.0);
-    final actionWord = item.record.direction == MoneyDirection.given
-        ? 'Received'
-        : 'Paid';
-    final settled = item.summary.status == MoneyStatus.settled;
-    final statusText = settled
-        ? 'Settled'
-        : item.record.dueDate == null
-        ? item.summary.status.label
-        : '${item.summary.status.label} · Due ${formatDate(item.record.dueDate!)}';
-    final statusColor = item.summary.status == MoneyStatus.overdue
-        ? Theme.of(context).colorScheme.error
-        : Theme.of(context).colorScheme.onSurfaceVariant;
+    final progress = person.total == 0 ? 0.0 : person.repaid / person.total;
+    final statusColor = person.remaining == 0
+        ? AppTheme.receive
+        : person.overdue
+        ? AppTheme.pay
+        : person.repaid > 0
+        ? AppTheme.seed
+        : person.nearestDue != null
+        ? AppTheme.emi
+        : AppTheme.seed;
     return InkWell(
       onTap: () => Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => MoneyDetailScreen(item.record.id)),
+        MaterialPageRoute(
+          builder: (_) => person.records.length == 1
+              ? MoneyDetailScreen(person.records.single.record.id)
+              : MoneyPersonScreen(person.name, direction),
+        ),
       ),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 14),
-        child: Column(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    displayName(item.record.personName),
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
+            CircleAvatar(
+              radius: 22,
+              backgroundColor: financeSelectedFill(context),
+              child: Text(
+                displayName(person.name).characters.first,
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  color: AppTheme.seed,
+                  fontWeight: FontWeight.w800,
                 ),
-                Text(
-                  formatMoney(item.summary.remainingAmountPaise),
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 3),
-            Text(
-              '$statusText · $actionWord ${formatMoney(paid)} of ${formatMoney(total)}',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: statusColor,
-                fontWeight: FontWeight.w600,
               ),
             ),
-            const SizedBox(height: 9),
-            LinearProgressIndicator(value: progress, minHeight: 4),
-            const SizedBox(height: 5),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    '${formatMoney(item.summary.remainingAmountPaise)} remaining',
-                    style: Theme.of(context).textTheme.bodySmall,
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          displayName(person.name),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(fontWeight: FontWeight.w800),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerRight,
+                          child: AmountText(
+                            person.remaining,
+                            style: Theme.of(context).textTheme.titleMedium
+                                ?.copyWith(fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                ),
-                Text(
-                  '${(progress * 100).round()}% ${settled ? 'settled' : 'repaid'}',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ],
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      if (person.records.length > 1) ...[
+                        Text(
+                          '${person.records.length} records',
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(color: AppTheme.mutedText),
+                        ),
+                        const SizedBox(width: 8),
+                      ],
+                      StatusPill(label: person.statusLabel, color: statusColor),
+                    ],
+                  ),
+                  if (person.nearestDue != null &&
+                      person.repaid > 0 &&
+                      !person.overdue) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      relativeDueText(person.nearestDue!, DateTime.now()),
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: AppTheme.mutedText,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 10),
+                  LinearProgressIndicator(
+                    value: progress,
+                    minHeight: 5,
+                    borderRadius: BorderRadius.circular(3),
+                    color: direction == MoneyDirection.given
+                        ? AppTheme.receive
+                        : AppTheme.pay,
+                    backgroundColor: Theme.of(
+                      context,
+                    ).colorScheme.outlineVariant,
+                  ),
+                ],
+              ),
             ),
           ],
         ),
       ),
     );
   }
+}
+
+class MoneyPersonScreen extends ConsumerWidget {
+  const MoneyPersonScreen(this.personName, this.direction, {super.key});
+  final String personName;
+  final MoneyDirection direction;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) => Scaffold(
+    appBar: AppBar(title: Text(displayName(personName))),
+    body: AsyncView(
+      value: ref.watch(moneyRecordsProvider),
+      builder: (items) {
+        final records = items
+            .where(
+              (item) =>
+                  item.record.direction == direction &&
+                  item.record.personName.trim().toLowerCase() ==
+                      personName.trim().toLowerCase(),
+            )
+            .toList();
+        if (records.isEmpty) {
+          return const EmptyState(
+            icon: Icons.person_outline,
+            title: 'No records',
+            message: 'There are no records for this person.',
+          );
+        }
+        records.sort((a, b) {
+          final aDue = a.record.dueDate ?? DateTime(9999);
+          final bDue = b.record.dueDate ?? DateTime(9999);
+          return aDue.compareTo(bDue);
+        });
+        final person = _PersonBalance(personName, records);
+        return ListView(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
+          children: [
+            const FinanceFieldLabel('NET BALANCE'),
+            const SizedBox(height: 4),
+            AmountText(
+              person.remaining,
+              style: Theme.of(
+                context,
+              ).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 24),
+            for (final item in records) ...[
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(
+                  formatMoney(item.summary.remainingAmountPaise),
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                subtitle: Text(
+                  item.record.dueDate == null
+                      ? 'No due date · ${formatDate(item.record.recordDate)}'
+                      : 'Due ${formatDate(item.record.dueDate!)} · ${formatDate(item.record.recordDate)}',
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => MoneyDetailScreen(item.record.id),
+                  ),
+                ),
+              ),
+              const Divider(height: 1),
+            ],
+          ],
+        );
+      },
+    ),
+  );
 }
 
 class MoneyDetailScreen extends ConsumerWidget {
@@ -387,57 +659,39 @@ class MoneyDetailScreen extends ConsumerWidget {
               ),
             ],
           ),
-          floatingActionButton:
-              detail == null || detail.summary.remainingAmountPaise == 0
-              ? null
-              : FloatingActionButton.extended(
-                  onPressed: () => openFinanceSheet(
-                    context,
-                    RepaymentSheet(
-                      recordId: id,
-                      remainingPaise: detail.summary.remainingAmountPaise,
-                    ),
-                  ),
-                  icon: const Icon(Icons.payments_outlined),
-                  label: const Text('Repayment'),
-                ),
           body: detail == null
-              ? const Center(child: CircularProgressIndicator())
+              ? Center(
+                  child: snapshot.hasData
+                      ? const Text('Record not found')
+                      : const CircularProgressIndicator(),
+                )
               : ListView(
-                  padding: const EdgeInsets.all(20),
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
                   children: [
                     Text(
-                      detail.summary.status.label.toUpperCase(),
-                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                        color: detail.summary.status == MoneyStatus.overdue
-                            ? Theme.of(context).colorScheme.error
-                            : Theme.of(context).colorScheme.onSurfaceVariant,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
                       _headline(detail),
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 18),
-                    Text(
-                      formatMoney(detail.record.amountPaise),
-                      style: Theme.of(context).textTheme.headlineMedium
+                      style: Theme.of(context).textTheme.headlineSmall
                           ?.copyWith(fontWeight: FontWeight.w800),
                     ),
-                    const SizedBox(height: 12),
-                    LinearProgressIndicator(
-                      value: detail.record.amountPaise == 0
-                          ? 0
-                          : (detail.summary.repaidAmountPaise /
-                                    detail.record.amountPaise)
-                                .clamp(0.0, 1.0),
-                      minHeight: 5,
+                    const SizedBox(height: 22),
+                    Center(
+                      child: MiniProgressRing(
+                        progress:
+                            detail.summary.repaidAmountPaise /
+                            detail.record.amountPaise,
+                        size: 140,
+                        strokeWidth: 11,
+                        backgroundColor: Theme.of(
+                          context,
+                        ).colorScheme.outlineVariant,
+                        child: Text(
+                          '${(detail.summary.repaidAmountPaise * 100 / detail.record.amountPaise).round()}%',
+                          style: Theme.of(context).textTheme.headlineMedium
+                              ?.copyWith(fontWeight: FontWeight.w800),
+                        ),
+                      ),
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 24),
                     Row(
                       children: [
                         Expanded(
@@ -455,63 +709,91 @@ class MoneyDetailScreen extends ConsumerWidget {
                             value: detail.summary.remainingAmountPaise,
                           ),
                         ),
+                        Expanded(
+                          child: _SummaryValue(
+                            label: 'Original',
+                            value: detail.record.amountPaise,
+                          ),
+                        ),
                       ],
                     ),
-                    const SizedBox(height: 18),
-                    _MoneyDetailLine(
-                      'Due date',
-                      detail.record.dueDate == null
-                          ? 'Not set'
-                          : formatDate(detail.record.dueDate!),
-                    ),
-                    _MoneyDetailLine(
-                      'Record date',
-                      formatDate(detail.record.recordDate),
-                    ),
-                    _MoneyDetailLine('Status', detail.summary.status.label),
-                    if (detail.record.notes?.isNotEmpty == true)
-                      _MoneyDetailLine('Notes', detail.record.notes!),
-                    const SizedBox(height: 24),
+                    if (detail.record.dueDate != null) ...[
+                      const SizedBox(height: 18),
+                      Text(
+                        'Due ${formatDate(detail.record.dueDate!)}',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: AppTheme.mutedText,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 28),
                     Text(
-                      'Repayment history',
-                      style: Theme.of(context).textTheme.titleMedium,
+                      'History',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
-                    if (detail.repayments.isEmpty)
-                      const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 16),
-                        child: Text('No repayments yet'),
-                      ),
-                    for (
-                      var index = 0;
-                      index < detail.repayments.length;
-                      index++
-                    )
-                      ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        leading: CircleAvatar(
-                          radius: 17,
-                          child: Text('${index + 1}'),
-                        ),
-                        title: Text(
-                          '${formatMoney(detail.repayments[index].amountPaise)} ${detail.record.direction == MoneyDirection.given ? 'received' : 'paid'}',
-                        ),
-                        subtitle: Text(
-                          '${formatDateTime(detail.repayments[index].paidOn)}${detail.repayments[index].notes?.isNotEmpty == true ? ' · ${detail.repayments[index].notes}' : ''}',
-                        ),
-                      ),
-                    const Divider(height: 28),
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const CircleAvatar(
-                        radius: 17,
-                        child: Icon(Icons.add, size: 18),
-                      ),
-                      title: Text(
-                        'Record created · ${formatMoney(detail.record.amountPaise)}',
-                      ),
-                      subtitle: Text(formatDate(detail.record.recordDate)),
-                    ),
+                    const SizedBox(height: 14),
+                    _MoneyTimeline(detail: detail),
                   ],
+                ),
+          bottomNavigationBar:
+              detail == null || detail.summary.remainingAmountPaise == 0
+              ? null
+              : SafeArea(
+                  top: false,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 10, 20, 14),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton.icon(
+                            style: FilledButton.styleFrom(
+                              minimumSize: const Size.fromHeight(52),
+                              shape: const StadiumBorder(),
+                            ),
+                            onPressed: () => openFinanceSheet(
+                              context,
+                              RepaymentSheet(
+                                recordId: id,
+                                remainingPaise:
+                                    detail.summary.remainingAmountPaise,
+                              ),
+                            ),
+                            icon: const Icon(Icons.add),
+                            label: const Text('Add repayment'),
+                          ),
+                        ),
+                        Wrap(
+                          alignment: WrapAlignment.center,
+                          spacing: 4,
+                          children: [
+                            TextButton(
+                              onPressed: () =>
+                                  _settleFully(context, ref, detail),
+                              child: const Text('Settle fully'),
+                            ),
+                            TextButton(
+                              onPressed: () =>
+                                  _extendDueDate(context, ref, detail),
+                              child: const Text('Extend due date'),
+                            ),
+                            if (detail.record.direction == MoneyDirection.given)
+                              TextButton.icon(
+                                onPressed: () => _sendReminder(context, detail),
+                                icon: const Icon(
+                                  Icons.share_outlined,
+                                  size: 18,
+                                ),
+                                label: const Text('Send reminder'),
+                              ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
         );
       },
@@ -519,37 +801,301 @@ class MoneyDetailScreen extends ConsumerWidget {
   }
 
   String _headline(MoneyRecordDetail detail) {
-    if (detail.record.direction == MoneyDirection.given) {
-      return '${displayName(detail.record.personName)} owes me ${formatMoney(detail.summary.remainingAmountPaise)}';
+    if (detail.summary.remainingAmountPaise == 0) {
+      return detail.record.direction == MoneyDirection.given
+          ? '${displayName(detail.record.personName)} has settled this record'
+          : 'You settled your balance with ${displayName(detail.record.personName)}';
     }
-    return 'I owe ${displayName(detail.record.personName)} ${formatMoney(detail.summary.remainingAmountPaise)}';
+    final due = detail.record.dueDate;
+    final relative = due == null ? null : relativeDueText(due, DateTime.now());
+    final when = relative == null
+        ? ''
+        : relative.startsWith('Overdue')
+        ? ' · ${relative.toLowerCase()}'
+        : relative.startsWith('Due')
+        ? ' · ${relative.toLowerCase()}'
+        : ' · due $relative';
+    if (detail.record.direction == MoneyDirection.given) {
+      return '${displayName(detail.record.personName)} owes you ${formatMoney(detail.summary.remainingAmountPaise)}$when';
+    }
+    return 'You owe ${displayName(detail.record.personName)} ${formatMoney(detail.summary.remainingAmountPaise)}$when';
+  }
+
+  Future<void> _settleFully(
+    BuildContext context,
+    WidgetRef ref,
+    MoneyRecordDetail detail,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Settle this record?'),
+        content: Text(
+          'Record ${formatMoney(detail.summary.remainingAmountPaise)} as repaid in full? This does not transfer money.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Settle fully'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await ref
+          .read(financeRepositoryProvider)
+          .addRepayment(
+            id,
+            detail.summary.remainingAmountPaise,
+            'Settled in full',
+            DateTime.now(),
+          );
+    } catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not settle record: $error')),
+        );
+      }
+    }
+  }
+
+  Future<void> _extendDueDate(
+    BuildContext context,
+    WidgetRef ref,
+    MoneyRecordDetail detail,
+  ) async {
+    final choice = await showModalBottomSheet<int>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const ListTile(title: Text('Extend due date')),
+            ListTile(
+              title: const Text('+7 days'),
+              onTap: () => Navigator.pop(context, 7),
+            ),
+            ListTile(
+              title: const Text('+30 days'),
+              onTap: () => Navigator.pop(context, 30),
+            ),
+            ListTile(
+              title: const Text('Custom date'),
+              onTap: () => Navigator.pop(context, 0),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (choice == null || !context.mounted) return;
+    final base =
+        detail.record.dueDate != null &&
+            detail.record.dueDate!.isAfter(DateTime.now())
+        ? detail.record.dueDate!
+        : DateTime.now();
+    final date = choice == 0
+        ? await pickAppDate(context, base)
+        : DateTime(base.year, base.month, base.day + choice);
+    if (date == null) return;
+    try {
+      await ref.read(financeRepositoryProvider).updateMoneyDueDate(id, date);
+    } catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not extend due date: $error')),
+        );
+      }
+    }
+  }
+
+  Future<void> _sendReminder(
+    BuildContext context,
+    MoneyRecordDetail detail,
+  ) async {
+    var message =
+        'Hi ${displayName(detail.record.personName)}, a gentle reminder about ${formatMoney(detail.summary.remainingAmountPaise)}${detail.record.dueDate == null ? '' : ' due on ${formatDate(detail.record.dueDate!)}'}. Thank you!';
+    final text = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Send reminder'),
+        content: TextFormField(
+          initialValue: message,
+          onChanged: (value) => message = value,
+          minLines: 3,
+          maxLines: 6,
+          decoration: financeFieldDecoration(context),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, message.trim()),
+            child: const Text('Share'),
+          ),
+        ],
+      ),
+    );
+    if (text == null || text.isEmpty || !context.mounted) return;
+    final box = context.findRenderObject() as RenderBox?;
+    try {
+      await SharePlus.instance.share(
+        ShareParams(
+          text: text,
+          sharePositionOrigin: box == null
+              ? null
+              : box.localToGlobal(Offset.zero) & box.size,
+        ),
+      );
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open sharing.')),
+        );
+      }
+    }
   }
 }
 
-class _MoneyDetailLine extends StatelessWidget {
-  const _MoneyDetailLine(this.label, this.value);
-
-  final String label;
-  final String value;
+class _MoneyTimeline extends StatelessWidget {
+  const _MoneyTimeline({required this.detail});
+  final MoneyRecordDetail detail;
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 5),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          width: 112,
-          child: Text(label, style: Theme.of(context).textTheme.bodyMedium),
+  Widget build(BuildContext context) {
+    final repayments = [...detail.repayments]
+      ..sort((a, b) {
+        final byDate = a.paidOn.compareTo(b.paidOn);
+        return byDate == 0 ? a.id.compareTo(b.id) : byDate;
+      });
+    var remaining = detail.record.amountPaise;
+    final nodes = <Widget>[
+      _MoneyTimelineNode(
+        icon: Icons.add_circle_outline,
+        title: 'Record created',
+        amount: detail.record.amountPaise,
+        remaining: remaining,
+        date: detail.record.recordDate,
+        note: detail.record.notes,
+        last: repayments.isEmpty,
+      ),
+    ];
+    for (var index = 0; index < repayments.length; index++) {
+      final payment = repayments[index];
+      remaining -= payment.amountPaise;
+      nodes.add(
+        _MoneyTimelineNode(
+          icon: Icons.check_circle_outline,
+          title: detail.record.direction == MoneyDirection.given
+              ? 'Repayment received'
+              : 'Repayment paid',
+          amount: payment.amountPaise,
+          remaining: remaining,
+          date: payment.paidOn,
+          note: payment.notes,
+          last: index == repayments.length - 1,
         ),
-        Expanded(
-          child: Text(
-            value,
-            style: const TextStyle(fontWeight: FontWeight.w600),
+      );
+    }
+    return Column(children: nodes);
+  }
+}
+
+class _MoneyTimelineNode extends StatelessWidget {
+  const _MoneyTimelineNode({
+    required this.icon,
+    required this.title,
+    required this.amount,
+    required this.remaining,
+    required this.date,
+    required this.note,
+    required this.last,
+  });
+  final IconData icon;
+  final String title;
+  final int amount;
+  final int remaining;
+  final DateTime date;
+  final String? note;
+  final bool last;
+
+  @override
+  Widget build(BuildContext context) => Stack(
+    children: [
+      if (!last)
+        Positioned(
+          left: 14,
+          top: 22,
+          bottom: 0,
+          child: Container(width: 2, color: AppTheme.receive),
+        ),
+      Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 30,
+            child: Icon(icon, size: 22, color: AppTheme.receive),
           ),
-        ),
-      ],
-    ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 22),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          title,
+                          style: Theme.of(context).textTheme.titleSmall
+                              ?.copyWith(fontWeight: FontWeight.w800),
+                        ),
+                      ),
+                      Flexible(
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerRight,
+                          child: AmountText(
+                            amount,
+                            style: Theme.of(context).textTheme.titleSmall
+                                ?.copyWith(fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    formatDateTime(date),
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.copyWith(color: AppTheme.mutedText),
+                  ),
+                  if (note?.isNotEmpty == true) ...[
+                    const SizedBox(height: 4),
+                    Text(note!, style: Theme.of(context).textTheme.bodySmall),
+                  ],
+                  const SizedBox(height: 4),
+                  Text(
+                    '${formatMoney(remaining)} remaining',
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.copyWith(color: AppTheme.mutedText),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    ],
   );
 }
 
@@ -666,6 +1212,7 @@ class _MoneyFormSheetState extends ConsumerState<MoneyFormSheet> {
                         ),
                       ],
                       selected: {_direction},
+                      filled: true,
                       selectedBackground: _direction == MoneyDirection.given
                           ? financeSelectedFill(context)
                           : AppTheme.pay.withValues(alpha: 0.12),
@@ -983,11 +1530,10 @@ class _RepaymentSheetState extends ConsumerState<RepaymentSheet> {
   final _amount = TextEditingController();
   final _notes = TextEditingController();
   DateTime _paidOn = DateTime.now();
-  bool _saving = false;
-  String? _serverError;
+  String _quickAmount = 'Custom';
+  String _quickDate = 'Today';
 
   String? _validateRepaymentAmount(String? value) {
-    if (_serverError != null) return _serverError;
     final base = amountText(value);
     if (base != null) return base;
     final amount = parseRupeesToPaise(value!);
@@ -1006,113 +1552,190 @@ class _RepaymentSheetState extends ConsumerState<RepaymentSheet> {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(20),
-      child: Form(
-        key: _formKey,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Flexible(
-              fit: FlexFit.loose,
-              child: SingleChildScrollView(
-                child: Column(
+    final height =
+        MediaQuery.sizeOf(context).height -
+        MediaQuery.viewInsetsOf(context).bottom -
+        24 -
+        kMinInteractiveDimension;
+    return SafeArea(
+      top: false,
+      child: SizedBox(
+        height: height.clamp(300.0, MediaQuery.sizeOf(context).height),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 10, 12, 8),
+                child: Row(
                   children: [
-                    Text(
-                      'Add repayment',
-                      style: Theme.of(context).textTheme.titleLarge,
-                    ),
-                    const SizedBox(height: 8),
-                    Text('Remaining: ${formatMoney(widget.remainingPaise)}'),
-                    const SizedBox(height: 12),
-                    TextFormField(
-                      controller: _amount,
-                      keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true,
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Add repayment',
+                            style: Theme.of(context).textTheme.titleLarge
+                                ?.copyWith(fontWeight: FontWeight.w800),
+                          ),
+                          const SizedBox(height: 3),
+                          Text(
+                            'Remaining ${formatMoney(widget.remainingPaise)}',
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(color: AppTheme.mutedText),
+                          ),
+                        ],
                       ),
-                      decoration: InputDecoration(
-                        labelText: 'Amount',
-                        prefixText: '₹ ',
-                        suffixIcon: IconButton(
-                          tooltip: 'Calculator',
-                          icon: const Icon(Icons.calculate_outlined),
-                          onPressed: () async {
-                            final value = await openCalculator(
-                              context,
-                              initial: _amount.text,
-                              amountLabel: 'Repayment amount',
-                            );
-                            if (value != null) {
-                              _amount.text = value;
-                              _formKey.currentState?.validate();
-                            }
-                          },
-                        ),
-                      ),
-                      validator: _validateRepaymentAmount,
-                      onChanged: (_) {
-                        _serverError = null;
-                        _formKey.currentState?.validate();
-                      },
                     ),
-                    DateField(
-                      label: 'Repayment date',
-                      value: _paidOn,
-                      onChanged: (value) => setState(() => _paidOn = value),
-                    ),
-                    TextFormField(
-                      controller: _notes,
-                      decoration: const InputDecoration(labelText: 'Notes'),
+                    IconButton(
+                      tooltip: 'Close',
+                      onPressed: () => Navigator.pop(context),
+                      icon: const Icon(Icons.close),
                     ),
                   ],
                 ),
               ),
-            ),
-            const SizedBox(height: 16),
-            FilledButton(
-              onPressed: _saving
-                  ? null
-                  : () async {
-                      if (_saving) return;
-                      if (!_formKey.currentState!.validate()) return;
-                      HapticFeedback.lightImpact();
-                      setState(() => _saving = true);
-                      try {
-                        await ref
-                            .read(financeRepositoryProvider)
-                            .addRepayment(
-                              widget.recordId,
-                              parseRupeesToPaise(_amount.text),
-                              _notes.text.trim().isEmpty
-                                  ? null
-                                  : _notes.text.trim(),
-                              _paidOn,
-                            );
-                        if (context.mounted) Navigator.pop(context);
-                      } on FormatException catch (error) {
-                        if (context.mounted) {
-                          setState(() {
-                            _saving = false;
-                            _serverError = error.message.toString();
-                          });
+              Expanded(
+                child: ListView(
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
+                  children: [
+                    HeroAmountInput(
+                      controller: _amount,
+                      label: 'REPAYMENT AMOUNT',
+                      validator: _validateRepaymentAmount,
+                      onChanged: (_) {
+                        if (_quickAmount != 'Custom') {
+                          setState(() => _quickAmount = 'Custom');
+                        }
+                        _formKey.currentState?.validate();
+                      },
+                      calculator: () async {
+                        final value = await openCalculator(
+                          context,
+                          initial: _amount.text,
+                          amountLabel: 'Repayment amount',
+                        );
+                        if (value != null && mounted) {
+                          _amount.text = value;
+                          setState(() => _quickAmount = 'Custom');
                           _formKey.currentState?.validate();
                         }
-                      } catch (_) {
-                        if (context.mounted) {
-                          setState(() => _saving = false);
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Could not save this repayment.'),
-                            ),
-                          );
+                      },
+                    ),
+                    const SizedBox(height: 10),
+                    ChipSelector(
+                      options: [
+                        'Full ${formatMoney(widget.remainingPaise)}',
+                        'Half ${formatMoney(widget.remainingPaise ~/ 2)}',
+                        'Custom',
+                      ],
+                      selected: _quickAmount,
+                      onSelected: (choice) {
+                        setState(() => _quickAmount = choice);
+                        if (choice.startsWith('Full')) {
+                          _amount.text = rupeesText(widget.remainingPaise);
                         }
-                      }
-                    },
-              child: Text(_saving ? 'Saving...' : 'Save'),
-            ),
-          ],
+                        if (choice.startsWith('Half')) {
+                          _amount.text = rupeesText(widget.remainingPaise ~/ 2);
+                        }
+                        _formKey.currentState?.validate();
+                      },
+                    ),
+                    const SizedBox(height: 24),
+                    const FinanceFieldLabel('DATE'),
+                    const SizedBox(height: 8),
+                    ChipSelector(
+                      options: const ['Today', 'Yesterday', 'Pick date'],
+                      selected: _quickDate,
+                      onSelected: (choice) async {
+                        if (choice == 'Pick date') {
+                          final picked = await pickAppDate(context, _paidOn);
+                          if (picked != null && mounted) {
+                            setState(() {
+                              _paidOn = picked;
+                              _quickDate = choice;
+                            });
+                          }
+                          return;
+                        }
+                        final now = DateTime.now();
+                        setState(() {
+                          _paidOn = DateTime(
+                            now.year,
+                            now.month,
+                            now.day - (choice == 'Yesterday' ? 1 : 0),
+                          );
+                          _quickDate = choice;
+                        });
+                      },
+                    ),
+                    if (_quickDate == 'Pick date') ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        formatDate(_paidOn),
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                    const SizedBox(height: 24),
+                    FilledField(
+                      label: 'NOTE (OPTIONAL)',
+                      child: TextFormField(
+                        controller: _notes,
+                        decoration: financeFieldDecoration(
+                          context,
+                          hint: 'Add a note',
+                        ),
+                        maxLines: 2,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    ChipSelector(
+                      options: const ['Cash', 'UPI', 'Bank transfer'],
+                      selected: _notes.text,
+                      onSelected: (choice) =>
+                          setState(() => _notes.text = choice),
+                    ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 10, 20, 12),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                      shape: const StadiumBorder(),
+                      minimumSize: const Size.fromHeight(54),
+                    ),
+                    onPressed: _save,
+                    icon: const Icon(Icons.save_outlined),
+                    label: const Text('Save'),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
+    );
+  }
+
+  void _save() {
+    if (!_formKey.currentState!.validate()) return;
+    final amount = parseRupeesToPaise(_amount.text);
+    final notes = _notes.text.trim();
+    final repo = ref.read(financeRepositoryProvider);
+    closeFinanceSheetAndSave(
+      context,
+      () => repo.addRepayment(
+        widget.recordId,
+        amount,
+        notes.isEmpty ? null : notes,
+        _paidOn,
+      ),
+      errorMessage: 'Could not save this repayment.',
     );
   }
 }

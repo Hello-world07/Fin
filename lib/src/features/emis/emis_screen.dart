@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:drift/drift.dart' hide Column;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/formatters.dart';
+import '../../core/app_theme.dart';
 import '../../core/providers.dart';
 import '../../data/database.dart';
 import '../../data/repositories.dart';
@@ -19,23 +21,20 @@ import '../../shared/forms.dart';
 import '../../shared/finance_form_widgets.dart';
 import '../../shared/finance_display_widgets.dart';
 
-class EmisScreen extends ConsumerWidget {
+class EmisScreen extends ConsumerStatefulWidget {
   const EmisScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<EmisScreen> createState() => _EmisScreenState();
+}
+
+class _EmisScreenState extends ConsumerState<EmisScreen> {
+  bool _showCompleted = false;
+
+  @override
+  Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('EMIs & Loans'),
-        actions: [
-          if (ref.watch(emiStatusFilterProvider) != null)
-            TextButton(
-              onPressed: () =>
-                  ref.read(emiStatusFilterProvider.notifier).state = null,
-              child: const Text('All'),
-            ),
-        ],
-      ),
+      appBar: AppBar(title: const Text('EMIs & Loans')),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => openFinanceSheet(context, const EmiFormSheet()),
         icon: const Icon(Icons.add),
@@ -45,50 +44,63 @@ class EmisScreen extends ConsumerWidget {
       body: AsyncView(
         value: ref.watch(emiDetailsProvider),
         builder: (items) {
-          final filter = ref.watch(emiStatusFilterProvider);
-          final visible = filter == null
-              ? items
-              : items.where((item) => item.emi.status == filter).toList();
-          if (visible.isEmpty) {
-            return const EmptyState(
-              icon: Icons.account_balance_outlined,
-              title: 'No EMIs yet',
-              message:
-                  'Add loans or installment commitments to track progress and due dates.',
-            );
-          }
-          final active = visible
-              .where(
-                (item) =>
-                    item.emi.status != EmiStatus.completed &&
-                    item.nextUnpaidInstallment != null,
-              )
-              .toList();
-          final completed = visible
+          final active =
+              items
+                  .where(
+                    (item) =>
+                        item.emi.status != EmiStatus.completed &&
+                        item.nextUnpaidInstallment != null,
+                  )
+                  .toList()
+                ..sort(
+                  (a, b) => a.nextUnpaidInstallment!.dueDate.compareTo(
+                    b.nextUnpaidInstallment!.dueDate,
+                  ),
+                );
+          final completed = items
               .where(
                 (item) =>
                     item.emi.status == EmiStatus.completed ||
                     item.nextUnpaidInstallment == null,
               )
               .toList();
+          final visible = _showCompleted ? completed : active;
           return ListView(
             padding: EdgeInsets.fromLTRB(16, 8, 16, _emiListBottomPadding),
             children: [
-              _EmiListSummary(items: active),
-              if (active.isNotEmpty) ...[
-                _EmiSectionLabel('ACTIVE', '${active.length}'),
-                for (final item in active) ...[
-                  _EmiRow(detail: item),
+              _EmiHero(items: active),
+              const SizedBox(height: 24),
+              _EmiTabs(
+                activeCount: active.length,
+                completedCount: completed.length,
+                showCompleted: _showCompleted,
+                onChanged: (value) => setState(() => _showCompleted = value),
+              ),
+              const SizedBox(height: 14),
+              if (visible.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 40),
+                  child: EmptyState(
+                    icon: _showCompleted
+                        ? Icons.check_circle_outline
+                        : Icons.account_balance_outlined,
+                    title: _showCompleted
+                        ? 'No completed EMIs yet'
+                        : 'No active EMIs',
+                    message: _showCompleted
+                        ? 'Paid-off loans will appear here.'
+                        : 'Add an EMI to see its installments and progress.',
+                    actionLabel: _showCompleted ? null : 'Add EMI',
+                    onAction: _showCompleted
+                        ? null
+                        : () => openFinanceSheet(context, const EmiFormSheet()),
+                  ),
+                )
+              else
+                for (final item in visible) ...[
+                  _EmiRow(detail: item, completed: _showCompleted),
                   const Divider(height: 1),
                 ],
-              ],
-              if (completed.isNotEmpty) ...[
-                _EmiSectionLabel('COMPLETED', '${completed.length}'),
-                for (final item in completed) ...[
-                  _EmiRow(detail: item),
-                  const Divider(height: 1),
-                ],
-              ],
             ],
           );
         },
@@ -97,263 +109,302 @@ class EmisScreen extends ConsumerWidget {
   }
 }
 
-class _EmiSectionLabel extends StatelessWidget {
-  const _EmiSectionLabel(this.title, this.count);
-  final String title;
-  final String count;
+class _EmiTabs extends StatelessWidget {
+  const _EmiTabs({
+    required this.activeCount,
+    required this.completedCount,
+    required this.showCompleted,
+    required this.onChanged,
+  });
+  final int activeCount;
+  final int completedCount;
+  final bool showCompleted;
+  final ValueChanged<bool> onChanged;
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(top: 12, bottom: 4),
-    child: Row(
-      children: [
-        Text(
-          title,
-          style: Theme.of(context).textTheme.labelMedium?.copyWith(
-            fontWeight: FontWeight.w800,
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
-          ),
-        ),
-        const SizedBox(width: 8),
-        Text(count, style: Theme.of(context).textTheme.labelSmall),
-      ],
+  Widget build(BuildContext context) => SegmentedButton<bool>(
+    segments: [
+      ButtonSegment(value: false, label: Text('Active ($activeCount)')),
+      ButtonSegment(value: true, label: Text('Completed ($completedCount)')),
+    ],
+    selected: {showCompleted},
+    showSelectedIcon: false,
+    onSelectionChanged: (value) => onChanged(value.first),
+    style: SegmentedButton.styleFrom(
+      selectedBackgroundColor: AppTheme.selectedFill,
+      selectedForegroundColor: AppTheme.seed,
+      shape: const StadiumBorder(),
     ),
   );
 }
 
-class _EmiListSummary extends StatelessWidget {
-  const _EmiListSummary({required this.items});
+class _EmiHero extends StatelessWidget {
+  const _EmiHero({required this.items});
 
   final List<EmiDetail> items;
 
   @override
   Widget build(BuildContext context) {
-    final active = items
-        .where(
-          (item) =>
-              item.nextUnpaidInstallment != null &&
-              item.emi.status != EmiStatus.completed &&
-              item.emi.status != EmiStatus.paused,
-        )
-        .toList();
-    final remaining = active.fold<int>(
+    final remaining = items.fold<int>(
       0,
       (sum, item) => sum + item.remainingBalancePaise,
     );
-    final colors = Theme.of(context).colorScheme;
+    final monthly = items.fold<int>(
+      0,
+      (sum, item) => sum + item.scheduledInstallmentPaise,
+    );
+    final total = items.fold<int>(
+      0,
+      (sum, item) => sum + item.totalRepaymentPaise,
+    );
+    final paid = items.fold<int>(0, (sum, item) => sum + item.paidPaise);
+    final finalDue = items.isEmpty
+        ? null
+        : items
+              .map((item) => item.installments.last.dueDate)
+              .reduce((a, b) => a.isAfter(b) ? a : b);
+    final now = dateOnly(DateTime.now());
+    final months = finalDue == null
+        ? 0
+        : (finalDue.year - now.year) * 12 +
+              finalDue.month -
+              now.month -
+              (finalDue.day < now.day ? 1 : 0);
+    final countdown = finalDue == null
+        ? 'No active debt'
+        : months > 0
+        ? 'Debt-free in $months ${months == 1 ? 'month' : 'months'}'
+        : finalDue.isBefore(now)
+        ? 'Final date passed'
+        : 'Debt-free this month';
     return Padding(
-      padding: const EdgeInsets.fromLTRB(0, 12, 0, 14),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        decoration: BoxDecoration(
-          color: colors.surfaceContainerLow,
-          border: Border.all(color: colors.outlineVariant),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '${active.length} active ${active.length == 1 ? 'EMI' : 'EMIs'}',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    'Remaining across active EMIs',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ],
+      padding: const EdgeInsets.only(top: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'TOTAL REMAINING',
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              color: AppTheme.mutedText,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 4),
+          AmountText(
+            remaining,
+            style: Theme.of(
+              context,
+            ).textTheme.headlineLarge?.copyWith(fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 18),
+          Row(
+            children: [
+              Expanded(
+                child: _HeroFigure(
+                  label: 'Monthly commitment',
+                  value: formatMoney(monthly),
+                ),
               ),
-            ),
-            AmountText(
-              remaining,
-              style: Theme.of(
-                context,
-              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
-            ),
-          ],
-        ),
+              Expanded(
+                child: _HeroFigure(
+                  label: 'Debt-free date',
+                  value: finalDue == null ? '—' : formatDate(finalDue),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            countdown,
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: AppTheme.mutedText),
+          ),
+          const SizedBox(height: 16),
+          LinearProgressIndicator(
+            value: total == 0 ? 0 : (paid / total).clamp(0, 1),
+            minHeight: 5,
+            borderRadius: BorderRadius.circular(3),
+            backgroundColor: Theme.of(context).colorScheme.outlineVariant,
+          ),
+        ],
       ),
     );
   }
+}
+
+class _HeroFigure extends StatelessWidget {
+  const _HeroFigure({required this.label, required this.value});
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        label,
+        style: Theme.of(
+          context,
+        ).textTheme.labelSmall?.copyWith(color: AppTheme.mutedText),
+      ),
+      const SizedBox(height: 3),
+      Text(
+        value,
+        style: Theme.of(
+          context,
+        ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+      ),
+    ],
+  );
 }
 
 const double _emiListBottomPadding = 88;
 
 class _EmiRow extends StatelessWidget {
-  const _EmiRow({required this.detail});
+  const _EmiRow({required this.detail, required this.completed});
 
   final EmiDetail detail;
+  final bool completed;
 
   @override
   Widget build(BuildContext context) {
     final emi = detail.emi;
     final nextInstallment = detail.nextUnpaidInstallment;
-    final nextDueDate = nextInstallment?.dueDate;
-    final isCompleted =
-        emi.status == EmiStatus.completed || nextInstallment == null;
-    final dueText = isCompleted
-        ? 'Completed'
-        : relativeDueText(nextDueDate!, DateTime.now());
-    final canPay =
-        !isCompleted &&
-        emi.status != EmiStatus.paused &&
-        isWithinEmiPaymentWindow(nextDueDate!, DateTime.now());
-    final colors = Theme.of(context).colorScheme;
-    final dueColor = dueText.startsWith('Overdue')
-        ? colors.error
-        : dueText == 'Due today'
-        ? colors.primary
-        : colors.secondary;
-    return ListTile(
-      contentPadding: const EdgeInsets.symmetric(vertical: 10),
-      leading: SizedBox.square(
-        dimension: 44,
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            CircularProgressIndicator(
-              value: detail.progress.clamp(0.0, 1.0),
-              strokeWidth: 4,
-              backgroundColor: colors.surfaceContainerHighest,
-            ),
-            Text(
-              '${detail.paidInstallments}/${emi.tenureMonths}',
-              style: Theme.of(
-                context,
-              ).textTheme.labelSmall?.copyWith(fontWeight: FontWeight.w700),
-            ),
-          ],
-        ),
-      ),
-      title: Row(
-        children: [
-          Expanded(
-            child: Text(
-              displayName(emi.name),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontWeight: FontWeight.w800),
-            ),
-          ),
-          Text(
-            '${formatMoney(nextInstallment == null ? detail.scheduledInstallmentPaise : detail.amountForInstallment(nextInstallment.number))} / ${emi.frequency.label.toLowerCase()}',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w900,
-              color: colors.onSurface,
-            ),
-          ),
-        ],
-      ),
-      subtitle: Padding(
-        padding: const EdgeInsets.only(top: 6),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    isCompleted
-                        ? 'Completed'
-                        : 'Due ${formatDate(nextDueDate!)}',
-                  ),
-                ),
-                Text(
-                  dueText,
-                  style: TextStyle(
-                    color: dueColor,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Text(
-              isCompleted
-                  ? 'Completed · ${detail.paidInstallments}/${emi.tenureMonths} paid'
-                  : '${detail.remainingInstallments} left · ${formatMoney(detail.remainingBalancePaise)} remaining · ${emi.status.label}',
-            ),
-          ],
-        ),
-      ),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (canPay)
-            _PayEmiButton(detail: detail, installment: nextInstallment),
-          Icon(Icons.chevron_right, color: colors.onSurfaceVariant),
-        ],
-      ),
+    final due = nextInstallment?.dueDate;
+    final days = due == null
+        ? 0
+        : dateOnly(due).difference(dateOnly(DateTime.now())).inDays;
+    final urgency = days < 0
+        ? AppTheme.pay
+        : days <= 7
+        ? AppTheme.emi
+        : AppTheme.receive;
+    final lastPayment = detail.payments.isEmpty
+        ? null
+        : detail.payments
+              .map((payment) => payment.paidOn)
+              .reduce((a, b) => a.isAfter(b) ? a : b);
+    final completedOn = lastPayment ?? emi.updatedAt;
+    return InkWell(
       onTap: () => Navigator.of(
         context,
       ).push(MaterialPageRoute(builder: (_) => EmiDetailScreen(emi.id))),
-      onLongPress: () => openFinanceSheet(context, EmiFormSheet(emi: emi)),
-    );
-  }
-}
-
-class _PayEmiButton extends ConsumerWidget {
-  const _PayEmiButton({required this.detail, required this.installment});
-
-  final EmiDetail detail;
-  final EmiInstallment installment;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final emi = detail.emi;
-    final paying = ref.watch(payingEmisProvider).contains(emi.id);
-    final disabled = paying || emi.status == EmiStatus.completed;
-    return IconButton(
-      tooltip: paying
-          ? 'Recording...'
-          : emi.status == EmiStatus.completed
-          ? 'Paid'
-          : 'Mark paid',
-      icon: paying
-          ? const SizedBox(
-              width: 20,
-              height: 20,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          : Icon(
-              emi.status == EmiStatus.completed
-                  ? Icons.check_circle
-                  : Icons.radio_button_unchecked,
-            ),
-      onPressed: disabled
-          ? null
-          : () async {
-              final payingState = ref.read(payingEmisProvider.notifier);
-              if (payingState.state.contains(emi.id)) return;
-              payingState.update((state) => {...state, emi.id});
-              try {
-                final recorded = await ref
-                    .read(financeRepositoryProvider)
-                    .markEmiPaid(
-                      emi.id,
-                      expectedDueDate: installment.dueDate,
-                      expectedInstallmentNumber: installment.number,
-                    );
-                if (!recorded && context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Installment already recorded'),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 18),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            CircleAvatar(
+              radius: 22,
+              backgroundColor: completed
+                  ? AppTheme.fieldFill
+                  : AppTheme.selectedFill,
+              child: completed
+                  ? const Icon(Icons.check, color: AppTheme.seed)
+                  : Text(
+                      displayName(
+                        emi.provider?.isNotEmpty == true
+                            ? emi.provider!
+                            : emi.name,
+                      ).characters.first.toUpperCase(),
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: AppTheme.seed,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
-                  );
-                }
-              } finally {
-                payingState.update((state) {
-                  final next = {...state}..remove(emi.id);
-                  return next;
-                });
-              }
-            },
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          displayName(emi.name),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(
+                                fontWeight: FontWeight.w800,
+                                color: completed ? AppTheme.mutedText : null,
+                              ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      AmountText(
+                        completed
+                            ? detail.paidPaise
+                            : detail.amountForInstallment(
+                                nextInstallment!.number,
+                              ),
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    completed
+                        ? '${emi.tenureMonths} installments · Total paid'
+                        : '${emi.provider?.isNotEmpty == true ? emi.provider : emi.type} · per ${emi.frequency.label.toLowerCase()}',
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.copyWith(color: AppTheme.mutedText),
+                  ),
+                  if (completed) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      'Completed on ${formatDate(completedOn)}',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: AppTheme.mutedText,
+                      ),
+                    ),
+                  ] else ...[
+                    const SizedBox(height: 12),
+                    if (emi.tenureMonths <= 24)
+                      SegmentedProgressStrip(
+                        installments: emi.tenureMonths,
+                        paidInstallments: detail.paidInstallments,
+                      )
+                    else
+                      LinearProgressIndicator(
+                        value: detail.paidInstallments / emi.tenureMonths,
+                        minHeight: 6,
+                        borderRadius: BorderRadius.circular(3),
+                      ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Due ${formatDate(due!)}',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ),
+                        StatusPill(
+                          label: relativeDueText(due, DateTime.now()),
+                          color: urgency,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      '${detail.remainingInstallments} left · ${formatMoney(detail.remainingBalancePaise)} remaining',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: AppTheme.mutedText,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -368,103 +419,252 @@ class EmiDetailScreen extends ConsumerStatefulWidget {
 }
 
 class _EmiDetailScreenState extends ConsumerState<EmiDetailScreen> {
-  int _reload = 0;
+  bool _saving = false;
+  bool _celebrating = false;
+
+  Future<void> _record(EmiDetail detail, {required bool early}) async {
+    final installment = detail.nextUnpaidInstallment;
+    if (installment == null || _saving) return;
+    setState(() => _saving = true);
+    try {
+      final recorded = await ref
+          .read(financeRepositoryProvider)
+          .markEmiPaid(
+            widget.id,
+            expectedDueDate: installment.dueDate,
+            expectedInstallmentNumber: installment.number,
+            paidEarly: early,
+          );
+      if (!mounted) return;
+      if (!recorded) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Installment already recorded')),
+        );
+        return;
+      }
+      final updated = await ref
+          .read(financeRepositoryProvider)
+          .emiDetail(widget.id);
+      if (!mounted) return;
+      final payment = updated.payments
+          .where((item) => item.installmentNumber == installment.number)
+          .firstOrNull;
+      if (updated.remainingInstallments == 0) {
+        setState(() => _celebrating = true);
+        Future.delayed(const Duration(milliseconds: 1500), () {
+          if (mounted) setState(() => _celebrating = false);
+        });
+      }
+      final messenger = ScaffoldMessenger.of(context);
+      messenger.hideCurrentSnackBar();
+      messenger.showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 6),
+          content: Text(
+            updated.remainingInstallments == 0
+                ? 'EMI completed. Marked paid.'
+                : 'Marked paid.',
+          ),
+          action: payment == null
+              ? null
+              : SnackBarAction(
+                  label: 'Undo',
+                  onPressed: () => _revert(payment.id),
+                ),
+        ),
+      );
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not record payment: $error')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _revert(int paymentId) async {
+    try {
+      final reverted = await ref
+          .read(financeRepositoryProvider)
+          .revertEmiPayment(widget.id, paymentId);
+      if (mounted && !reverted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Payment was already reverted')),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not undo payment: $error')),
+        );
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final repo = ref.watch(financeRepositoryProvider);
-    return FutureBuilder(
-      key: ValueKey(_reload),
-      future: repo.emiDetail(widget.id),
-      builder: (context, snapshot) {
-        final detail = snapshot.data;
-        return Scaffold(
-          appBar: AppBar(
-            title: Text(displayName(detail?.emi.name ?? 'EMI')),
-            actions: [
-              if (detail != null)
-                IconButton(
-                  tooltip: 'Edit',
-                  icon: const Icon(Icons.edit_outlined),
-                  onPressed: () =>
-                      openFinanceSheet(context, EmiFormSheet(emi: detail.emi)),
-                ),
-              IconButton(
-                tooltip: 'Delete',
-                icon: const Icon(Icons.delete_outline),
-                onPressed: detail == null
-                    ? null
-                    : () async {
-                        final current = detail;
-                        final unpaid = current.remainingInstallments;
-                        final amount = formatMoney(
-                          current.scheduledInstallmentPaise,
-                        );
-                        final remaining = unpaid == 0
-                            ? ''
-                            : '\n\n$unpaid unpaid installment${unpaid == 1 ? '' : 's'} '
-                                  'of $amount will no longer be tracked.';
-                        final delete = await showDialog<bool>(
-                          context: context,
-                          builder: (context) => AlertDialog(
-                            title: Text('Delete "${current.emi.name}"?'),
-                            content: Text(
-                              'This will remove the EMI from your active list. Its recorded payment history will be kept.$remaining',
-                            ),
-                            actions: [
-                              TextButton(
-                                onPressed: () => Navigator.pop(context, false),
-                                child: const Text('Cancel'),
-                              ),
-                              FilledButton(
-                                style: FilledButton.styleFrom(
-                                  backgroundColor: Theme.of(
-                                    context,
-                                  ).colorScheme.error,
-                                  foregroundColor: Theme.of(
-                                    context,
-                                  ).colorScheme.onError,
-                                ),
-                                onPressed: () => Navigator.pop(context, true),
-                                child: const Text('Delete EMI'),
-                              ),
-                            ],
+    final details = ref.watch(emiDetailsProvider);
+    final detail = details.valueOrNull
+        ?.where((item) => item.emi.id == widget.id)
+        .firstOrNull;
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(displayName(detail?.emi.name ?? 'EMI')),
+        actions: [
+          if (detail != null)
+            IconButton(
+              tooltip: 'Edit',
+              icon: const Icon(Icons.edit_outlined),
+              onPressed: () =>
+                  openFinanceSheet(context, EmiFormSheet(emi: detail.emi)),
+            ),
+          IconButton(
+            tooltip: 'Delete',
+            icon: const Icon(Icons.delete_outline),
+            onPressed: detail == null
+                ? null
+                : () async {
+                    final current = detail;
+                    final unpaid = current.remainingInstallments;
+                    final amount = formatMoney(
+                      current.scheduledInstallmentPaise,
+                    );
+                    final remaining = unpaid == 0
+                        ? ''
+                        : '\n\n$unpaid unpaid installment${unpaid == 1 ? '' : 's'} '
+                              'of $amount will no longer be tracked.';
+                    final delete = await showDialog<bool>(
+                      context: context,
+                      builder: (context) => AlertDialog(
+                        title: Text('Delete "${current.emi.name}"?'),
+                        content: Text(
+                          'This will remove the EMI from your active list. Its recorded payment history will be kept.$remaining',
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(context, false),
+                            child: const Text('Cancel'),
                           ),
-                        );
-                        if (delete != true) return;
-                        await repo.deleteEmi(widget.id);
-                        if (context.mounted) Navigator.pop(context);
-                      },
-              ),
-            ],
+                          FilledButton(
+                            style: FilledButton.styleFrom(
+                              backgroundColor: Theme.of(
+                                context,
+                              ).colorScheme.error,
+                              foregroundColor: Theme.of(
+                                context,
+                              ).colorScheme.onError,
+                            ),
+                            onPressed: () => Navigator.pop(context, true),
+                            child: const Text('Delete EMI'),
+                          ),
+                        ],
+                      ),
+                    );
+                    if (delete != true) return;
+                    await ref
+                        .read(financeRepositoryProvider)
+                        .deleteEmi(widget.id);
+                    if (context.mounted) Navigator.pop(context);
+                  },
           ),
-          body: detail == null
-              ? const Center(child: CircularProgressIndicator())
-              : ListView(
-                  padding: const EdgeInsets.all(20),
+        ],
+      ),
+      body: detail == null
+          ? Center(
+              child: details.hasError || details.hasValue
+                  ? const Text('EMI not found')
+                  : const CircularProgressIndicator(),
+            )
+          : Stack(
+              children: [
+                ListView(
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 36),
                   children: [
                     _EmiOverview(detail: detail),
-                    if (detail.nextUnpaidInstallment != null &&
-                        detail.emi.status != EmiStatus.completed &&
-                        detail.emi.status != EmiStatus.paused) ...[
-                      const SizedBox(height: 16),
-                      _EarlyPaymentAction(
-                        detail: detail,
-                        onPaid: () => setState(() => _reload++),
-                      ),
-                    ],
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 28),
                     Text(
-                      'Payment history',
-                      style: Theme.of(context).textTheme.titleLarge,
+                      'Installments',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
-                    const SizedBox(height: 8),
-                    _InstallmentTimeline(detail: detail),
+                    const SizedBox(height: 12),
+                    _InstallmentTimeline(detail: detail, onRevert: _revert),
+                    if (detail.emi.interestRate != null &&
+                        detail.nextUnpaidInstallment != null) ...[
+                      const SizedBox(height: 28),
+                      _EmiWhatIf(detail: detail),
+                    ],
                   ],
                 ),
-        );
-      },
+                if (_celebrating)
+                  const Positioned.fill(
+                    child: IgnorePointer(child: _EmiCelebration()),
+                  ),
+              ],
+            ),
+      bottomNavigationBar:
+          detail == null ||
+              detail.nextUnpaidInstallment == null ||
+              detail.emi.status == EmiStatus.paused
+          ? null
+          : SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 10, 20, 14),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _HoldToPayButton(
+                      label:
+                          'Mark ${_monthLabel(detail.nextUnpaidInstallment!.dueDate)} paid',
+                      busy: _saving,
+                      enabled: isWithinEmiPaymentWindow(
+                        detail.nextUnpaidInstallment!.dueDate,
+                        DateTime.now(),
+                      ),
+                      onConfirmed: () => _record(detail, early: false),
+                    ),
+                    if (!isWithinEmiPaymentWindow(
+                      detail.nextUnpaidInstallment!.dueDate,
+                      DateTime.now(),
+                    ))
+                      TextButton.icon(
+                        onPressed: _saving ? null : () => _confirmEarly(detail),
+                        icon: const Icon(Icons.bolt_outlined),
+                        label: const Text('Pay early'),
+                      ),
+                  ],
+                ),
+              ),
+            ),
     );
+  }
+
+  Future<void> _confirmEarly(EmiDetail detail) async {
+    final installment = detail.nextUnpaidInstallment!;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Mark paid early?'),
+        content: Text(
+          '${formatMoney(detail.amountForInstallment(installment.number))} due ${formatDate(installment.dueDate)}. This records a payment in FinKeep; it does not transfer money.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Mark paid'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) await _record(detail, early: true);
   }
 }
 
@@ -475,97 +675,60 @@ class _EmiOverview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    final totalPaise = detail.totalRepaymentPaise;
-    final remainingPaise = detail.remainingBalancePaise;
     final percent = (detail.progress * 100).clamp(0, 100).round();
-
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: colors.surfaceContainerHighest.withValues(alpha: 0.45),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: colors.outlineVariant),
-      ),
-      child: Row(
-        children: [
-          SizedBox.square(
-            dimension: 116,
-            child: Center(
-              child: MiniProgressRing(
-                progress: detail.progress,
-                size: 104,
-                strokeWidth: 10,
-                backgroundColor: colors.outlineVariant.withValues(alpha: 0.35),
-                child: Text(
-                  '$percent%',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
-                ),
+    return Column(
+      children: [
+        MiniProgressRing(
+          progress: detail.progress,
+          size: 140,
+          strokeWidth: 11,
+          backgroundColor: Theme.of(context).colorScheme.outlineVariant,
+          child: Text(
+            '$percent%',
+            style: Theme.of(
+              context,
+            ).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w800),
+          ),
+        ),
+        const SizedBox(height: 14),
+        Text(
+          displayName(detail.emi.name),
+          textAlign: TextAlign.center,
+          style: Theme.of(
+            context,
+          ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          '${detail.paidInstallments} paid · ${detail.remainingInstallments} left',
+          style: Theme.of(
+            context,
+          ).textTheme.bodyMedium?.copyWith(color: AppTheme.mutedText),
+        ),
+        const SizedBox(height: 24),
+        Row(
+          children: [
+            Expanded(
+              child: _OverviewMetric(
+                label: 'Paid',
+                value: formatMoney(detail.paidPaise),
               ),
             ),
-          ),
-          const SizedBox(width: 18),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'EMI overview',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                _OverviewMetric(
-                  label: 'Paid',
-                  value: formatMoney(detail.paidPaise),
-                ),
-                _OverviewMetric(
-                  label: 'Remaining',
-                  value: formatMoney(remainingPaise),
-                ),
-                _OverviewMetric(
-                  label: 'Total payable',
-                  value: formatMoney(totalPaise),
-                ),
-                _OverviewMetric(
-                  label: 'Installments',
-                  value:
-                      '${detail.paidInstallments} paid • ${detail.remainingInstallments} left',
-                ),
-                _OverviewMetric(
-                  label: 'Tenure',
-                  value: '${detail.emi.tenureMonths} installments',
-                ),
-                if (detail.emi.interestRate != null)
-                  _OverviewMetric(
-                    label: 'Interest rate',
-                    value: '${detail.emi.interestRate}% p.a.',
-                  ),
-                if (detail.installments.isNotEmpty)
-                  _OverviewMetric(
-                    label: 'Final installment',
-                    value: formatDate(detail.installments.last.dueDate),
-                  ),
-                if (detail.installments.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 5),
-                    child: Text(
-                      detail.nextUnpaidInstallment == null
-                          ? 'This EMI is complete.'
-                          : 'You\'ll finish this EMI on ${formatDate(detail.installments.last.dueDate)}.',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: colors.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
-              ],
+            Expanded(
+              child: _OverviewMetric(
+                label: 'Remaining',
+                value: formatMoney(detail.remainingBalancePaise),
+              ),
             ),
-          ),
-        ],
-      ),
+            Expanded(
+              child: _OverviewMetric(
+                label: 'Total payable',
+                value: formatMoney(detail.totalRepaymentPaise),
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 }
@@ -577,113 +740,125 @@ class _OverviewMetric extends StatelessWidget {
   final String value;
 
   @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 86,
-            child: Text(
-              label,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ),
-          Expanded(
-            child: Text(
-              value,
-              style: const TextStyle(fontWeight: FontWeight.w800),
-            ),
-          ),
-        ],
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        label,
+        style: Theme.of(
+          context,
+        ).textTheme.labelSmall?.copyWith(color: AppTheme.mutedText),
       ),
-    );
-  }
+      const SizedBox(height: 5),
+      FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: Alignment.centerLeft,
+        child: Text(
+          value,
+          style: Theme.of(
+            context,
+          ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
+        ),
+      ),
+    ],
+  );
 }
 
-class _EarlyPaymentAction extends ConsumerWidget {
-  const _EarlyPaymentAction({required this.detail, required this.onPaid});
-
-  final EmiDetail detail;
-  final VoidCallback onPaid;
+class _HoldToPayButton extends StatefulWidget {
+  const _HoldToPayButton({
+    required this.label,
+    required this.busy,
+    required this.enabled,
+    required this.onConfirmed,
+  });
+  final String label;
+  final bool busy;
+  final bool enabled;
+  final VoidCallback onConfirmed;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final emi = detail.emi;
-    final installment = detail.nextUnpaidInstallment;
-    if (installment == null) return const SizedBox.shrink();
-    final amount = formatMoney(detail.amountForInstallment(installment.number));
-    final isNormalWindow = isWithinEmiPaymentWindow(
-      installment.dueDate,
-      DateTime.now(),
-    );
-    return OutlinedButton.icon(
-      icon: const Icon(Icons.fast_forward_outlined),
-      label: Text(
-        isNormalWindow
-            ? 'Record ${_monthLabel(installment.dueDate)} EMI • $amount'
-            : 'Mark ${_monthLabel(installment.dueDate)} EMI paid early • $amount',
-      ),
-      onPressed: () async {
-        final confirmed = await showDialog<bool>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: Text(
-              isNormalWindow
-                  ? 'Record ${_monthLabel(installment.dueDate)} EMI?'
-                  : 'Mark ${_monthLabel(installment.dueDate)} EMI paid early?',
-            ),
-            content: Text(
-              '$amount\n'
-              '${isNormalWindow ? 'Due' : 'Originally due'}: '
-              '${formatDate(installment.dueDate)}\n'
-              'FinKeep records this payment in your tracker; it does not transfer money.\n'
-              'Installment ${installment.number}',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('Cancel'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: Text('Mark as paid • $amount'),
-              ),
-            ],
-          ),
-        );
-        if (confirmed != true) return;
-        final recorded = await ref
-            .read(financeRepositoryProvider)
-            .markEmiPaid(
-              emi.id,
-              expectedDueDate: installment.dueDate,
-              expectedInstallmentNumber: installment.number,
-              paidEarly: !isNormalWindow,
-            );
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                recorded
-                    ? 'EMI payment recorded'
-                    : 'Installment already recorded',
-              ),
-            ),
-          );
+  State<_HoldToPayButton> createState() => _HoldToPayButtonState();
+}
+
+class _HoldToPayButtonState extends State<_HoldToPayButton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller =
+      AnimationController(
+        vsync: this,
+        duration: const Duration(milliseconds: 850),
+      )..addStatusListener((status) {
+        if (status == AnimationStatus.completed &&
+            !widget.busy &&
+            widget.enabled) {
+          widget.onConfirmed();
+          _controller.reset();
         }
-        if (recorded) onPaid();
-      },
-    );
+      });
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
   }
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    button: true,
+    label: 'Hold to ${widget.label.toLowerCase()}',
+    child: GestureDetector(
+      onTapDown: widget.busy || !widget.enabled
+          ? null
+          : (_) => _controller.forward(from: 0),
+      onTapUp: (_) => _controller.reset(),
+      onTapCancel: () => _controller.reset(),
+      child: AnimatedBuilder(
+        animation: _controller,
+        builder: (context, child) => Stack(
+          children: [
+            SizedBox(
+              width: double.infinity,
+              height: 54,
+              child: FilledButton.icon(
+                onPressed: null,
+                style: FilledButton.styleFrom(
+                  disabledBackgroundColor: widget.enabled
+                      ? AppTheme.seed
+                      : Theme.of(context).colorScheme.outlineVariant,
+                  disabledForegroundColor: AppTheme.onHero,
+                  shape: const StadiumBorder(),
+                ),
+                icon: widget.busy
+                    ? const SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.touch_app_outlined),
+                label: Text(widget.busy ? 'Recording...' : widget.label),
+              ),
+            ),
+            Positioned.fill(
+              child: IgnorePointer(
+                child: Align(
+                  alignment: Alignment.bottomLeft,
+                  child: FractionallySizedBox(
+                    widthFactor: _controller.value,
+                    child: Container(height: 4, color: AppTheme.accent),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
 }
 
 class _InstallmentTimeline extends StatelessWidget {
-  const _InstallmentTimeline({required this.detail});
+  const _InstallmentTimeline({required this.detail, required this.onRevert});
 
   final EmiDetail detail;
+  final ValueChanged<int> onRevert;
 
   @override
   Widget build(BuildContext context) {
@@ -692,7 +867,9 @@ class _InstallmentTimeline extends StatelessWidget {
     };
     final children = <Widget>[];
     final now = DateTime.now();
-    for (final installment in detail.installments) {
+    final installments = detail.installments;
+    for (var index = 0; index < installments.length; index++) {
+      final installment = installments[index];
       final payment = paymentsByInstallment[installment.number];
       final state =
           payment == null &&
@@ -700,86 +877,116 @@ class _InstallmentTimeline extends StatelessWidget {
           ? _InstallmentState.paidBeforeTracking
           : _installmentState(installment.dueDate, now, payment);
       children.add(
-        Container(
-          margin: const EdgeInsets.only(bottom: 12),
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: _stateColor(context, state).withValues(alpha: 0.08),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-              color: _stateColor(context, state).withValues(alpha: 0.35),
-            ),
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(_stateIcon(state), color: _stateColor(context, state)),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            _monthLabel(installment.dueDate),
-                            style: const TextStyle(fontWeight: FontWeight.w800),
-                          ),
-                        ),
-                        StatusPill(
-                          label: _stateLabel(state),
-                          color: _stateColor(context, state),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      formatMoney(
-                        payment?.amountPaise ??
-                            detail.amountForInstallment(installment.number),
-                      ),
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '${payment?.paidEarly == true ? 'Scheduled' : 'Due'}: '
-                      '${formatDate(installment.dueDate)}',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                    if (payment != null) ...[
-                      const SizedBox(height: 3),
-                      Text(
-                        '${payment.paidEarly ? 'Paid early' : 'Paid'}: '
-                        '${formatDateTime(payment.paidOn)}',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                    if (state == _InstallmentState.paidBeforeTracking) ...[
-                      const SizedBox(height: 3),
-                      Text(
-                        'Paid before tracking began',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 3),
-                    Text(
-                      'Installment ${installment.number}',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
+        Stack(
+          children: [
+            if (index < installments.length - 1)
+              Positioned(
+                left: 14,
+                top: 22,
+                bottom: 0,
+                child: Container(
+                  width: 2,
+                  color: installment.isPaid && installments[index + 1].isPaid
+                      ? AppTheme.receive
+                      : Theme.of(context).colorScheme.outlineVariant,
                 ),
               ),
-            ],
-          ),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(
+                  width: 30,
+                  child: Icon(
+                    _stateIcon(state),
+                    size: 22,
+                    color: _stateColor(context, state),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 18),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                _monthLabel(installment.dueDate),
+                                style: Theme.of(context).textTheme.titleSmall
+                                    ?.copyWith(fontWeight: FontWeight.w800),
+                              ),
+                            ),
+                            StatusPill(
+                              label:
+                                  !installment.isPaid &&
+                                      installment.number ==
+                                          detail
+                                              .nextUnpaidInstallment
+                                              ?.number &&
+                                      state != _InstallmentState.overdue
+                                  ? 'Due next'
+                                  : _stateLabel(state),
+                              color: _stateColor(context, state),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          formatMoney(
+                            payment?.amountPaise ??
+                                detail.amountForInstallment(installment.number),
+                          ),
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(fontWeight: FontWeight.w900),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '${payment?.paidEarly == true ? 'Scheduled' : 'Due'}: '
+                          '${formatDate(installment.dueDate)}',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                        if (payment != null) ...[
+                          const SizedBox(height: 3),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  'Paid ${formatDateTime(payment.paidOn)}',
+                                  style: Theme.of(context).textTheme.bodySmall
+                                      ?.copyWith(color: AppTheme.mutedText),
+                                ),
+                              ),
+                              IconButton(
+                                tooltip:
+                                    'Revert installment ${installment.number}',
+                                visualDensity: VisualDensity.compact,
+                                onPressed: () => onRevert(payment.id),
+                                icon: const Icon(Icons.undo, size: 18),
+                              ),
+                            ],
+                          ),
+                        ],
+                        if (state == _InstallmentState.paidBeforeTracking) ...[
+                          const SizedBox(height: 3),
+                          Text(
+                            'Paid before tracking began',
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurfaceVariant,
+                                ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
         ),
       );
     }
@@ -816,6 +1023,134 @@ class _InstallmentTimeline extends StatelessWidget {
       _InstallmentState.upcoming => colors.outline,
     };
   }
+}
+
+class _EmiWhatIf extends StatefulWidget {
+  const _EmiWhatIf({required this.detail});
+  final EmiDetail detail;
+
+  @override
+  State<_EmiWhatIf> createState() => _EmiWhatIfState();
+}
+
+class _EmiWhatIfState extends State<_EmiWhatIf> {
+  double _fraction = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final detail = widget.detail;
+    final rate =
+        (detail.emi.interestRate ?? 0) /
+        100 /
+        switch (detail.emi.frequency) {
+          PaymentFrequency.weekly => 52,
+          PaymentFrequency.quarterly => 4,
+          PaymentFrequency.yearly => 1,
+          _ => 12,
+        };
+    final unpaid = detail.installments.where((item) => !item.isPaid).toList();
+    final planned = unpaid
+        .map((item) => detail.amountForInstallment(item.number))
+        .toList();
+    var principal = 0.0;
+    for (var index = planned.length - 1; index >= 0; index--) {
+      principal = (principal + planned[index]) / (1 + rate);
+    }
+    final extra = (principal * _fraction).round();
+    var balance = math.max(0.0, principal - extra);
+    var projectedPayments = 0;
+    var projectedTotal = extra;
+    for (final amount in planned) {
+      if (balance <= 0.5) break;
+      balance *= 1 + rate;
+      final paid = math.min(balance, amount.toDouble());
+      projectedTotal += paid.round();
+      balance -= paid;
+      projectedPayments++;
+    }
+    final saved = math.max(0, detail.remainingBalancePaise - projectedTotal);
+    final periodsSooner = planned.length - projectedPayments;
+    final monthsSooner = switch (detail.emi.frequency) {
+      PaymentFrequency.weekly => (periodsSooner * 7 / 30).round(),
+      PaymentFrequency.quarterly => periodsSooner * 3,
+      PaymentFrequency.yearly => periodsSooner * 12,
+      _ => periodsSooner,
+    };
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'What if',
+          style: Theme.of(
+            context,
+          ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 10),
+        Text(
+          'Pay extra ${formatMoney(extra)} now',
+          style: Theme.of(context).textTheme.titleSmall,
+        ),
+        Slider(
+          value: _fraction,
+          onChanged: (value) => setState(() => _fraction = value),
+        ),
+        Text(
+          '$monthsSooner ${monthsSooner == 1 ? 'month' : 'months'} sooner · Estimated ${formatMoney(saved)} interest saved',
+          style: Theme.of(
+            context,
+          ).textTheme.bodySmall?.copyWith(color: AppTheme.mutedText),
+        ),
+      ],
+    );
+  }
+}
+
+class _EmiCelebration extends StatelessWidget {
+  const _EmiCelebration();
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) => TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: 1),
+      duration: const Duration(milliseconds: 1300),
+      builder: (context, progress, child) => Stack(
+        children: [
+          for (var index = 0; index < 18; index++)
+            Positioned(
+              left:
+                  constraints.maxWidth / 2 +
+                  math.cos(index * math.pi * 2 / 18) *
+                      progress *
+                      constraints.maxWidth *
+                      0.45,
+              top:
+                  constraints.maxHeight * 0.28 +
+                  math.sin(index * math.pi * 2 / 18) *
+                      progress *
+                      constraints.maxHeight *
+                      0.3 +
+                  progress * progress * 100,
+              child: Opacity(
+                opacity: 1 - progress,
+                child: Transform.rotate(
+                  angle: progress * math.pi * 3,
+                  child: Container(
+                    width: 8,
+                    height: 16,
+                    color: [
+                      AppTheme.accent,
+                      AppTheme.receive,
+                      AppTheme.emi,
+                      AppTheme.subscriptions,
+                    ][index % 4],
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    ),
+  );
 }
 
 enum _InstallmentState {

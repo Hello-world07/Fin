@@ -162,6 +162,7 @@ class SegmentedToggle<T extends Object> extends StatelessWidget {
     required this.onSelectionChanged,
     this.selectedBackground,
     this.selectedForeground,
+    this.filled = false,
   });
 
   final List<ButtonSegment<T>> segments;
@@ -169,6 +170,7 @@ class SegmentedToggle<T extends Object> extends StatelessWidget {
   final ValueChanged<Set<T>>? onSelectionChanged;
   final Color? selectedBackground;
   final Color? selectedForeground;
+  final bool filled;
 
   @override
   Widget build(BuildContext context) => SegmentedButton<T>(
@@ -178,13 +180,18 @@ class SegmentedToggle<T extends Object> extends StatelessWidget {
     showSelectedIcon: false,
     style: ButtonStyle(
       backgroundColor: WidgetStateProperty.resolveWith(
-        (states) =>
-            states.contains(WidgetState.selected) ? selectedBackground : null,
+        (states) => states.contains(WidgetState.selected)
+            ? selectedBackground
+            : filled
+            ? financeFieldFill(context)
+            : null,
       ),
       foregroundColor: WidgetStateProperty.resolveWith(
         (states) =>
             states.contains(WidgetState.selected) ? selectedForeground : null,
       ),
+      side: filled ? const WidgetStatePropertyAll(BorderSide.none) : null,
+      shape: filled ? const WidgetStatePropertyAll(StadiumBorder()) : null,
     ),
   );
 }

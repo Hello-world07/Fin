@@ -1,4 +1,4 @@
-import 'package:drift/drift.dart';
+import 'package:drift/drift.dart' hide isNull;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:personal_finance/src/data/database.dart';
@@ -112,6 +112,72 @@ void main() {
     expect(detail.payments, hasLength(2));
     expect(detail.payments.last.paidEarly, isTrue);
     expect(detail.remainingInstallments, 1);
+  });
+
+  test('undo restores first unpaid date and remaining count', () async {
+    final id = await createEmi();
+    final first = await repo.emiDetail(id);
+    expect(
+      await repo.markEmiPaid(
+        id,
+        expectedDueDate: first.nextUnpaidInstallment!.dueDate,
+      ),
+      isTrue,
+    );
+    final afterPayment = await repo.emiDetail(id);
+    expect(afterPayment.nextUnpaidInstallment!.number, 2);
+
+    expect(
+      await repo.revertEmiPayment(id, afterPayment.payments.single.id),
+      isTrue,
+    );
+    final reverted = await repo.emiDetail(id);
+    expect(reverted.nextUnpaidInstallment!.number, 1);
+    expect(reverted.emi.nextDueDate, first.nextUnpaidInstallment!.dueDate);
+    expect(reverted.remainingInstallments, 3);
+    expect(reverted.emi.status, EmiStatus.active);
+    expect(
+      await repo.revertEmiPayment(id, afterPayment.payments.single.id),
+      isFalse,
+    );
+  });
+
+  test('undo final payment reopens a completed EMI', () async {
+    final id = await createEmi(tenure: 1);
+    final first = await repo.emiDetail(id);
+    expect(
+      await repo.markEmiPaid(
+        id,
+        expectedDueDate: first.nextUnpaidInstallment!.dueDate,
+      ),
+      isTrue,
+    );
+    final completed = await repo.emiDetail(id);
+    expect(completed.emi.status, EmiStatus.completed);
+    expect(completed.nextUnpaidInstallment, isNull);
+
+    expect(
+      await repo.revertEmiPayment(id, completed.payments.single.id),
+      isTrue,
+    );
+    final reopened = await repo.emiDetail(id);
+    expect(reopened.emi.status, EmiStatus.active);
+    expect(reopened.nextUnpaidInstallment!.number, 1);
+    expect(reopened.remainingInstallments, 1);
+  });
+
+  test('undo earlier paid node selects earliest unpaid installment', () async {
+    final id = await createEmi();
+    for (var index = 0; index < 2; index++) {
+      final next = (await repo.emiDetail(id)).nextUnpaidInstallment!;
+      expect(await repo.markEmiPaid(id, expectedDueDate: next.dueDate), isTrue);
+    }
+    final paid = await repo.emiDetail(id);
+    expect(await repo.revertEmiPayment(id, paid.payments.first.id), isTrue);
+    final reverted = await repo.emiDetail(id);
+    expect(reverted.nextUnpaidInstallment!.number, 1);
+    expect(reverted.installments[1].isPaid, isTrue);
+    expect(reverted.remainingInstallments, 2);
   });
 
   test('EMI payment window opens five days before due date', () {
