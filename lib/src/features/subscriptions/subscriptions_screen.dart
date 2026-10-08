@@ -3,22 +3,33 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/formatters.dart';
+import '../../core/app_theme.dart';
 import '../../core/providers.dart';
 import '../../data/database.dart';
+import '../../data/repositories.dart';
 import '../../domain/due_status.dart';
 import '../../domain/enums.dart';
 import '../../domain/money_math.dart';
+import '../../domain/subscription_schedule.dart';
 import '../../shared/async_view.dart';
 import '../../shared/empty_state.dart';
 import '../../shared/forms.dart';
 import '../../shared/finance_form_widgets.dart';
 import '../../shared/calculator_sheet.dart';
 
-class SubscriptionsScreen extends ConsumerWidget {
+class SubscriptionsScreen extends ConsumerStatefulWidget {
   const SubscriptionsScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<SubscriptionsScreen> createState() =>
+      _SubscriptionsScreenState();
+}
+
+class _SubscriptionsScreenState extends ConsumerState<SubscriptionsScreen> {
+  bool _showCancelled = false;
+
+  @override
+  Widget build(BuildContext context) {
     final repo = ref.watch(financeRepositoryProvider);
     return Scaffold(
       appBar: AppBar(title: const Text('Subscriptions')),
@@ -32,116 +43,164 @@ class SubscriptionsScreen extends ConsumerWidget {
         value: ref.watch(subscriptionsProvider),
         builder: (items) {
           if (items.isEmpty) {
-            return const EmptyState(
+            return EmptyState(
               icon: Icons.autorenew,
               title: 'No subscriptions',
-              message:
-                  'Add monthly or yearly renewals so they show up before billing.',
+              message: 'Add your first subscription to keep renewals in view.',
+              actionLabel: 'Add Subscription',
+              onAction: () =>
+                  openFinanceSheet(context, const SubscriptionFormSheet()),
             );
           }
-          return ListView.separated(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
-            itemCount: items.length + 1,
-            separatorBuilder: (_, _) => const Divider(height: 1),
-            itemBuilder: (context, index) {
-              if (index == 0) return _SubscriptionSummary(items: items);
-              final item = items[index - 1];
-              final dueText = item.status == SubscriptionStatus.active
-                  ? relativeDueText(item.nextBillingDate, DateTime.now())
-                  : 'Not active';
-              final dueColor = dueText.startsWith('Overdue')
-                  ? Theme.of(context).colorScheme.error
-                  : dueText == 'Due today'
-                  ? Theme.of(context).colorScheme.primary
-                  : Theme.of(context).colorScheme.onSurfaceVariant;
-              return ListTile(
-                contentPadding: const EdgeInsets.symmetric(vertical: 8),
-                title: Text(
-                  displayName(item.name),
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('${item.frequency.label} · ${item.status.label}'),
-                    Text(
-                      'Next billing date · ${formatDate(item.nextBillingDate)}',
-                    ),
-                    Text(
-                      dueText,
-                      style: TextStyle(
-                        color: dueColor,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      formatMoney(item.amountPaise),
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    PopupMenuButton<String>(
-                      icon: const Icon(Icons.more_vert),
-                      onSelected: (selection) async {
-                        if (selection == 'delete') {
-                          final confirmed = await showDialog<bool>(
-                            context: context,
-                            builder: (context) => AlertDialog(
-                              title: Text(
-                                'Delete \'${displayName(item.name)}\'?',
-                              ),
-                              content: const Text(
-                                'This removes the subscription from your tracker.',
-                              ),
-                              actions: [
-                                TextButton(
-                                  onPressed: () =>
-                                      Navigator.pop(context, false),
-                                  child: const Text('Cancel'),
-                                ),
-                                FilledButton(
-                                  onPressed: () => Navigator.pop(context, true),
-                                  child: const Text('Delete'),
-                                ),
-                              ],
-                            ),
-                          );
-                          if (confirmed == true) {
-                            await repo.deleteSubscription(item.id);
-                          }
-                        } else {
-                          final status = SubscriptionStatus.values.firstWhere(
-                            (value) => value.name == selection,
-                          );
-                          await repo.setSubscriptionStatus(item.id, status);
-                        }
-                      },
-                      itemBuilder: (context) => [
-                        for (final status in SubscriptionStatus.values)
-                          PopupMenuItem(
-                            value: status.name,
-                            child: Text(status.label),
-                          ),
-                        const PopupMenuItem(
-                          value: 'delete',
-                          child: Text('Delete subscription'),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-                onTap: () => openFinanceSheet(
-                  context,
-                  SubscriptionFormSheet(subscription: item),
-                ),
-                leading: const CircleAvatar(child: Icon(Icons.autorenew)),
+          final today = DateTime.now();
+          DateTime due(Subscription item) => nextSubscriptionBillingDate(
+            item.nextBillingDate,
+            item.frequency,
+            today,
+          );
+          final active =
+              items
+                  .where((item) => item.status == SubscriptionStatus.active)
+                  .toList()
+                ..sort((a, b) => due(a).compareTo(due(b)));
+          final paused = items
+              .where((item) => item.status == SubscriptionStatus.paused)
+              .toList();
+          final cancelled = items
+              .where(
+                (item) =>
+                    item.status != SubscriptionStatus.active &&
+                    item.status != SubscriptionStatus.paused,
+              )
+              .toList();
+          final renewing = active.where((item) {
+            final days = due(
+              item,
+            ).difference(DateTime(today.year, today.month, today.day)).inDays;
+            return days >= 0 && days <= 7;
+          }).toList();
+          final monthly = active.fold<int>(
+            0,
+            (sum, item) =>
+                sum + monthlyEquivalentPaise(item.amountPaise, item.frequency),
+          );
+          final yearly = monthly * 12;
+          final largest = active
+              .where((item) => item.frequency != PaymentFrequency.once)
+              .fold<Subscription?>(
+                null,
+                (best, item) =>
+                    best == null ||
+                        monthlyEquivalentPaise(
+                              item.amountPaise,
+                              item.frequency,
+                            ) >
+                            monthlyEquivalentPaise(
+                              best.amountPaise,
+                              best.frequency,
+                            )
+                    ? item
+                    : best,
               );
-            },
+          return ListView(
+            padding: EdgeInsets.fromLTRB(
+              20,
+              8,
+              20,
+              MediaQuery.paddingOf(context).bottom + 112,
+            ),
+            children: [
+              _SubscriptionHero(monthly: monthly, yearly: yearly),
+              if (renewing.isNotEmpty) ...[
+                const SizedBox(height: 28),
+                const _ListHeading('Renewing soon'),
+                const SizedBox(height: 12),
+                SizedBox(
+                  height: 100,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: renewing.length,
+                    separatorBuilder: (_, _) => const SizedBox(width: 10),
+                    itemBuilder: (context, index) {
+                      final item = renewing[index];
+                      return Container(
+                        width: 166,
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.surfaceContainerLow,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              displayName(item.name),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const Spacer(),
+                            Text(
+                              formatMoney(item.amountPaise),
+                              style: Theme.of(context).textTheme.titleSmall
+                                  ?.copyWith(fontWeight: FontWeight.w800),
+                            ),
+                            Text(
+                              relativeDueText(due(item), today),
+                              style: Theme.of(context).textTheme.labelSmall,
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+              const SizedBox(height: 28),
+              _ListHeading('Active (${active.length})'),
+              for (final item in active)
+                _SubscriptionRow(item: item, due: due(item), repo: repo),
+              const SizedBox(height: 22),
+              _ListHeading('Paused (${paused.length})'),
+              for (final item in paused)
+                _SubscriptionRow(item: item, due: due(item), repo: repo),
+              const SizedBox(height: 22),
+              InkWell(
+                onTap: () => setState(() => _showCancelled = !_showCancelled),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: _ListHeading('Cancelled (${cancelled.length})'),
+                    ),
+                    Icon(
+                      _showCancelled
+                          ? Icons.keyboard_arrow_up
+                          : Icons.keyboard_arrow_down,
+                    ),
+                  ],
+                ),
+              ),
+              if (_showCancelled)
+                for (final item in cancelled)
+                  _SubscriptionRow(item: item, due: due(item), repo: repo),
+              if (active.isNotEmpty) ...[
+                const SizedBox(height: 28),
+                _CategoryBreakdown(items: active),
+              ],
+              if (largest != null) ...[
+                const SizedBox(height: 20),
+                Text(
+                  'Pausing ${displayName(largest.name)} would save ${formatMoney(monthlyEquivalentPaise(largest.amountPaise, largest.frequency) * 12)} a year',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ],
           );
         },
       ),
@@ -149,60 +208,326 @@ class SubscriptionsScreen extends ConsumerWidget {
   }
 }
 
-class _SubscriptionSummary extends StatelessWidget {
-  const _SubscriptionSummary({required this.items});
+class _ListHeading extends StatelessWidget {
+  const _ListHeading(this.text);
+  final String text;
+  @override
+  Widget build(BuildContext context) => Text(
+    text,
+    style: Theme.of(
+      context,
+    ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+  );
+}
 
+class _SubscriptionHero extends StatelessWidget {
+  const _SubscriptionHero({required this.monthly, required this.yearly});
+  final int monthly;
+  final int yearly;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'MONTHLY RECURRING',
+          style: theme.textTheme.labelMedium?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 5),
+        Text(
+          formatMoney(monthly),
+          style: theme.textTheme.headlineLarge?.copyWith(
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 10),
+        Text(
+          '${formatMoney(yearly)} per year  ·  ${formatMoney((yearly / 365).round())} per day',
+          style: theme.textTheme.bodyMedium?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SubscriptionRow extends StatelessWidget {
+  const _SubscriptionRow({
+    required this.item,
+    required this.due,
+    required this.repo,
+  });
+  final Subscription item;
+  final DateTime due;
+  final FinanceRepository repo;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final muted = item.status != SubscriptionStatus.active;
+    final color = _categoryColor(item.category);
+    return Dismissible(
+      key: ValueKey(item.id),
+      background: _swipeBackground(
+        theme.colorScheme.primary,
+        item.status == SubscriptionStatus.paused
+            ? Icons.play_arrow
+            : Icons.pause,
+        item.status == SubscriptionStatus.paused ? 'Resume' : 'Pause',
+        Alignment.centerLeft,
+      ),
+      secondaryBackground: _swipeBackground(
+        theme.colorScheme.error,
+        Icons.delete_outline,
+        'Delete',
+        Alignment.centerRight,
+      ),
+      confirmDismiss: (direction) async {
+        if (direction == DismissDirection.startToEnd) {
+          try {
+            await repo.setSubscriptionStatus(
+              item.id,
+              item.status == SubscriptionStatus.paused
+                  ? SubscriptionStatus.active
+                  : SubscriptionStatus.paused,
+            );
+          } catch (_) {
+            if (context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Could not change subscription status'),
+                ),
+              );
+            }
+          }
+          return false;
+        }
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: Text('Delete ${displayName(item.name)}?'),
+            content: const Text(
+              'This removes the subscription from your tracker.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('Delete'),
+              ),
+            ],
+          ),
+        );
+        if (confirmed != true) return false;
+        try {
+          await repo.deleteSubscription(item.id);
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('${displayName(item.name)} deleted'),
+                action: SnackBarAction(
+                  label: 'Undo',
+                  onPressed: () async {
+                    try {
+                      await repo.restoreSubscription(item);
+                    } catch (_) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Could not restore subscription'),
+                          ),
+                        );
+                      }
+                    }
+                  },
+                ),
+              ),
+            );
+          }
+          return true;
+        } catch (_) {
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Could not delete subscription')),
+            );
+          }
+          return false;
+        }
+      },
+      child: InkWell(
+        onTap: () => openFinanceSheet(
+          context,
+          SubscriptionFormSheet(subscription: item),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 15),
+          child: Row(
+            children: [
+              CircleAvatar(
+                backgroundColor: color.withValues(alpha: 0.12),
+                child: Text(
+                  item.name.isEmpty ? '?' : item.name[0].toUpperCase(),
+                  style: TextStyle(color: color, fontWeight: FontWeight.w800),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      displayName(item.name),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodyLarge?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        color: muted
+                            ? theme.colorScheme.onSurfaceVariant
+                            : null,
+                      ),
+                    ),
+                    Text(
+                      '${item.frequency.label} · ${formatDate(due)}',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    formatMoney(item.amountPaise),
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                      color: muted ? theme.colorScheme.onSurfaceVariant : null,
+                    ),
+                  ),
+                  Text(
+                    muted
+                        ? item.status.label
+                        : relativeDueText(due, DateTime.now()),
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: muted ? theme.colorScheme.onSurfaceVariant : color,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _swipeBackground(
+    Color color,
+    IconData icon,
+    String label,
+    Alignment alignment,
+  ) => Container(
+    color: color.withValues(alpha: 0.12),
+    alignment: alignment,
+    padding: const EdgeInsets.symmetric(horizontal: 22),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, color: color),
+        const SizedBox(width: 5),
+        Text(
+          label,
+          style: TextStyle(color: color, fontWeight: FontWeight.w700),
+        ),
+      ],
+    ),
+  );
+}
+
+Color _categoryColor(String? category) => switch (category?.toLowerCase()) {
+  'entertainment' || 'streaming' => AppTheme.subscriptions,
+  'utilities' => AppTheme.emi,
+  'education' => AppTheme.receive,
+  'software' => AppTheme.heroEnd,
+  _ => AppTheme.seed,
+};
+
+class _CategoryBreakdown extends StatelessWidget {
+  const _CategoryBreakdown({required this.items});
   final List<Subscription> items;
 
   @override
   Widget build(BuildContext context) {
-    final active = items
-        .where((item) => item.status == SubscriptionStatus.active)
-        .toList();
-    final monthly = active.fold<int>(
-      0,
-      (sum, item) =>
-          sum + monthlyEquivalentPaise(item.amountPaise, item.frequency),
-    );
-    final activeLabel = active.length == 1 ? 'subscription' : 'subscriptions';
-    final colors = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(0, 8, 0, 12),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        decoration: BoxDecoration(
-          color: colors.surfaceContainerLow,
-          border: Border.all(color: colors.outlineVariant),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                '${active.length} active $activeLabel',
-                style: Theme.of(
-                  context,
-                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-              ),
-            ),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
+    final totals = <String, int>{};
+    for (final item in items) {
+      final category = item.category?.isNotEmpty == true
+          ? item.category!
+          : 'Other';
+      totals.update(
+        category,
+        (value) =>
+            value + monthlyEquivalentPaise(item.amountPaise, item.frequency),
+        ifAbsent: () =>
+            monthlyEquivalentPaise(item.amountPaise, item.frequency),
+      );
+    }
+    totals.removeWhere((_, value) => value <= 0);
+    final total = totals.values.fold<int>(0, (sum, value) => sum + value);
+    if (total == 0) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const _ListHeading('By category'),
+        const SizedBox(height: 12),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: SizedBox(
+            height: 8,
+            child: Row(
               children: [
-                Text(
-                  formatMoney(monthly),
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w800,
+                for (final entry in totals.entries)
+                  Expanded(
+                    flex: entry.value,
+                    child: ColoredBox(color: _categoryColor(entry.key)),
                   ),
-                ),
-                Text(
-                  '/ month recurring',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
               ],
             ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 16,
+          runSpacing: 8,
+          children: [
+            for (final entry in totals.entries)
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircleAvatar(
+                    radius: 4,
+                    backgroundColor: _categoryColor(entry.key),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    entry.key,
+                    style: Theme.of(context).textTheme.labelMedium,
+                  ),
+                ],
+              ),
           ],
         ),
-      ),
+      ],
     );
   }
 }
@@ -212,10 +537,16 @@ class SubscriptionFormSheet extends ConsumerStatefulWidget {
     super.key,
     this.subscription,
     this.initialAmount,
+    this.initialName,
+    this.initialFrequency,
+    this.initialNextBillingDate,
   });
 
   final Subscription? subscription;
   final String? initialAmount;
+  final String? initialName;
+  final PaymentFrequency? initialFrequency;
+  final DateTime? initialNextBillingDate;
 
   @override
   ConsumerState<SubscriptionFormSheet> createState() =>
@@ -225,7 +556,7 @@ class SubscriptionFormSheet extends ConsumerStatefulWidget {
 class _SubscriptionFormSheetState extends ConsumerState<SubscriptionFormSheet> {
   final _formKey = GlobalKey<FormState>();
   late final _name = TextEditingController(
-    text: widget.subscription?.name ?? '',
+    text: widget.subscription?.name ?? widget.initialName ?? '',
   );
   late final _amount = TextEditingController(
     text:
@@ -238,9 +569,14 @@ class _SubscriptionFormSheetState extends ConsumerState<SubscriptionFormSheet> {
   late final _notes = TextEditingController(
     text: widget.subscription?.notes ?? '',
   );
-  late DateTime _next = widget.subscription?.nextBillingDate ?? DateTime.now();
+  late DateTime _next =
+      widget.subscription?.nextBillingDate ??
+      widget.initialNextBillingDate ??
+      DateTime.now();
   late PaymentFrequency _frequency =
-      widget.subscription?.frequency ?? PaymentFrequency.monthly;
+      widget.subscription?.frequency ??
+      widget.initialFrequency ??
+      PaymentFrequency.monthly;
   late SubscriptionStatus _status =
       widget.subscription?.status ?? SubscriptionStatus.active;
   String? _saveError;
@@ -370,6 +706,7 @@ class _SubscriptionFormSheetState extends ConsumerState<SubscriptionFormSheet> {
                       child: SegmentedToggle<PaymentFrequency>(
                         segments: frequencySegments,
                         selected: {_frequency},
+                        filled: true,
                         onSelectionChanged: (values) =>
                             setState(() => _frequency = values.single),
                       ),
@@ -380,6 +717,7 @@ class _SubscriptionFormSheetState extends ConsumerState<SubscriptionFormSheet> {
                       child: SegmentedToggle<SubscriptionStatus>(
                         segments: statusSegments,
                         selected: {_status},
+                        filled: true,
                         onSelectionChanged: (values) =>
                             setState(() => _status = values.single),
                       ),

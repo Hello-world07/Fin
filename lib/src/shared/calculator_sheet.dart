@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
+import '../core/app_theme.dart';
 import '../core/formatters.dart';
-import '../domain/calculator_math.dart';
+import '../features/assistant/assistant_math.dart';
+import 'calculator_modes.dart';
 import 'finance_bottom_sheet.dart';
+import 'finance_form_widgets.dart';
 
 enum CalculatorDestination { emi, moneyGiven, moneyBorrowed, subscription }
 
@@ -12,16 +16,16 @@ Future<String?> openCalculator(
   String? amountLabel,
   void Function(CalculatorDestination destination, String amount)?
   onDestination,
-}) {
-  return showFinanceBottomSheet<String>(
-    context,
-    builder: (_) => CalculatorSheet(
-      initial: initial,
-      amountLabel: amountLabel,
-      onDestination: onDestination,
-    ),
-  );
-}
+  ValueChanged<CalculatorEmiDraft>? onEmiDraft,
+}) => showFinanceBottomSheet<String>(
+  context,
+  builder: (_) => CalculatorSheet(
+    initial: initial,
+    amountLabel: amountLabel,
+    onDestination: onDestination,
+    onEmiDraft: onEmiDraft,
+  ),
+);
 
 class CalculatorSheet extends StatefulWidget {
   const CalculatorSheet({
@@ -29,34 +33,128 @@ class CalculatorSheet extends StatefulWidget {
     required this.initial,
     this.amountLabel,
     this.onDestination,
+    this.onEmiDraft,
   });
 
   final String initial;
   final String? amountLabel;
   final void Function(CalculatorDestination destination, String amount)?
   onDestination;
+  final ValueChanged<CalculatorEmiDraft>? onEmiDraft;
 
   @override
   State<CalculatorSheet> createState() => _CalculatorSheetState();
 }
 
+enum _CalculatorMode { calc, emi, tools }
+
+class _TapeEntry {
+  const _TapeEntry(this.expression, this.result);
+  final String expression;
+  final double result;
+}
+
 class _CalculatorSheetState extends State<CalculatorSheet> {
-  late String _expression = widget.initial.trim();
-  final _expressionScrollController = ScrollController();
-  String? _error;
+  static final List<_TapeEntry> _tape = [];
+  late final _expression = ValueNotifier<String>(widget.initial.trim());
+  final _error = ValueNotifier<String?>(null);
+  _CalculatorMode _mode = _CalculatorMode.calc;
+  bool _showDestinations = false;
+  double? _modeAmount;
 
   @override
   void dispose() {
-    _expressionScrollController.dispose();
+    _expression.dispose();
+    _error.dispose();
     super.dispose();
+  }
+
+  double? _result() {
+    if (_expression.value.trim().isEmpty) return 0;
+    try {
+      return evaluateAssistantMath(_expression.value);
+    } on FormatException {
+      return null;
+    }
+  }
+
+  String _plain(double value) {
+    if (value == value.roundToDouble()) return value.toInt().toString();
+    return value.toStringAsFixed(2).replaceFirst(RegExp(r'\.?0+$'), '');
+  }
+
+  void _press(String key) {
+    HapticFeedback.selectionClick();
+    _error.value = null;
+    final current = _expression.value;
+    if (key == 'AC') {
+      _expression.value = '';
+    } else if (key == '⌫') {
+      if (current.isNotEmpty) {
+        _expression.value = current.substring(0, current.length - 1);
+      }
+    } else if (key == '=') {
+      final result = _result();
+      if (result == null) {
+        _error.value = 'Check the expression';
+        return;
+      }
+      if (current.isNotEmpty) {
+        setState(() {
+          _tape.insert(0, _TapeEntry(current, result));
+          if (_tape.length > 20) _tape.removeLast();
+        });
+      }
+      _expression.value = _plain(result);
+    } else if (current.length < 256) {
+      _expression.value = '$current$key';
+    }
+  }
+
+  double? get _activeAmount =>
+      _mode == _CalculatorMode.calc ? _result() : _modeAmount;
+
+  void _useResult() {
+    final result = _activeAmount;
+    if (result == null || !result.isFinite || result <= 0) {
+      _error.value = 'Enter a valid amount';
+      return;
+    }
+    Navigator.pop(context, _plain(result));
+  }
+
+  void _useDestination(CalculatorDestination destination) {
+    final result = _activeAmount;
+    if (result == null || !result.isFinite || result <= 0) {
+      _error.value = 'Enter a valid amount';
+      return;
+    }
+    final amount = _plain(result);
+    Navigator.pop(context, amount);
+    widget.onDestination?.call(destination, amount);
+  }
+
+  void _useEmiDraft(CalculatorEmiDraft draft) {
+    _modeAmount = draft.monthlyEmi;
+    if (widget.onEmiDraft == null) {
+      _useDestination(CalculatorDestination.emi);
+      return;
+    }
+    Navigator.pop(context, _plain(draft.monthlyEmi));
+    widget.onEmiDraft!(draft);
   }
 
   @override
   Widget build(BuildContext context) {
-    final result = _safeResult();
-    return SingleChildScrollView(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(18, 18, 18, 24),
+    final theme = Theme.of(context);
+    final size = MediaQuery.sizeOf(context);
+    final landscape = size.width > size.height;
+    return ConstrainedBox(
+      constraints: BoxConstraints(
+        maxHeight: size.height * (landscape ? .88 : .92),
+      ),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -66,210 +164,323 @@ class _CalculatorSheetState extends State<CalculatorSheet> {
                 Expanded(
                   child: Text(
                     'Calculator',
-                    style: Theme.of(context).textTheme.titleLarge,
+                    style: theme.textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                 ),
                 IconButton(
-                  tooltip: 'Clear',
-                  onPressed: () => setState(() => _expression = ''),
-                  icon: const Icon(Icons.refresh),
+                  tooltip: 'Clear history',
+                  onPressed: () => setState(_tape.clear),
+                  icon: const Icon(Icons.history_toggle_off_outlined),
                 ),
               ],
+            ),
+            const SizedBox(height: 8),
+            SegmentedToggle<_CalculatorMode>(
+              segments: const [
+                ButtonSegment(value: _CalculatorMode.calc, label: Text('Calc')),
+                ButtonSegment(value: _CalculatorMode.emi, label: Text('EMI')),
+                ButtonSegment(
+                  value: _CalculatorMode.tools,
+                  label: Text('Tools'),
+                ),
+              ],
+              selected: {_mode},
+              selectedBackground: AppTheme.heroStart,
+              selectedForeground: AppTheme.onHero,
+              filled: true,
+              onSelectionChanged: (value) => setState(() {
+                _mode = value.first;
+                _showDestinations = false;
+                _modeAmount = null;
+              }),
             ),
             const SizedBox(height: 14),
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  SingleChildScrollView(
-                    controller: _expressionScrollController,
-                    scrollDirection: Axis.horizontal,
-                    reverse: true,
-                    child: Text(
-                      _expression.isEmpty ? '0' : _expression,
-                      maxLines: 1,
-                      softWrap: false,
-                      style: Theme.of(context).textTheme.headlineMedium,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    _error ??
-                        (result == null ? '' : '= ${_formatCurrency(result)}'),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: _error == null
-                          ? null
-                          : Theme.of(context).colorScheme.error,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            if (widget.amountLabel == null) ...[
+            if (_mode == _CalculatorMode.calc) ...[
+              _display(context),
               const SizedBox(height: 12),
-              Row(
-                children: [
-                  for (final entry in const [
-                    (CalculatorDestination.emi, 'Add to EMI'),
-                    (CalculatorDestination.moneyGiven, 'Money Given'),
-                    (CalculatorDestination.moneyBorrowed, 'Money Borrowed'),
-                    (CalculatorDestination.subscription, 'Subscription'),
-                  ])
-                    Expanded(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 2),
-                        child: SizedBox(
-                          height: 38,
-                          child: OutlinedButton(
-                            style: OutlinedButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 4,
-                              ),
-                              visualDensity: VisualDensity.compact,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                            ),
-                            onPressed: () => _useDestination(entry.$1),
-                            child: FittedBox(
-                              fit: BoxFit.scaleDown,
-                              child: Text(
-                                entry.$2,
-                                maxLines: 1,
-                                style: Theme.of(context).textTheme.labelSmall,
-                              ),
-                            ),
-                          ),
-                        ),
+              _keypad(landscape),
+            ],
+            if (_mode == _CalculatorMode.emi)
+              CalculatorEmiMode(
+                onAmount: (value) => _modeAmount = value,
+                onAdd: _useEmiDraft,
+              ),
+            if (_mode == _CalculatorMode.tools)
+              CalculatorToolsMode(onAmount: (value) => _modeAmount = value),
+            const SizedBox(height: 12),
+            ValueListenableBuilder<String?>(
+              valueListenable: _error,
+              builder: (_, error, _) => error == null
+                  ? const SizedBox.shrink()
+                  : Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Text(
+                        error,
+                        style: TextStyle(color: theme.colorScheme.error),
                       ),
                     ),
-                ],
+            ),
+            if (widget.amountLabel != null)
+              FilledButton.icon(
+                onPressed: _useResult,
+                icon: const Icon(Icons.check),
+                label: Text('Use ${widget.amountLabel}'),
+              )
+            else ...[
+              FilledButton.icon(
+                onPressed: () =>
+                    setState(() => _showDestinations = !_showDestinations),
+                icon: Icon(_showDestinations ? Icons.close : Icons.call_made),
+                label: const Text('Use this amount'),
               ),
-            ],
-            const SizedBox(height: 12),
-            for (final row in [
-              const ['AC', '%', '÷', '×'],
-              const ['7', '8', '9', '-'],
-              const ['4', '5', '6', '+'],
-              const ['1', '2', '3', '⌫'],
-              [
-                '0',
-                '.',
-                '=',
-                widget.amountLabel == null
-                    ? 'Back'
-                    : 'Use ${widget.amountLabel}',
-              ],
-            ])
-              Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: Row(
-                  children: [
-                    for (final key in row)
-                      Expanded(
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 4),
-                          child: SizedBox(
-                            height: 54,
-                            child: FilledButton.tonal(
-                              onPressed: () => _tap(key),
-                              child: FittedBox(child: Text(key)),
-                            ),
-                          ),
-                        ),
+              if (_showDestinations)
+                Padding(
+                  padding: const EdgeInsets.only(top: 10),
+                  child: Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      _destinationChip(
+                        CalculatorDestination.emi,
+                        Icons.account_balance_outlined,
+                        'EMI',
                       ),
-                  ],
+                      _destinationChip(
+                        CalculatorDestination.moneyGiven,
+                        Icons.north_east,
+                        'Money given',
+                      ),
+                      _destinationChip(
+                        CalculatorDestination.moneyBorrowed,
+                        Icons.south_west,
+                        'Money borrowed',
+                      ),
+                      _destinationChip(
+                        CalculatorDestination.subscription,
+                        Icons.autorenew,
+                        'Subscription',
+                      ),
+                    ],
+                  ),
                 ),
-              ),
+            ],
           ],
         ),
       ),
     );
   }
 
-  void _tap(String key) {
-    if (key == 'Back') {
-      Navigator.pop(context);
-      return;
-    }
-    if (key.startsWith('Use')) {
-      _useResult();
-      return;
-    }
-    final previous = _expression;
-    setState(() {
-      _error = null;
-      if (key == 'AC' || key == 'C') {
-        _expression = '';
-      } else if (key == '⌫') {
-        if (_expression.isNotEmpty) {
-          _expression = _expression.substring(0, _expression.length - 1);
-        }
-      } else if (key == '=') {
-        final result = _safeResult();
-        if (result != null) _expression = _format(result);
-      } else {
-        _expression += key;
-      }
-    });
-    if (_expression != previous) _scrollExpressionToEnd();
+  Widget _destinationChip(
+    CalculatorDestination destination,
+    IconData icon,
+    String label,
+  ) => ActionChip(
+    avatar: Icon(icon, size: 18),
+    label: Text(label),
+    onPressed: () => _useDestination(destination),
+  );
+
+  Widget _display(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [AppTheme.heroStart, AppTheme.heroEnd],
+        ),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (_tape.isNotEmpty) ...[
+            SizedBox(
+              height: 34,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: _tape.length,
+                separatorBuilder: (_, _) => const SizedBox(width: 8),
+                itemBuilder: (context, index) {
+                  final entry = _tape[index];
+                  return ActionChip(
+                    backgroundColor: AppTheme.heroEnd,
+                    side: BorderSide.none,
+                    label: Text(
+                      '${entry.expression} = ${_plain(entry.result)}',
+                      style: textTheme.labelSmall?.copyWith(
+                        color: AppTheme.onHero,
+                      ),
+                    ),
+                    onPressed: () => _expression.value = _plain(entry.result),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+          ValueListenableBuilder<String>(
+            valueListenable: _expression,
+            builder: (context, expression, _) {
+              final value = _result();
+              final formatted = value == null
+                  ? '—'
+                  : formatMoney((value * 100).round());
+              final words = value == null
+                  ? ''
+                  : formatAssistantResult(
+                      value,
+                    ).split('(').last.replaceAll(')', '');
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    expression.isEmpty ? '0' : expression,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: textTheme.bodyMedium?.copyWith(
+                      color: AppTheme.onHeroMuted,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  GestureDetector(
+                    onLongPress: value == null
+                        ? null
+                        : () {
+                            Clipboard.setData(
+                              ClipboardData(text: _plain(value)),
+                            );
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Result copied')),
+                            );
+                          },
+                    child: SizedBox(
+                      height: 56,
+                      child: FittedBox(
+                        alignment: Alignment.centerRight,
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          formatted,
+                          style: textTheme.displaySmall?.copyWith(
+                            color: AppTheme.onHero,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  Text(
+                    words,
+                    maxLines: 2,
+                    textAlign: TextAlign.right,
+                    overflow: TextOverflow.ellipsis,
+                    style: textTheme.bodySmall?.copyWith(
+                      color: AppTheme.onHeroMuted,
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+    );
   }
 
-  void _scrollExpressionToEnd() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_expressionScrollController.hasClients) return;
-      _expressionScrollController.animateTo(
-        0,
-        duration: const Duration(milliseconds: 120),
-        curve: Curves.easeOut,
-      );
-    });
+  Widget _keypad(bool landscape) {
+    const rows = [
+      ['AC', '(', ')', '⌫'],
+      ['7', '8', '9', '÷'],
+      ['4', '5', '6', '×'],
+      ['1', '2', '3', '-'],
+      ['00', '0', '.', '+'],
+      ['000', 'k', 'L', 'Cr'],
+      ['%', '='],
+    ];
+    return Column(
+      children: [
+        for (final row in rows)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 7),
+            child: Row(
+              children: [
+                for (final key in row)
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 3),
+                      child: _CalculatorKey(
+                        label: key,
+                        height: landscape ? 40 : 48,
+                        onTap: () => _press(key),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+      ],
+    );
   }
+}
 
-  double? _safeResult() {
-    if (_expression.trim().isEmpty) return 0;
-    try {
-      return evaluateCalculation(_expression);
-    } on FormatException {
-      return null;
-    }
-  }
+class _CalculatorKey extends StatefulWidget {
+  const _CalculatorKey({
+    required this.label,
+    required this.height,
+    required this.onTap,
+  });
+  final String label;
+  final double height;
+  final VoidCallback onTap;
 
-  void _useResult() {
-    final result = _safeResult();
-    if (result == null) {
-      setState(() => _error = 'Enter a valid calculation');
-      return;
-    }
-    Navigator.pop(context, _format(result));
-  }
+  @override
+  State<_CalculatorKey> createState() => _CalculatorKeyState();
+}
 
-  void _useDestination(CalculatorDestination destination) {
-    final result = _safeResult();
-    if (result == null) {
-      setState(() => _error = 'Enter a valid calculation');
-      return;
-    }
-    final amount = _format(result);
-    Navigator.pop(context, amount);
-    widget.onDestination?.call(destination, amount);
-  }
+class _CalculatorKeyState extends State<_CalculatorKey> {
+  bool pressed = false;
 
-  String _format(double value) {
-    if (!value.isFinite) return '0';
-    if (value == value.roundToDouble()) return value.toInt().toString();
-    return value.toStringAsFixed(2).replaceFirst(RegExp(r'\.?0+$'), '');
-  }
-
-  String _formatCurrency(double value) {
-    if (!value.isFinite) return '';
-    return formatMoney((value * 100).round());
+  @override
+  Widget build(BuildContext context) {
+    final label = widget.label;
+    final operator = const {'+', '-', '×', '÷', '%', '(', ')'}.contains(label);
+    final muted = label == 'AC' || label == '⌫';
+    final color = label == '='
+        ? AppTheme.heroEnd
+        : operator
+        ? AppTheme.accent
+        : muted
+        ? Theme.of(context).colorScheme.surfaceContainerHigh
+        : financeFieldFill(context);
+    return AnimatedScale(
+      scale: pressed ? .92 : 1,
+      duration: const Duration(milliseconds: 90),
+      child: Material(
+        color: color,
+        borderRadius: BorderRadius.circular(28),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(28),
+          onTapDown: (_) => setState(() => pressed = true),
+          onTapCancel: () => setState(() => pressed = false),
+          onTapUp: (_) => setState(() => pressed = false),
+          onTap: widget.onTap,
+          child: SizedBox(
+            height: widget.height,
+            child: Center(
+              child: Text(
+                label,
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                  color: label == '='
+                      ? AppTheme.onHero
+                      : Theme.of(context).colorScheme.onSurface,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }

@@ -1,0 +1,1501 @@
+import '../../core/formatters.dart';
+import '../../domain/due_status.dart';
+import '../../data/database.dart';
+import '../../data/repositories.dart';
+import '../../domain/emi_math.dart';
+import '../../domain/emi_payment_rules.dart' show dateOnly;
+import '../../domain/enums.dart';
+import '../../domain/money_math.dart';
+import '../../domain/subscription_schedule.dart';
+import 'assistant_commands.dart';
+import 'assistant_math.dart';
+
+abstract class AssistantEngine {
+  Future<AssistantReply> ask(String question, ConversationContext ctx);
+}
+
+class ConversationContext {
+  const ConversationContext({
+    required this.now,
+    this.previousQuestions = const [],
+  });
+  final DateTime now;
+  final List<String> previousQuestions;
+}
+
+enum AssistantDestination { home, emis, money, subscriptions }
+
+enum AssistantChartKind { bar, ring }
+
+class AssistantAction {
+  const AssistantAction(this.label, this.destination, {this.formDraft});
+  final String label;
+  final AssistantDestination destination;
+  final AssistantFormDraft? formDraft;
+}
+
+class AssistantRow {
+  const AssistantRow(this.label, this.value);
+  final String label;
+  final String value;
+}
+
+class AssistantChart {
+  const AssistantChart({
+    required this.kind,
+    required this.fraction,
+    required this.label,
+  });
+  final AssistantChartKind kind;
+  final double fraction;
+  final String label;
+}
+
+class AssistantReply {
+  const AssistantReply(
+    this.text, {
+    this.rows = const [],
+    this.chart,
+    this.actions = const [],
+    this.suggestions = const [],
+    this.openForm,
+  });
+  final String text;
+  final List<AssistantRow> rows;
+  final AssistantChart? chart;
+  final List<AssistantAction> actions;
+  final List<String> suggestions;
+  final AssistantFormDraft? openForm;
+}
+
+enum AssistantIntent {
+  greeting,
+  thanks,
+  bye,
+  identity,
+  help,
+  analysis,
+  nextEmi,
+  emiPeriod,
+  incoming,
+  payRange,
+  status,
+  owe,
+  owedToMe,
+  whoOwesMe,
+  whomIOwe,
+  emi,
+  due,
+  outflow,
+  subscriptions,
+  biggestExpense,
+  debtFree,
+  clearDebts,
+  debtFirst,
+  personBalance,
+  upcoming,
+  unknown,
+}
+
+class IntentMatch {
+  const IntentMatch(this.intent, {this.personName});
+  final AssistantIntent intent;
+  final String? personName;
+}
+
+String normalizeQuestion(String value) => value
+    .toLowerCase()
+    .replaceAll(RegExp(r'[^a-z0-9\s]'), ' ')
+    .replaceAll(RegExp(r'\s+'), ' ')
+    .trim();
+
+int _distanceAtMostOne(String a, String b) {
+  if ((a.length - b.length).abs() > 1) return 2;
+  var i = 0;
+  var j = 0;
+  var edits = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] == b[j]) {
+      i++;
+      j++;
+      continue;
+    }
+    edits++;
+    if (edits > 1) return 2;
+    if (a.length > b.length) {
+      i++;
+    } else if (b.length > a.length) {
+      j++;
+    } else {
+      i++;
+      j++;
+    }
+  }
+  return edits + (a.length - i) + (b.length - j);
+}
+
+int _score(String normalized, List<String> keywords) {
+  final tokens = normalized.split(' ');
+  var best = 0;
+  for (final keyword in keywords) {
+    if (keyword.contains(' ')) {
+      if (normalized.contains(keyword)) best = 3;
+      continue;
+    }
+    if (tokens.contains(keyword)) {
+      best = best < 2 ? 2 : best;
+      continue;
+    }
+    if (keyword.length >= 4 &&
+        tokens.any((token) => _distanceAtMostOne(token, keyword) == 1)) {
+      if (best < 1) best = 1;
+    }
+  }
+  return best;
+}
+
+IntentMatch matchAssistantIntent(
+  String question,
+  Iterable<String> personNames,
+) {
+  final q = normalizeQuestion(question);
+  if (q.isEmpty) return const IntentMatch(AssistantIntent.unknown);
+  if (RegExp(
+    r'^(hi|hello|hey|namaste|good morning|good afternoon|good evening)(\b|$)',
+  ).hasMatch(q)) {
+    return const IntentMatch(AssistantIntent.greeting);
+  }
+  if (RegExp(r'^(thanks|thank you|thx)(\b|$)').hasMatch(q)) {
+    return const IntentMatch(AssistantIntent.thanks);
+  }
+  if (RegExp(r'^(bye|goodbye|see you)(\b|$)').hasMatch(q)) {
+    return const IntentMatch(AssistantIntent.bye);
+  }
+  if (q.contains('who are you') || q.contains('what can you do')) {
+    return const IntentMatch(AssistantIntent.identity);
+  }
+  if (q == 'help' || q.contains('help me')) {
+    return const IntentMatch(AssistantIntent.help);
+  }
+  if (q.contains('analyze') ||
+      q.contains('analyse') ||
+      q.contains('suggestion') ||
+      q.contains('portfolio')) {
+    return const IntentMatch(AssistantIntent.analysis);
+  }
+  for (final name in personNames) {
+    final normalizedName = normalizeQuestion(name);
+    if (normalizedName.isNotEmpty && ' $q '.contains(' $normalizedName ')) {
+      return IntentMatch(AssistantIntent.personBalance, personName: name);
+    }
+  }
+  bool has(List<String> terms) => _score(q, terms) > 0;
+  if (has(['emi']) &&
+      has(['next', 'when', 'date', 'kab', 'eppudu']) &&
+      !has(['amount', 'total'])) {
+    return const IntentMatch(AssistantIntent.nextEmi);
+  }
+  if (has(['emi']) &&
+      (has(['next month', 'this month', 'this year', 'year']) ||
+          q.contains('emi amount'))) {
+    return const IntentMatch(AssistantIntent.emiPeriod);
+  }
+  if (has([
+        'come to me',
+        'coming to me',
+        'will receive',
+        'receivable',
+        'ravali',
+      ]) &&
+      has(['month', 'this month'])) {
+    return const IntentMatch(AssistantIntent.incoming);
+  }
+  if (has(['need to pay', 'have to pay', 'must pay']) &&
+      (has(['month', 'days', 'week']) ||
+          RegExp(r'next \d+ days').hasMatch(q))) {
+    return const IntentMatch(AssistantIntent.payRange);
+  }
+  if (has(['which debt', 'clear first', 'pay first', 'priority', 'pehle'])) {
+    return const IntentMatch(AssistantIntent.debtFirst);
+  }
+  if (has([
+    'debt free',
+    'debt-free',
+    'free of debt',
+    'kab free',
+    'debt khatam',
+  ])) {
+    return const IntentMatch(AssistantIntent.debtFree);
+  }
+  if (has([
+    'clear all',
+    'pay off all',
+    'total debt',
+    'all debts',
+    'debt left',
+    'saara udhar',
+  ])) {
+    return const IntentMatch(AssistantIntent.clearDebts);
+  }
+  if (has(['upcoming', 'next 5', 'next five', 'five payments'])) {
+    return const IntentMatch(AssistantIntent.upcoming);
+  }
+  if ((has([
+            'due',
+            'this week',
+            'this month',
+            'next month',
+            'today',
+            'tomorrow',
+            'kab',
+            'eppudu',
+          ]) ||
+          RegExp(r'next \d{1,3} days?|by \d').hasMatch(q)) &&
+      !has(['debt free'])) {
+    return const IntentMatch(AssistantIntent.due);
+  }
+  if (has(['biggest', 'largest', 'most expensive', 'sabse zyada'])) {
+    return const IntentMatch(AssistantIntent.biggestExpense);
+  }
+  if (has(['subscription', 'subscriptions', 'subs', 'recurring'])) {
+    return const IntentMatch(AssistantIntent.subscriptions);
+  }
+  if (has(['emi', 'installment', 'installments', 'loan'])) {
+    return const IntentMatch(AssistantIntent.emi);
+  }
+  if (has([
+    'who owes me',
+    'who owes',
+    'who should pay me',
+    'kisne dena',
+    'kisse lena',
+  ])) {
+    return const IntentMatch(AssistantIntent.whoOwesMe);
+  }
+  if (has(['whom i owe', 'who do i owe', 'who i owe', 'kisko dena'])) {
+    return const IntentMatch(AssistantIntent.whomIOwe);
+  }
+  if (has([
+    'owed to me',
+    'to receive',
+    'get back',
+    'kitna lena',
+    'udhar diya',
+    'ravali',
+  ])) {
+    return const IntentMatch(AssistantIntent.owedToMe);
+  }
+  if (has(['udhar']) && has(['diya', 'diye'])) {
+    return const IntentMatch(AssistantIntent.owedToMe);
+  }
+  if (has(['i owe', 'to pay', 'kitna dena', 'udhar liya', 'baki udhar'])) {
+    return const IntentMatch(AssistantIntent.owe);
+  }
+  if (has(['udhar']) && has(['baki', 'kitna', 'liya'])) {
+    return const IntentMatch(AssistantIntent.owe);
+  }
+  if (has([
+    'outflow',
+    'monthly expense',
+    'monthly spending',
+    'per month',
+    'mahina',
+  ])) {
+    return const IntentMatch(AssistantIntent.outflow);
+  }
+  if (has([
+    'status',
+    'net',
+    'overview',
+    'financial',
+    'situation',
+    'haal',
+    'undi',
+    'ela',
+  ])) {
+    return const IntentMatch(AssistantIntent.status);
+  }
+  return const IntentMatch(AssistantIntent.unknown);
+}
+
+class AssistantDateRange {
+  const AssistantDateRange(this.start, this.end, this.label);
+  final DateTime start;
+  final DateTime end;
+  final String label;
+}
+
+DateTime? _calendarDate(int year, int month, int day) {
+  final date = DateTime(year, month, day);
+  return date.year == year && date.month == month && date.day == day
+      ? date
+      : null;
+}
+
+AssistantDateRange parseAssistantDateRange(String question, DateTime now) {
+  final q = normalizeQuestion(question);
+  final today = dateOnly(now);
+  if (q.contains('tomorrow')) {
+    final date = today.add(const Duration(days: 1));
+    return AssistantDateRange(date, date, 'tomorrow');
+  }
+  if (q.contains('today')) return AssistantDateRange(today, today, 'today');
+  if (q.contains('next month')) {
+    return AssistantDateRange(
+      DateTime(today.year, today.month + 1),
+      DateTime(today.year, today.month + 2, 0),
+      'next month',
+    );
+  }
+  if (q.contains('this month')) {
+    return AssistantDateRange(
+      today,
+      DateTime(today.year, today.month + 1, 0),
+      'this month',
+    );
+  }
+  if (q.contains('this week')) {
+    return AssistantDateRange(
+      today,
+      today.add(Duration(days: DateTime.sunday - today.weekday)),
+      'this week',
+    );
+  }
+  final nextDays = RegExp(r'next (\d{1,3}) days?').firstMatch(q);
+  if (nextDays != null) {
+    final count = int.parse(nextDays.group(1)!).clamp(1, 365);
+    return AssistantDateRange(
+      today,
+      today.add(Duration(days: count)),
+      'the next $count days',
+    );
+  }
+  final iso = RegExp(r'by (\d{4}) (\d{1,2}) (\d{1,2})').firstMatch(q);
+  if (iso != null) {
+    final date = _calendarDate(
+      int.parse(iso.group(1)!),
+      int.parse(iso.group(2)!),
+      int.parse(iso.group(3)!),
+    );
+    if (date != null) {
+      return AssistantDateRange(today, date, 'by ${formatDate(date)}');
+    }
+  }
+  final numeric = RegExp(r'by (\d{1,2}) (\d{1,2}) (\d{4})').firstMatch(q);
+  if (numeric != null) {
+    final date = _calendarDate(
+      int.parse(numeric.group(3)!),
+      int.parse(numeric.group(2)!),
+      int.parse(numeric.group(1)!),
+    );
+    if (date != null) {
+      return AssistantDateRange(today, date, 'by ${formatDate(date)}');
+    }
+  }
+  final named = RegExp(r'by (\d{1,2}) ([a-z]+)(?: (\d{4}))?').firstMatch(q);
+  if (named != null) {
+    final day = int.parse(named.group(1)!);
+    final monthText = named.group(2)!;
+    final year = int.tryParse(named.group(3) ?? '') ?? today.year;
+    const months = [
+      'january',
+      'february',
+      'march',
+      'april',
+      'may',
+      'june',
+      'july',
+      'august',
+      'september',
+      'october',
+      'november',
+      'december',
+    ];
+    final monthIndex = months.indexWhere(
+      (name) => monthText.length >= 3 && name.startsWith(monthText),
+    );
+    if (monthIndex >= 0) {
+      final date = _calendarDate(year, monthIndex + 1, day);
+      if (date != null) {
+        return AssistantDateRange(today, date, 'by ${formatDate(date)}');
+      }
+    }
+  }
+  return AssistantDateRange(
+    today,
+    today.add(const Duration(days: 7)),
+    'the next 7 days',
+  );
+}
+
+class AssistantDueItem {
+  const AssistantDueItem(
+    this.label,
+    this.amountPaise,
+    this.dueDate,
+    this.destination,
+  );
+  final String label;
+  final int amountPaise;
+  final DateTime dueDate;
+  final AssistantDestination destination;
+}
+
+class FinanceFacts {
+  const FinanceFacts({
+    required this.emis,
+    required this.money,
+    required this.subscriptions,
+    required this.now,
+  });
+  final List<EmiDetail> emis;
+  final List<MoneyRecordDetail> money;
+  final List<Subscription> subscriptions;
+  final DateTime now;
+
+  Iterable<EmiDetail> get activeEmis => emis.where(
+    (item) =>
+        item.emi.status != EmiStatus.completed &&
+        item.emi.status != EmiStatus.paused &&
+        item.nextUnpaidInstallment != null,
+  );
+  Iterable<MoneyRecordDetail> get given => money.where(
+    (item) =>
+        item.record.direction == MoneyDirection.given &&
+        item.summary.remainingAmountPaise > 0,
+  );
+  Iterable<MoneyRecordDetail> get borrowed => money.where(
+    (item) =>
+        item.record.direction == MoneyDirection.borrowed &&
+        item.summary.remainingAmountPaise > 0,
+  );
+  Iterable<Subscription> get activeSubscriptions =>
+      subscriptions.where((item) => item.status == SubscriptionStatus.active);
+
+  int get toReceivePaise =>
+      given.fold(0, (sum, item) => sum + item.summary.remainingAmountPaise);
+  int get borrowedPaise =>
+      borrowed.fold(0, (sum, item) => sum + item.summary.remainingAmountPaise);
+  int get emiRemainingPaise =>
+      activeEmis.fold(0, (sum, item) => sum + item.remainingBalancePaise);
+  int get totalDebtPaise => borrowedPaise + emiRemainingPaise;
+  int get netPositionPaise => toReceivePaise - borrowedPaise;
+  int get monthlyEmiPaise => activeEmis.fold(
+    0,
+    (sum, item) =>
+        sum +
+        monthlyEquivalentPaise(
+          item.scheduledInstallmentPaise,
+          item.emi.frequency,
+        ),
+  );
+  int get monthlySubscriptionsPaise => activeSubscriptions.fold(
+    0,
+    (sum, item) =>
+        sum + monthlyEquivalentPaise(item.amountPaise, item.frequency),
+  );
+  int get yearlySubscriptionsPaise => activeSubscriptions.fold(
+    0,
+    (sum, item) =>
+        sum +
+        switch (item.frequency) {
+          PaymentFrequency.once => 0,
+          PaymentFrequency.weekly => item.amountPaise * 52,
+          PaymentFrequency.monthly => item.amountPaise * 12,
+          PaymentFrequency.quarterly => item.amountPaise * 4,
+          PaymentFrequency.yearly => item.amountPaise,
+        },
+  );
+  int get upcomingBorrowedPaise => borrowed
+      .where((item) {
+        if (item.record.status == MoneyStatus.paused) return false;
+        final due = item.record.dueDate;
+        return due != null &&
+            !dateOnly(due).isAfter(dateOnly(now).add(const Duration(days: 30)));
+      })
+      .fold(0, (sum, item) => sum + item.summary.remainingAmountPaise);
+  int get monthlyOutflowPaise =>
+      monthlyEmiPaise + monthlySubscriptionsPaise + upcomingBorrowedPaise;
+
+  EmiDetail? get nextEmi {
+    final items = activeEmis.toList()
+      ..sort(
+        (a, b) => a.nextUnpaidInstallment!.dueDate.compareTo(
+          b.nextUnpaidInstallment!.dueDate,
+        ),
+      );
+    return items.firstOrNull;
+  }
+
+  int emiDueInRange(DateTime start, DateTime end) =>
+      activeEmis.fold(0, (sum, emi) {
+        var total = sum;
+        for (final installment in emi.installments) {
+          final day = dateOnly(installment.dueDate);
+          if (!installment.isPaid &&
+              !day.isBefore(dateOnly(start)) &&
+              !day.isAfter(dateOnly(end))) {
+            total += emi.amountForInstallment(installment.number);
+          }
+        }
+        return total;
+      });
+
+  DateTime? get debtFreeDate {
+    if (borrowed.any((item) => item.record.dueDate == null)) return null;
+    final dates = <DateTime>[
+      for (final item in activeEmis) item.installments.last.dueDate,
+      for (final item in borrowed) item.record.dueDate!,
+    ];
+    if (dates.isEmpty) return dateOnly(now);
+    dates.sort();
+    return dates.last;
+  }
+
+  List<AssistantDueItem> dueItemsThrough(DateTime end) {
+    final result = <AssistantDueItem>[];
+    final lastDay = dateOnly(end);
+    final today = dateOnly(now);
+    for (final emi in activeEmis) {
+      for (final installment in emi.installments) {
+        if (!installment.isPaid &&
+            !dateOnly(installment.dueDate).isAfter(lastDay)) {
+          result.add(
+            AssistantDueItem(
+              emi.emi.name,
+              emi.amountForInstallment(installment.number),
+              installment.dueDate,
+              AssistantDestination.emis,
+            ),
+          );
+        }
+      }
+    }
+    for (final item in borrowed) {
+      if (item.record.status == MoneyStatus.paused) continue;
+      final due = item.record.dueDate;
+      if (due != null && !dateOnly(due).isAfter(lastDay)) {
+        result.add(
+          AssistantDueItem(
+            item.record.personName,
+            item.summary.remainingAmountPaise,
+            due,
+            AssistantDestination.money,
+          ),
+        );
+      }
+    }
+    for (final sub in activeSubscriptions) {
+      final first = nextSubscriptionBillingDate(
+        sub.nextBillingDate,
+        sub.frequency,
+        today,
+      );
+      if (sub.frequency == PaymentFrequency.once) {
+        if (!dateOnly(first).isAfter(lastDay)) {
+          result.add(
+            AssistantDueItem(
+              sub.name,
+              sub.amountPaise,
+              first,
+              AssistantDestination.subscriptions,
+            ),
+          );
+        }
+        continue;
+      }
+      for (var period = 1; period < 10000; period++) {
+        final date = emiInstallmentDueDate(
+          sub.nextBillingDate,
+          period,
+          sub.frequency,
+        );
+        if (dateOnly(date).isAfter(lastDay)) break;
+        if (dateOnly(date).isBefore(dateOnly(first))) continue;
+        result.add(
+          AssistantDueItem(
+            sub.name,
+            sub.amountPaise,
+            date,
+            AssistantDestination.subscriptions,
+          ),
+        );
+      }
+    }
+    result.sort((a, b) => a.dueDate.compareTo(b.dueDate));
+    return result;
+  }
+
+  int totalDueInRange(
+    DateTime start,
+    DateTime end, {
+    bool includeOverdue = false,
+  }) => dueItemsInRange(
+    start,
+    end,
+    includeOverdue: includeOverdue,
+  ).fold(0, (sum, item) => sum + item.amountPaise);
+
+  List<AssistantDueItem> dueItemsInRange(
+    DateTime start,
+    DateTime end, {
+    bool includeOverdue = false,
+  }) {
+    final firstDay = dateOnly(start);
+    final today = dateOnly(now);
+    return dueItemsThrough(end).where((item) {
+      final day = dateOnly(item.dueDate);
+      return !day.isBefore(firstDay) || (includeOverdue && day.isBefore(today));
+    }).toList();
+  }
+}
+
+// Replace this provider's engine with an LLM implementation later; the UI uses only AssistantEngine.
+class LocalAssistantEngine implements AssistantEngine {
+  const LocalAssistantEngine(this.repository);
+  final FinanceRepository repository;
+
+  @override
+  Future<AssistantReply> ask(String question, ConversationContext ctx) async {
+    final normalized = normalizeQuestion(question);
+    final emiCalculation = RegExp(
+      r'emi for\s+([0-9.,]+\s*(?:k|lakh|lakhs|cr|crore|crores)?)\s+at\s+([0-9]+(?:\.[0-9]+)?)%?\s+for\s+(\d+)\s+(years?|months?)',
+      caseSensitive: false,
+    ).firstMatch(question);
+    if (emiCalculation != null) {
+      try {
+        final principal = parseAssistantNumber(
+          emiCalculation.group(1)!.replaceAll(' ', ''),
+        );
+        final rate = double.parse(emiCalculation.group(2)!);
+        final count = int.parse(emiCalculation.group(3)!);
+        final months =
+            count *
+            (emiCalculation.group(4)!.toLowerCase().startsWith('year')
+                ? 12
+                : 1);
+        final emi = calculateAssistantEmiPaise(principal, rate, months);
+        return AssistantReply(
+          'Estimated monthly EMI: ${formatAssistantResult(emi / 100)}. This is an estimate; your lender may round differently.',
+          rows: [
+            AssistantRow('Total scheduled', formatMoney(emi * months)),
+            AssistantRow(
+              'Estimated interest',
+              formatMoney(emi * months - (principal * 100).round()),
+            ),
+          ],
+          actions: _amountActions(emi),
+        );
+      } on FormatException catch (error) {
+        return AssistantReply(error.message);
+      }
+    }
+    final interest = RegExp(
+      r'simple interest\s+([0-9.,]+\s*(?:k|lakh|lakhs|cr|crore|crores)?)\s+at\s+([0-9]+(?:\.[0-9]+)?)%?\s+for\s+(\d+(?:\.[0-9]+)?)\s+years?',
+      caseSensitive: false,
+    ).firstMatch(question);
+    if (interest != null) {
+      try {
+        final principal = parseAssistantNumber(
+          interest.group(1)!.replaceAll(' ', ''),
+        );
+        final rate = double.parse(interest.group(2)!);
+        final years = double.parse(interest.group(3)!);
+        final result = principal * rate * years / 100;
+        return AssistantReply(
+          'Simple interest: ${formatAssistantResult(result)}.',
+          rows: [
+            AssistantRow('Principal', formatMoney((principal * 100).round())),
+            AssistantRow(
+              'Total with interest',
+              formatMoney(((principal + result) * 100).round()),
+            ),
+          ],
+          actions: _amountActions((result * 100).round()),
+        );
+      } on FormatException catch (error) {
+        return AssistantReply(error.message);
+      }
+    }
+    final expression = assistantMathExpression(question);
+    if (expression != null) {
+      try {
+        final result = evaluateAssistantMath(expression);
+        return AssistantReply(
+          'Result: ${formatAssistantResult(result)}',
+          actions: _amountActions((result * 100).round()),
+        );
+      } on FormatException catch (error) {
+        return AssistantReply(
+          '${error.message} Try an expression like 15% of 8000.',
+        );
+      }
+    }
+
+    var command = parseAssistantCommand(question, ctx.now);
+    if (command == null &&
+        ctx.previousQuestions.isNotEmpty &&
+        RegExp(r'^[0-9][0-9,.]*(?:k|lakh|cr)?$').hasMatch(normalized)) {
+      final prior = parseAssistantCommand(ctx.previousQuestions.last, ctx.now);
+      if (prior != null && prior.draft.amountPaise == null) {
+        final amount = parseAssistantAmountPaise(question);
+        if (amount != null) {
+          command = AssistantCommand(
+            prior.draft.withAmount(amount),
+            ambiguousMoney: prior.ambiguousMoney,
+          );
+        }
+      }
+    }
+    if (command != null) {
+      final draft = command.draft;
+      if (draft.amountPaise == null) {
+        return const AssistantReply('What amount should I put in the form?');
+      }
+      if (command.ambiguousMoney) {
+        final amount = formatMoney(draft.amountPaise!);
+        return AssistantReply(
+          'Is this money you gave or borrowed?',
+          suggestions: ['I gave $amount', 'I borrowed $amount'],
+        );
+      }
+      final destination = _destinationForDraft(draft.kind);
+      final label = switch (draft.kind) {
+        AssistantFormKind.emi => 'EMI',
+        AssistantFormKind.moneyGiven ||
+        AssistantFormKind.moneyBorrowed => 'Money',
+        AssistantFormKind.subscription => 'Subscription',
+      };
+      return AssistantReply(
+        'Opening the $label form with ${formatMoney(draft.amountPaise!)}. Check it and tap Save.',
+        actions: [
+          AssistantAction('Open $label form', destination, formDraft: draft),
+        ],
+        openForm: draft,
+      );
+    }
+
+    final facts = FinanceFacts(
+      emis: await repository.watchEmiDetails().first,
+      money: await repository.moneyDetails(),
+      subscriptions: await repository.watchSubscriptions().first,
+      now: ctx.now,
+    );
+    final names = facts.money.map((item) => item.record.personName).toSet();
+    var effectiveQuestion = question;
+    if (ctx.previousQuestions.isNotEmpty &&
+        RegExp(
+          r'^(and )?(next month|this month|what about)',
+        ).hasMatch(normalized)) {
+      final previous = normalizeQuestion(ctx.previousQuestions.last);
+      if (normalized.contains('next month') ||
+          normalized.contains('this month')) {
+        if (previous.contains('need to pay')) {
+          effectiveQuestion = 'how much do I need to pay $question';
+        } else if (previous.contains('emi')) {
+          effectiveQuestion = 'emi amount $question';
+        } else if (previous.contains('come to me')) {
+          effectiveQuestion = 'how much will come to me $question';
+        }
+      }
+    }
+    final match = matchAssistantIntent(effectiveQuestion, names);
+    const emiAction = AssistantAction('Open EMIs', AssistantDestination.emis);
+    const moneyAction = AssistantAction(
+      'Open Money',
+      AssistantDestination.money,
+    );
+    const subsAction = AssistantAction(
+      'Open subscriptions',
+      AssistantDestination.subscriptions,
+    );
+    switch (match.intent) {
+      case AssistantIntent.greeting:
+        return AssistantReply(
+          'Welcome to FinKeep! I can help you track your EMIs, money given or borrowed and subscriptions, answer questions about your finances, do quick maths, and suggest ways to save.',
+          suggestions: _dataSuggestions(facts),
+        );
+      case AssistantIntent.thanks:
+        return const AssistantReply(
+          'You’re welcome! Ask FinKeep whenever you need a quick view of your money.',
+        );
+      case AssistantIntent.bye:
+        return const AssistantReply(
+          'See you soon. FinKeep will be here when you need it.',
+        );
+      case AssistantIntent.identity:
+        return const AssistantReply(
+          'I’m Ask FinKeep, your offline finance assistant. I use only the records on this phone to answer questions, calculate and open forms for you to review.',
+        );
+      case AssistantIntent.help:
+        return const AssistantReply(
+          'Try these questions:\nStatus: My financial status\nEMIs: When is my next EMI?\nMoney: Who owes me?\nSubscriptions: Subscriptions per month\nMaths: 15% of 8000\nAdd something: I gave Nivas 500',
+          suggestions: [
+            'My financial status',
+            'Next EMI date',
+            'Who owes me?',
+            '15% of 8000',
+          ],
+        );
+      case AssistantIntent.analysis:
+        return _analyzePortfolio(facts);
+      case AssistantIntent.nextEmi:
+        final next = facts.nextEmi;
+        if (next == null) {
+          return const AssistantReply(
+            'You have no unpaid active EMI installments.',
+            actions: [emiAction],
+          );
+        }
+        final installment = next.nextUnpaidInstallment!;
+        return AssistantReply(
+          '${displayName(next.emi.name)} is next on ${formatDate(installment.dueDate)} (${relativeDueText(installment.dueDate, ctx.now)}).',
+          rows: [
+            AssistantRow(
+              'Installment',
+              formatMoney(next.amountForInstallment(installment.number)),
+            ),
+            AssistantRow('Due date', formatDate(installment.dueDate)),
+          ],
+          actions: const [emiAction],
+        );
+      case AssistantIntent.emiPeriod:
+        final q = normalizeQuestion(effectiveQuestion);
+        final year = q.contains('year');
+        final start = year
+            ? DateTime(ctx.now.year)
+            : q.contains('next month')
+            ? DateTime(ctx.now.year, ctx.now.month + 1)
+            : DateTime(ctx.now.year, ctx.now.month);
+        final end = year
+            ? DateTime(ctx.now.year + 1, 1, 0)
+            : DateTime(start.year, start.month + 1, 0);
+        final total = facts.emiDueInRange(start, end);
+        return AssistantReply(
+          '${formatMoney(total)} in unpaid EMI installments is scheduled from ${formatDate(start)} to ${formatDate(end)}.',
+          rows: [
+            for (final emi in facts.activeEmis)
+              if (emi.installments.any(
+                (item) =>
+                    !item.isPaid &&
+                    !dateOnly(item.dueDate).isBefore(start) &&
+                    !dateOnly(item.dueDate).isAfter(end),
+              ))
+                AssistantRow(
+                  displayName(emi.emi.name),
+                  formatMoney(
+                    emi.installments
+                        .where(
+                          (item) =>
+                              !item.isPaid &&
+                              !dateOnly(item.dueDate).isBefore(start) &&
+                              !dateOnly(item.dueDate).isAfter(end),
+                        )
+                        .fold<int>(
+                          0,
+                          (sum, item) =>
+                              sum + emi.amountForInstallment(item.number),
+                        ),
+                  ),
+                ),
+          ],
+          actions: const [emiAction],
+        );
+      case AssistantIntent.incoming:
+        final range = parseAssistantDateRange(effectiveQuestion, ctx.now);
+        final start = DateTime(range.start.year, range.start.month);
+        final end = DateTime(start.year, start.month + 1, 0);
+        final dated = facts.given.where((item) {
+          final due = item.record.dueDate;
+          return due != null &&
+              !dateOnly(due).isBefore(start) &&
+              !dateOnly(due).isAfter(end);
+        }).toList();
+        final total = dated.fold<int>(
+          0,
+          (sum, item) => sum + item.summary.remainingAmountPaise,
+        );
+        final undated = facts.given
+            .where((item) => item.record.dueDate == null)
+            .fold<int>(
+              0,
+              (sum, item) => sum + item.summary.remainingAmountPaise,
+            );
+        return AssistantReply(
+          '${formatMoney(total)} is due to come to you from ${formatDate(start)} to ${formatDate(end)}.',
+          rows: [
+            for (final item in dated)
+              AssistantRow(
+                '${displayName(item.record.personName)} · ${formatDate(item.record.dueDate!)}',
+                formatMoney(item.summary.remainingAmountPaise),
+              ),
+            AssistantRow(
+              'No due date',
+              '${formatMoney(undated)} has no due date',
+            ),
+          ],
+          actions: const [moneyAction],
+        );
+      case AssistantIntent.payRange:
+        final range = parseAssistantDateRange(effectiveQuestion, ctx.now);
+        final due = facts.dueItemsInRange(range.start, range.end);
+        int subtotal(AssistantDestination destination) => due
+            .where((item) => item.destination == destination)
+            .fold(0, (sum, item) => sum + item.amountPaise);
+        final total = due.fold<int>(0, (sum, item) => sum + item.amountPaise);
+        return AssistantReply(
+          '${formatMoney(total)} is scheduled to be paid from ${formatDate(range.start)} to ${formatDate(range.end)}.',
+          rows: [
+            AssistantRow(
+              'EMIs',
+              formatMoney(subtotal(AssistantDestination.emis)),
+            ),
+            AssistantRow(
+              'Subscriptions',
+              formatMoney(subtotal(AssistantDestination.subscriptions)),
+            ),
+            AssistantRow(
+              'Money borrowed',
+              formatMoney(subtotal(AssistantDestination.money)),
+            ),
+            AssistantRow('Total', formatMoney(total)),
+          ],
+          actions: const [emiAction, moneyAction, subsAction],
+        );
+      case AssistantIntent.status:
+        return AssistantReply(
+          'Your Money net position is ${formatMoney(facts.netPositionPaise)}. Scheduled EMI debt is shown separately.',
+          rows: [
+            AssistantRow('To receive', formatMoney(facts.toReceivePaise)),
+            AssistantRow(
+              'I owe · Money and EMIs',
+              formatMoney(facts.totalDebtPaise),
+            ),
+            AssistantRow('EMI remaining', formatMoney(facts.emiRemainingPaise)),
+            AssistantRow(
+              'Monthly recurring commitments',
+              formatMoney(
+                facts.monthlyEmiPaise + facts.monthlySubscriptionsPaise,
+              ),
+            ),
+          ],
+          actions: const [moneyAction, emiAction],
+        );
+      case AssistantIntent.owe:
+      case AssistantIntent.clearDebts:
+        return AssistantReply(
+          'Tracked debt totals ${formatMoney(facts.totalDebtPaise)}. This includes scheduled EMI payments and borrowed Money balances; an early-settlement quote may differ.',
+          rows: [
+            AssistantRow('EMI remaining', formatMoney(facts.emiRemainingPaise)),
+            AssistantRow('Money borrowed', formatMoney(facts.borrowedPaise)),
+          ],
+          actions: const [emiAction, moneyAction],
+        );
+      case AssistantIntent.owedToMe:
+        return AssistantReply(
+          'People owe you ${formatMoney(facts.toReceivePaise)} across ${facts.given.length} open records.',
+          actions: const [moneyAction],
+        );
+      case AssistantIntent.whoOwesMe:
+      case AssistantIntent.whomIOwe:
+        final records = match.intent == AssistantIntent.whoOwesMe
+            ? facts.given
+            : facts.borrowed;
+        final grouped = <String, int>{};
+        for (final item in records) {
+          grouped.update(
+            item.record.personName,
+            (value) => value + item.summary.remainingAmountPaise,
+            ifAbsent: () => item.summary.remainingAmountPaise,
+          );
+        }
+        final rows = grouped.entries.toList()
+          ..sort((a, b) => b.value.compareTo(a.value));
+        return AssistantReply(
+          rows.isEmpty
+              ? 'No open balances are recorded.'
+              : match.intent == AssistantIntent.whoOwesMe
+              ? 'These people owe you:'
+              : 'You owe these people:',
+          rows: [
+            for (final row in rows)
+              AssistantRow(displayName(row.key), formatMoney(row.value)),
+          ],
+          actions: const [moneyAction],
+        );
+      case AssistantIntent.emi:
+        final count = facts.activeEmis.length;
+        return AssistantReply(
+          count == 0
+              ? 'You have no active EMIs.'
+              : '$count active ${count == 1 ? 'EMI has' : 'EMIs have'} ${formatMoney(facts.emiRemainingPaise)} left in scheduled payments.',
+          rows: [
+            AssistantRow(
+              'Monthly equivalent',
+              formatMoney(facts.monthlyEmiPaise),
+            ),
+            AssistantRow('Remaining', formatMoney(facts.emiRemainingPaise)),
+          ],
+          actions: const [emiAction],
+        );
+      case AssistantIntent.due:
+        final range = parseAssistantDateRange(question, ctx.now);
+        if (normalizeQuestion(question).contains('by ') &&
+            range.label == 'the next 7 days') {
+          return const AssistantReply(
+            'I could not read that date. Try a date like "by 15 Oct 2026".',
+            suggestions: [
+              'Due this week',
+              'Due this month',
+              'Next 10 days',
+              'Upcoming 5 payments',
+            ],
+          );
+        }
+        final due = facts.dueItemsInRange(
+          range.start,
+          range.end,
+          includeOverdue: true,
+        );
+        final total = due.fold(0, (sum, item) => sum + item.amountPaise);
+        return AssistantReply(
+          due.isEmpty
+              ? 'Nothing tracked is due ${range.label}, including overdue items.'
+              : '${formatMoney(total)} is due ${range.label}, including overdue items.',
+          rows: [
+            for (final item in due.take(12))
+              AssistantRow(
+                '${item.label} · ${formatDate(item.dueDate)}',
+                formatMoney(item.amountPaise),
+              ),
+          ],
+          actions: const [emiAction, moneyAction, subsAction],
+        );
+      case AssistantIntent.outflow:
+        return AssistantReply(
+          'Your estimated next-30-day outflow is ${formatMoney(facts.monthlyOutflowPaise)}.',
+          rows: [
+            AssistantRow(
+              'EMIs monthly equivalent',
+              formatMoney(facts.monthlyEmiPaise),
+            ),
+            AssistantRow(
+              'Subscriptions monthly equivalent',
+              formatMoney(facts.monthlySubscriptionsPaise),
+            ),
+            AssistantRow(
+              'Dated borrowed Money due',
+              formatMoney(facts.upcomingBorrowedPaise),
+            ),
+          ],
+          chart: AssistantChart(
+            kind: AssistantChartKind.bar,
+            fraction: facts.monthlyOutflowPaise == 0
+                ? 0
+                : facts.monthlyEmiPaise / facts.monthlyOutflowPaise,
+            label: 'EMI share',
+          ),
+          actions: const [emiAction, subsAction],
+        );
+      case AssistantIntent.subscriptions:
+        return AssistantReply(
+          '${facts.activeSubscriptions.length} active subscriptions cost about ${formatMoney(facts.monthlySubscriptionsPaise)} per month.',
+          rows: [
+            AssistantRow(
+              'Yearly equivalent',
+              formatMoney(facts.yearlySubscriptionsPaise),
+            ),
+          ],
+          actions: const [subsAction],
+        );
+      case AssistantIntent.biggestExpense:
+        final candidates = facts.dueItemsInRange(
+          dateOnly(ctx.now),
+          dateOnly(ctx.now).add(const Duration(days: 365)),
+          includeOverdue: true,
+        )..sort((a, b) => b.amountPaise.compareTo(a.amountPaise));
+        return AssistantReply(
+          candidates.isEmpty
+              ? 'No upcoming outgoing payments are tracked. FinKeep does not track general spending here.'
+              : '${candidates.first.label} is your largest tracked payment at ${formatMoney(candidates.first.amountPaise)} on ${formatDate(candidates.first.dueDate)}. FinKeep does not track general spending here.',
+          actions: candidates.isEmpty
+              ? const []
+              : [
+                  AssistantAction(
+                    candidates.first.destination == AssistantDestination.emis
+                        ? 'Open EMIs'
+                        : candidates.first.destination ==
+                              AssistantDestination.money
+                        ? 'Open Money'
+                        : 'Open subscriptions',
+                    candidates.first.destination,
+                  ),
+                ],
+        );
+      case AssistantIntent.debtFree:
+        final date = facts.debtFreeDate;
+        return AssistantReply(
+          date == null
+              ? 'I cannot give a reliable debt-free date because at least one borrowed Money record has no due date.'
+              : facts.totalDebtPaise == 0
+              ? 'No open EMI or borrowed Money debt is tracked.'
+              : 'Your last tracked debt due date is ${formatDate(date)}. This uses EMI schedules and dated borrowed Money; subscriptions are not included.',
+          actions: const [emiAction, moneyAction],
+        );
+      case AssistantIntent.debtFirst:
+        final rated =
+            facts.activeEmis
+                .where((item) => (item.emi.interestRate ?? 0) > 0)
+                .toList()
+              ..sort(
+                (a, b) => b.emi.interestRate!.compareTo(a.emi.interestRate!),
+              );
+        if (rated.isNotEmpty) {
+          final first = rated.first;
+          return AssistantReply(
+            '${first.emi.name} ranks first by the highest recorded interest rate (${first.emi.interestRate}% p.a.). Debts without rates cannot be compared by interest.',
+            rows: [
+              AssistantRow(
+                'Scheduled balance',
+                formatMoney(first.remainingBalancePaise),
+              ),
+            ],
+            actions: const [emiAction],
+          );
+        }
+        final balances = <(String, int, AssistantDestination)>[
+          for (final item in facts.activeEmis)
+            (
+              item.emi.name,
+              item.remainingBalancePaise,
+              AssistantDestination.emis,
+            ),
+          for (final item in facts.borrowed)
+            (
+              item.record.personName,
+              item.summary.remainingAmountPaise,
+              AssistantDestination.money,
+            ),
+        ]..sort((a, b) => a.$2.compareTo(b.$2));
+        return AssistantReply(
+          balances.isEmpty
+              ? 'No open debts are tracked.'
+              : '${balances.first.$1} ranks first by smallest balance (${formatMoney(balances.first.$2)}). No positive interest rate is recorded, so I used the smallest-balance rule.',
+          actions: balances.isEmpty
+              ? const []
+              : [
+                  AssistantAction(
+                    balances.first.$3 == AssistantDestination.emis
+                        ? 'Open EMIs'
+                        : 'Open Money',
+                    balances.first.$3,
+                  ),
+                ],
+        );
+      case AssistantIntent.personBalance:
+        final person = match.personName!;
+        final records = facts.money.where(
+          (item) =>
+              normalizeQuestion(item.record.personName) ==
+              normalizeQuestion(person),
+        );
+        final owed = records
+            .where((item) => item.record.direction == MoneyDirection.given)
+            .fold<int>(
+              0,
+              (sum, item) => sum + item.summary.remainingAmountPaise,
+            );
+        final owe = records
+            .where((item) => item.record.direction == MoneyDirection.borrowed)
+            .fold<int>(
+              0,
+              (sum, item) => sum + item.summary.remainingAmountPaise,
+            );
+        final asked = normalizeQuestion(question);
+        final prior = ctx.previousQuestions.isEmpty
+            ? ''
+            : normalizeQuestion(ctx.previousQuestions.last);
+        final incomingOnly =
+            asked.contains('owe me') ||
+            (asked.contains('what about') && prior.contains('owe me'));
+        final outgoingOnly =
+            asked.contains('i owe') ||
+            (asked.contains('what about') && prior.contains('i owe'));
+        return AssistantReply(
+          incomingOnly
+              ? '${displayName(person)} owes you ${formatMoney(owed)}.'
+              : outgoingOnly
+              ? 'You owe ${displayName(person)} ${formatMoney(owe)}.'
+              : 'With ${displayName(person)}, the net Money balance is ${formatMoney(owed - owe)}.',
+          rows: [
+            AssistantRow('They owe you', formatMoney(owed)),
+            AssistantRow('You owe them', formatMoney(owe)),
+          ],
+          actions: const [moneyAction],
+        );
+      case AssistantIntent.upcoming:
+        final due = facts.dueItemsThrough(
+          dateOnly(ctx.now).add(const Duration(days: 365)),
+        );
+        return AssistantReply(
+          due.isEmpty
+              ? 'No upcoming or overdue payments are tracked.'
+              : 'Here are the next ${due.length < 5 ? due.length : 5} tracked payments, overdue first.',
+          rows: [
+            for (final item in due.take(5))
+              AssistantRow(
+                '${item.label} · ${formatDate(item.dueDate)}',
+                formatMoney(item.amountPaise),
+              ),
+          ],
+          actions: const [emiAction, moneyAction, subsAction],
+        );
+      case AssistantIntent.unknown:
+        return AssistantReply(
+          'I’m not sure which FinKeep question you meant. Did you mean one of these?',
+          suggestions: _closestSuggestions(question, facts),
+        );
+    }
+  }
+}
+
+AssistantDestination _destinationForDraft(AssistantFormKind kind) =>
+    switch (kind) {
+      AssistantFormKind.emi => AssistantDestination.emis,
+      AssistantFormKind.moneyGiven ||
+      AssistantFormKind.moneyBorrowed => AssistantDestination.money,
+      AssistantFormKind.subscription => AssistantDestination.subscriptions,
+    };
+
+List<AssistantAction> _amountActions(int amountPaise) {
+  if (amountPaise <= 0) return const [];
+  return [
+    AssistantAction(
+      'Add to EMI',
+      AssistantDestination.emis,
+      formDraft: AssistantFormDraft(
+        kind: AssistantFormKind.emi,
+        amountPaise: amountPaise,
+      ),
+    ),
+    AssistantAction(
+      'Add as money given',
+      AssistantDestination.money,
+      formDraft: AssistantFormDraft(
+        kind: AssistantFormKind.moneyGiven,
+        amountPaise: amountPaise,
+      ),
+    ),
+    AssistantAction(
+      'Add as money borrowed',
+      AssistantDestination.money,
+      formDraft: AssistantFormDraft(
+        kind: AssistantFormKind.moneyBorrowed,
+        amountPaise: amountPaise,
+      ),
+    ),
+    AssistantAction(
+      'Add as subscription',
+      AssistantDestination.subscriptions,
+      formDraft: AssistantFormDraft(
+        kind: AssistantFormKind.subscription,
+        amountPaise: amountPaise,
+      ),
+    ),
+  ];
+}
+
+List<String> _dataSuggestions(FinanceFacts facts) {
+  final choices = <String>['My financial status'];
+  if (facts.activeEmis.isNotEmpty) choices.add('When is my next EMI?');
+  if (facts.given.isNotEmpty) choices.add('Who owes me?');
+  if (facts.borrowed.isNotEmpty) choices.add('How much do I owe?');
+  if (facts.activeSubscriptions.isNotEmpty) {
+    choices.add('Subscriptions per month');
+  }
+  for (final fallback in [
+    "What's due this week?",
+    '15% of 8000',
+    'Add an EMI',
+    'Help',
+  ]) {
+    if (choices.length >= 4) break;
+    choices.add(fallback);
+  }
+  return choices.take(4).toList();
+}
+
+List<String> _closestSuggestions(String question, FinanceFacts facts) {
+  final candidates = <String>{
+    ..._dataSuggestions(facts),
+    'Next EMI date',
+    'How much do I need to pay this month?',
+    'Who owes me?',
+    'Subscriptions per month',
+    'Analyze my portfolio',
+    'Monthly outflow',
+  }.toList();
+  final tokens = normalizeQuestion(
+    question,
+  ).split(' ').where((token) => token.isNotEmpty).toList();
+  int score(String candidate) {
+    final words = normalizeQuestion(candidate).split(' ');
+    return tokens.fold(
+      0,
+      (sum, token) =>
+          sum +
+          (words.contains(token)
+              ? 3
+              : words.any(
+                  (word) =>
+                      token.length >= 4 && _distanceAtMostOne(token, word) == 1,
+                )
+              ? 2
+              : 0),
+    );
+  }
+
+  candidates.sort((a, b) => score(b).compareTo(score(a)));
+  return candidates.take(3).toList();
+}
+
+AssistantReply _analyzePortfolio(FinanceFacts facts) {
+  final outflow = facts.monthlyOutflowPaise;
+  final emiShare = outflow == 0 ? 0.0 : facts.monthlyEmiPaise / outflow;
+  final subscriptionsShare = outflow == 0
+      ? 0.0
+      : facts.monthlySubscriptionsPaise / outflow;
+  final overdue = facts
+      .dueItemsThrough(facts.now)
+      .where((item) => dateOnly(item.dueDate).isBefore(dateOnly(facts.now)))
+      .toList();
+  final undated = facts.given
+      .where((item) => item.record.dueDate == null)
+      .toList();
+  final costly =
+      facts.activeSubscriptions
+          .where(
+            (item) =>
+                monthlyEquivalentPaise(item.amountPaise, item.frequency) > 0,
+          )
+          .toList()
+        ..sort(
+          (a, b) => monthlyEquivalentPaise(
+            b.amountPaise,
+            b.frequency,
+          ).compareTo(monthlyEquivalentPaise(a.amountPaise, a.frequency)),
+        );
+  final rated =
+      facts.activeEmis
+          .where((item) => (item.emi.interestRate ?? 0) > 0)
+          .toList()
+        ..sort((a, b) => b.emi.interestRate!.compareTo(a.emi.interestRate!));
+  final balances = <(String, int)>[
+    for (final emi in facts.activeEmis)
+      (emi.emi.name, emi.remainingBalancePaise),
+    for (final item in facts.borrowed)
+      (item.record.personName, item.summary.remainingAmountPaise),
+  ]..sort((a, b) => a.$2.compareTo(b.$2));
+  final largestCreditor = facts.borrowed.toList()
+    ..sort(
+      (a, b) => b.summary.remainingAmountPaise.compareTo(
+        a.summary.remainingAmountPaise,
+      ),
+    );
+  final largestDebtor = facts.given.toList()
+    ..sort(
+      (a, b) => b.summary.remainingAmountPaise.compareTo(
+        a.summary.remainingAmountPaise,
+      ),
+    );
+  final suggestions = <String>[];
+  if (rated.isNotEmpty) {
+    suggestions.add(
+      '1. Consider ${rated.first.emi.name} first: it has the highest recorded rate (${rated.first.emi.interestRate}% p.a.).',
+    );
+  } else if (balances.isNotEmpty) {
+    suggestions.add(
+      '1. Consider ${balances.first.$1} first by the smallest-balance rule (${formatMoney(balances.first.$2)}); no positive EMI interest rate is recorded.',
+    );
+  }
+  if (overdue.isNotEmpty) {
+    final item = overdue.first;
+    suggestions.add(
+      '${suggestions.length + 1}. Follow up on ${item.label}: ${formatMoney(item.amountPaise)} was due ${formatDate(item.dueDate)}.',
+    );
+  }
+  if (undated.isNotEmpty) {
+    suggestions.add(
+      '${suggestions.length + 1}. Set due dates for ${undated.length} money-given ${undated.length == 1 ? 'record' : 'records'} totaling ${formatMoney(undated.fold<int>(0, (sum, item) => sum + item.summary.remainingAmountPaise))}.',
+    );
+  }
+  if (costly.isNotEmpty) {
+    suggestions.add(
+      '${suggestions.length + 1}. Check whether ${costly.first.name} is still used; pausing it would avoid about ${formatMoney(monthlyEquivalentPaise(costly.first.amountPaise, costly.first.frequency) * 12)} a year.',
+    );
+  }
+  if (emiShare > 0.4) {
+    suggestions.add(
+      '${suggestions.length + 1}. EMI payments are ${(emiShare * 100).round()}% of estimated monthly outflow; review the commitment before adding a new EMI.',
+    );
+  }
+  for (final fallback in [
+    'Review upcoming due dates in FinKeep this month.',
+    'Add due dates when you record money given or borrowed.',
+    'Check your recurring commitments before adding a new one.',
+  ]) {
+    if (suggestions.length >= 3) break;
+    suggestions.add('${suggestions.length + 1}. $fallback');
+  }
+  final debtDate = facts.debtFreeDate;
+  return AssistantReply(
+    'FinKeep portfolio review (${formatDate(dateOnly(facts.now))}).\n${suggestions.take(5).join('\n')}\nNot financial advice.',
+    rows: [
+      AssistantRow(
+        'EMI share of monthly outflow',
+        '${(emiShare * 100).round()}%${emiShare > 0.4 ? ' · above 40%' : ''}',
+      ),
+      AssistantRow(
+        'Subscriptions share',
+        '${(subscriptionsShare * 100).round()}%',
+      ),
+      AssistantRow(
+        'Overdue payments',
+        '${overdue.length} · ${formatMoney(overdue.fold<int>(0, (sum, item) => sum + item.amountPaise))}',
+      ),
+      if (largestCreditor.isNotEmpty)
+        AssistantRow(
+          'Biggest creditor',
+          '${displayName(largestCreditor.first.record.personName)} · ${formatMoney(largestCreditor.first.summary.remainingAmountPaise)}',
+        ),
+      if (largestDebtor.isNotEmpty)
+        AssistantRow(
+          'Biggest debtor',
+          '${displayName(largestDebtor.first.record.personName)} · ${formatMoney(largestDebtor.first.summary.remainingAmountPaise)}',
+        ),
+      if (costly.isNotEmpty)
+        AssistantRow(
+          'Costliest subscription',
+          '${displayName(costly.first.name)} · ${formatMoney(monthlyEquivalentPaise(costly.first.amountPaise, costly.first.frequency))}/month',
+        ),
+      AssistantRow(
+        'Debt-free date',
+        debtDate == null
+            ? 'Unknown: a debt has no due date'
+            : facts.totalDebtPaise == 0
+            ? 'No tracked debt'
+            : '${formatDate(debtDate)} · ${dateOnly(debtDate).difference(dateOnly(facts.now)).inDays < 0 ? 'past due' : 'in ${dateOnly(debtDate).difference(dateOnly(facts.now)).inDays} days'}',
+      ),
+    ],
+    chart: AssistantChart(
+      kind: AssistantChartKind.bar,
+      fraction: emiShare.clamp(0, 1),
+      label: 'EMI share',
+    ),
+    actions: const [
+      AssistantAction('Open EMIs', AssistantDestination.emis),
+      AssistantAction('Open Money', AssistantDestination.money),
+      AssistantAction('Open subscriptions', AssistantDestination.subscriptions),
+    ],
+  );
+}

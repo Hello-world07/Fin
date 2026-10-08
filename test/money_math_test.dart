@@ -137,7 +137,7 @@ void main() {
   );
 
   test(
-    'dashboard windows include overdue due items but exclude undated money',
+    'dashboard rolls recurring billing forward and excludes undated money',
     () async {
       final db = AppDatabase.test(NativeDatabase.memory());
       addTearDown(db.close);
@@ -173,10 +173,17 @@ void main() {
       final summary = await repo.watchDashboard().first;
       final actions = await repo.reminders(attentionOnly: false);
       expect(summary.upcomingPayments, 2);
-      expect(summary.upcomingSubscriptions, 1);
+      expect(summary.upcomingSubscriptions, 0);
       expect(summary.monthlyMoneyToPayPaise, 20500);
       expect(summary.monthlyOutflowPaise, 25500);
       expect(actions.where((item) => item.entityType == 'money'), hasLength(2));
+      final nextSubscription = actions.singleWhere(
+        (item) => item.entityType == 'subscription',
+      );
+      expect(
+        nextSubscription.dueAt.isAfter(todayOnly.add(const Duration(days: 14))),
+        isTrue,
+      );
       expect(
         actions.any((item) => item.title.contains('No due date')),
         isFalse,

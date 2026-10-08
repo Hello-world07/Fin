@@ -1206,10 +1206,26 @@ String _monthLabel(DateTime date) {
 }
 
 class EmiFormSheet extends ConsumerStatefulWidget {
-  const EmiFormSheet({super.key, this.emi, this.initialEmiAmount});
+  const EmiFormSheet({
+    super.key,
+    this.emi,
+    this.initialEmiAmount,
+    this.initialPrincipal,
+    this.initialInterestRate,
+    this.initialName,
+    this.initialTenureMonths,
+    this.initialFrequency,
+    this.initialDueDate,
+  });
 
   final Emi? emi;
   final String? initialEmiAmount;
+  final String? initialPrincipal;
+  final String? initialInterestRate;
+  final String? initialName;
+  final int? initialTenureMonths;
+  final PaymentFrequency? initialFrequency;
+  final DateTime? initialDueDate;
 
   @override
   ConsumerState<EmiFormSheet> createState() => _EmiFormSheetState();
@@ -1217,12 +1233,16 @@ class EmiFormSheet extends ConsumerStatefulWidget {
 
 class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
   final _formKey = GlobalKey<FormState>();
-  late final _name = TextEditingController(text: widget.emi?.name ?? '');
+  late final _name = TextEditingController(
+    text: widget.emi?.name ?? widget.initialName ?? '',
+  );
   late final _provider = TextEditingController(
     text: widget.emi?.provider ?? '',
   );
   late final _principal = TextEditingController(
-    text: widget.emi == null ? '' : rupeesText(widget.emi!.principalPaise),
+    text: widget.emi == null
+        ? widget.initialPrincipal ?? ''
+        : rupeesText(widget.emi!.principalPaise),
   );
   late final _amount = TextEditingController(
     text:
@@ -1230,36 +1250,44 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
         (widget.emi == null ? '' : rupeesText(widget.emi!.emiAmountPaise)),
   );
   late final _tenure = TextEditingController(
-    text: widget.emi?.tenureMonths.toString() ?? '12',
+    text:
+        widget.emi?.tenureMonths.toString() ??
+        widget.initialTenureMonths?.toString() ??
+        '12',
   );
   late final _notes = TextEditingController(text: widget.emi?.notes ?? '');
   late final _interest = TextEditingController(
-    text: widget.emi?.interestRate?.toString() ?? '',
+    text:
+        widget.emi?.interestRate?.toString() ??
+        widget.initialInterestRate ??
+        '',
   );
   String? _scheduleError;
   late int? _paymentMethodId = widget.emi?.paymentMethodId;
   late DateTime _due =
       widget.emi?.nextDueDate ??
+      widget.initialDueDate ??
       DateTime(
         DateTime.now().year,
         DateTime.now().month + 1,
         DateTime.now().day,
       );
   late PaymentFrequency _frequency =
-      widget.emi?.frequency ?? PaymentFrequency.monthly;
+      widget.emi?.frequency ??
+      widget.initialFrequency ??
+      PaymentFrequency.monthly;
   late String _type = widget.emi?.type ?? 'Loan';
   late String _providerChoice = _providerChipFor(widget.emi?.provider);
   String? _selectedPaymentTile;
   late String _tenureChoice =
-      const [
-        '6',
-        '12',
-        '24',
-        '36',
-      ].contains(widget.emi?.tenureMonths.toString())
-      ? widget.emi!.tenureMonths.toString()
+      const ['6', '12', '24', '36'].contains(
+        (widget.emi?.tenureMonths ?? widget.initialTenureMonths)?.toString(),
+      )
+      ? (widget.emi?.tenureMonths ?? widget.initialTenureMonths).toString()
       : widget.emi == null
-      ? '12'
+      ? widget.initialTenureMonths == null
+            ? '12'
+            : 'Custom'
       : 'Custom';
   DateTime? _loadedNextDue;
   Animation<double>? _routeAnimation;

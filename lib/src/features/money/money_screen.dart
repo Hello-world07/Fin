@@ -1105,11 +1105,15 @@ class MoneyFormSheet extends ConsumerStatefulWidget {
     this.record,
     this.initialAmount,
     this.initialDirection,
+    this.initialPerson,
+    this.initialDueDate,
   });
 
   final MoneyRecord? record;
   final String? initialAmount;
   final MoneyDirection? initialDirection;
+  final String? initialPerson;
+  final DateTime? initialDueDate;
 
   @override
   ConsumerState<MoneyFormSheet> createState() => _MoneyFormSheetState();
@@ -1118,7 +1122,7 @@ class MoneyFormSheet extends ConsumerStatefulWidget {
 class _MoneyFormSheetState extends ConsumerState<MoneyFormSheet> {
   final _formKey = GlobalKey<FormState>();
   late final _person = TextEditingController(
-    text: widget.record?.personName ?? '',
+    text: widget.record?.personName ?? widget.initialPerson ?? '',
   );
   late final _amount = TextEditingController(
     text:
@@ -1138,7 +1142,7 @@ class _MoneyFormSheetState extends ConsumerState<MoneyFormSheet> {
   @override
   void initState() {
     super.initState();
-    _due = widget.record?.dueDate;
+    _due = widget.record?.dueDate ?? widget.initialDueDate;
   }
 
   @override

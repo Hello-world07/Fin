@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -14,6 +15,7 @@ import '../../shared/empty_state.dart';
 import '../../shared/finance_display_widgets.dart';
 import '../../shared/forms.dart';
 import '../activity/activity_screen.dart';
+import '../assistant/ask_finkeep_sheet.dart';
 import '../emis/emis_screen.dart';
 import '../money/money_screen.dart';
 import '../subscriptions/subscriptions_screen.dart';
@@ -38,85 +40,121 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     final subscriptions = ref.watch(subscriptionsProvider);
     return Scaffold(
       floatingActionButton: _buildAddMenu(context),
-      body: summary.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (error, stack) => Center(
-          child: EmptyState(
-            icon: Icons.cloud_off_outlined,
-            title: 'Dashboard unavailable',
-            message: 'Your local finance data could not be loaded.',
-          ),
-        ),
-        data: (data) {
-          final noFinanceData =
-              (emis.valueOrNull?.isEmpty ?? false) &&
-              (records.valueOrNull?.isEmpty ?? false) &&
-              (subscriptions.valueOrNull?.isEmpty ?? false);
-          return ListView(
-            padding: EdgeInsets.zero,
-            children: [
-              _DashboardHeader(onCalculator: _openCalculator),
-              if (noFinanceData)
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(24, 36, 24, 32),
-                  child: EmptyState(
-                    icon: Icons.savings_outlined,
-                    title: 'Your money overview starts here',
-                    message:
-                        'Add an EMI, money record, or subscription to see your financial picture.',
-                  ),
-                )
-              else ...[
-                _BalanceHero(
-                  incoming: data.comingToMePaise,
-                  payable: data.needToPayPaise,
+      body: Stack(
+        children: [
+          Positioned.fill(
+            child: summary.when(
+              loading: () => const Center(child: CircularProgressIndicator()),
+              error: (error, stack) => Center(
+                child: EmptyState(
+                  icon: Icons.cloud_off_outlined,
+                  title: 'Dashboard unavailable',
+                  message: 'Your local finance data could not be loaded.',
                 ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 26, 20, 32),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _OutflowSection(summary: data),
-                      const SizedBox(height: 32),
-                      actions.when(
-                        data: (items) => _ThirtyDayTimeline(
-                          items: items,
-                          dueInSevenDays: data.upcomingPayments,
-                          subscriptionsInFourteenDays:
-                              data.upcomingSubscriptions,
+              ),
+              data: (data) {
+                final noFinanceData =
+                    (emis.valueOrNull?.isEmpty ?? false) &&
+                    (records.valueOrNull?.isEmpty ?? false) &&
+                    (subscriptions.valueOrNull?.isEmpty ?? false);
+                return ListView(
+                  padding: EdgeInsets.zero,
+                  children: [
+                    _DashboardHeader(onAsk: () => openAskFinKeep(context)),
+                    if (noFinanceData)
+                      const Padding(
+                        padding: EdgeInsets.fromLTRB(24, 36, 24, 32),
+                        child: EmptyState(
+                          icon: Icons.savings_outlined,
+                          title: 'Your money overview starts here',
+                          message:
+                              'Add an EMI, money record, or subscription to see your financial picture.',
                         ),
-                        error: (_, _) => const SizedBox.shrink(),
-                        loading: () => const SizedBox.shrink(),
+                      )
+                    else ...[
+                      _BalanceHero(
+                        incoming: data.comingToMePaise,
+                        payable: data.needToPayPaise,
                       ),
-                      const SizedBox(height: 32),
-                      emis.when(
-                        data: (items) => _EmiProgressSection(items: items),
-                        error: (_, _) => const SizedBox.shrink(),
-                        loading: () => const SizedBox.shrink(),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 26, 20, 32),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _OutflowSection(summary: data),
+                            const SizedBox(height: 32),
+                            actions.when(
+                              data: (items) => _ThirtyDayTimeline(
+                                items: items,
+                                dueInSevenDays: data.upcomingPayments,
+                                subscriptionsInFourteenDays:
+                                    data.upcomingSubscriptions,
+                              ),
+                              error: (_, _) => const SizedBox.shrink(),
+                              loading: () => const SizedBox.shrink(),
+                            ),
+                            const SizedBox(height: 32),
+                            emis.when(
+                              data: (items) =>
+                                  _EmiProgressSection(items: items),
+                              error: (_, _) => const SizedBox.shrink(),
+                              loading: () => const SizedBox.shrink(),
+                            ),
+                            const SizedBox(height: 28),
+                            _Insights(
+                              summary: data,
+                              actions: actions.valueOrNull ?? const [],
+                              records: records.valueOrNull ?? const [],
+                            ),
+                            const SizedBox(height: 28),
+                            _NextActions(
+                              items: actions.valueOrNull ?? const [],
+                            ),
+                            const SizedBox(height: 28),
+                            _RecentActivity(
+                              items: activity.valueOrNull ?? const [],
+                            ),
+                          ],
+                        ),
                       ),
-                      const SizedBox(height: 28),
-                      _Insights(
-                        summary: data,
-                        actions: actions.valueOrNull ?? const [],
-                        records: records.valueOrNull ?? const [],
-                      ),
-                      const SizedBox(height: 28),
-                      _NextActions(items: actions.valueOrNull ?? const []),
-                      const SizedBox(height: 28),
-                      _RecentActivity(items: activity.valueOrNull ?? const []),
                     ],
-                  ),
+                  ],
+                );
+              },
+            ),
+          ),
+          if (_actionsExpanded)
+            Positioned.fill(
+              child: GestureDetector(
+                onTap: () => setState(() => _actionsExpanded = false),
+                child: ColoredBox(
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.scrim.withValues(alpha: 0.38),
                 ),
-              ],
-            ],
-          );
-        },
+              ),
+            ),
+        ],
       ),
     );
   }
 
   Future<void> _openCalculator() => openCalculator(
     context,
+    onEmiDraft: (draft) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        openFinanceSheet(
+          context,
+          EmiFormSheet(
+            initialEmiAmount: draft.monthlyEmi.toStringAsFixed(2),
+            initialPrincipal: draft.principal.toStringAsFixed(2),
+            initialInterestRate: draft.annualRate.toString(),
+            initialTenureMonths: draft.months,
+          ),
+        );
+      });
+    },
     onDestination: (destination, amount) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
@@ -149,56 +187,68 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     },
   );
 
+  void _closeMenuThen(VoidCallback action) {
+    setState(() => _actionsExpanded = false);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) action();
+    });
+  }
+
   Widget _buildAddMenu(BuildContext context) => Column(
     mainAxisSize: MainAxisSize.min,
     crossAxisAlignment: CrossAxisAlignment.end,
     children: [
       if (_actionsExpanded) ...[
         _AddAction(
+          label: 'Ask FinKeep',
+          icon: Icons.auto_awesome_outlined,
+          onTap: () => _closeMenuThen(() => openAskFinKeep(context)),
+        ),
+        const SizedBox(height: 10),
+        _AddAction(
+          label: 'Calculator',
+          icon: Icons.calculate_outlined,
+          onTap: () => _closeMenuThen(_openCalculator),
+        ),
+        const SizedBox(height: 10),
+        _AddAction(
           label: 'Add Subscription',
           icon: Icons.autorenew,
-          onTap: () {
-            setState(() => _actionsExpanded = false);
-            openFinanceSheet(context, const SubscriptionFormSheet());
-          },
+          onTap: () => _closeMenuThen(
+            () => openFinanceSheet(context, const SubscriptionFormSheet()),
+          ),
         ),
         const SizedBox(height: 10),
         _AddAction(
           label: 'Add Money',
           icon: Icons.swap_horiz,
-          onTap: () {
-            setState(() => _actionsExpanded = false);
-            openFinanceSheet(context, const MoneyFormSheet());
-          },
+          onTap: () => _closeMenuThen(
+            () => openFinanceSheet(context, const MoneyFormSheet()),
+          ),
         ),
         const SizedBox(height: 10),
         _AddAction(
           label: 'Add EMI',
           icon: Icons.account_balance_outlined,
-          onTap: () {
-            setState(() => _actionsExpanded = false);
-            openFinanceSheet(context, const EmiFormSheet());
-          },
+          onTap: () => _closeMenuThen(
+            () => openFinanceSheet(context, const EmiFormSheet()),
+          ),
         ),
         const SizedBox(height: 12),
       ],
       FloatingActionButton(
         tooltip: _actionsExpanded ? 'Close add menu' : 'Add finance item',
         onPressed: () => setState(() => _actionsExpanded = !_actionsExpanded),
-        child: AnimatedRotation(
-          turns: _actionsExpanded ? 0.125 : 0,
-          duration: const Duration(milliseconds: 180),
-          child: const Icon(Icons.add),
-        ),
+        child: Icon(_actionsExpanded ? Icons.close : Icons.add),
       ),
     ],
   );
 }
 
 class _DashboardHeader extends StatelessWidget {
-  const _DashboardHeader({required this.onCalculator});
+  const _DashboardHeader({required this.onAsk});
 
-  final VoidCallback onCalculator;
+  final VoidCallback onAsk;
 
   @override
   Widget build(BuildContext context) {
@@ -210,46 +260,120 @@ class _DashboardHeader extends StatelessWidget {
         ? 'Good afternoon'
         : 'Good evening';
     return Padding(
-      padding: const EdgeInsets.fromLTRB(22, 18, 12, 18),
-      child: Row(
+      padding: const EdgeInsets.fromLTRB(22, 18, 22, 18),
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'FinKeep',
-                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.w800,
-                    color: Theme.of(context).brightness == Brightness.light
-                        ? AppTheme.primaryText
-                        : Theme.of(context).colorScheme.onSurface,
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'FinKeep',
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                  color: Theme.of(context).brightness == Brightness.light
+                      ? AppTheme.primaryText
+                      : Theme.of(context).colorScheme.onSurface,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                'Local-first money clarity',
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: AppTheme.mutedText),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                '$greeting · ${formatDate(now)}',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          _AskSearchStrip(onTap: onAsk),
+        ],
+      ),
+    );
+  }
+}
+
+class _AskSearchStrip extends StatefulWidget {
+  const _AskSearchStrip({required this.onTap});
+  final VoidCallback onTap;
+
+  @override
+  State<_AskSearchStrip> createState() => _AskSearchStripState();
+}
+
+class _AskSearchStripState extends State<_AskSearchStrip> {
+  static const _prompts = [
+    "Ask: what's due this week?",
+    'Ask: who owes me money?',
+    'Ask: analyze my portfolio',
+  ];
+  Timer? _timer;
+  int _index = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(seconds: 4), (_) {
+      if (mounted && (ModalRoute.of(context)?.isCurrent ?? true)) {
+        setState(() => _index = (_index + 1) % _prompts.length);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Material(
+      color: theme.colorScheme.surfaceContainerLow,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: widget.onTap,
+        child: SizedBox(
+          width: double.infinity,
+          height: 56,
+          child: Row(
+            children: [
+              const SizedBox(width: 16),
+              Icon(
+                Icons.auto_awesome_outlined,
+                color: theme.colorScheme.primary,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: AnimatedSwitcher(
+                  duration: AppTheme.motionDuration,
+                  child: Align(
+                    key: ValueKey(_index),
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      _prompts[_index],
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
                   ),
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  'Local-first money clarity',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.bodySmall?.copyWith(color: AppTheme.mutedText),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  '$greeting · ${formatDate(now)}',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
-                ),
-              ],
-            ),
+              ),
+              const SizedBox(width: 16),
+            ],
           ),
-          IconButton(
-            tooltip: 'Quick calculator',
-            onPressed: onCalculator,
-            icon: const Icon(Icons.calculate_outlined),
-          ),
-        ],
+        ),
       ),
     );
   }

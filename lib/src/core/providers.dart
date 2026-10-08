@@ -7,6 +7,7 @@ import '../data/database.dart';
 import '../data/backup_service.dart';
 import '../data/repositories.dart';
 import '../domain/enums.dart';
+import '../features/assistant/assistant_engine.dart';
 
 final databaseProvider = Provider<AppDatabase>((ref) {
   final db = AppDatabase();
@@ -16,6 +17,10 @@ final databaseProvider = Provider<AppDatabase>((ref) {
 
 final financeRepositoryProvider = Provider<FinanceRepository>((ref) {
   return FinanceRepository(ref.watch(databaseProvider));
+});
+
+final assistantEngineProvider = Provider<AssistantEngine>((ref) {
+  return LocalAssistantEngine(ref.watch(financeRepositoryProvider));
 });
 
 final pdfExportProvider = Provider<PdfExportService>((ref) {

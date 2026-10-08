@@ -13,6 +13,7 @@ import '../domain/emi_math.dart';
 import '../domain/emi_payment_rules.dart' show dateOnly;
 import '../domain/enums.dart';
 import '../domain/money_math.dart';
+import '../domain/subscription_schedule.dart';
 import 'database.dart';
 
 const dashboardPaymentHorizon = Duration(days: 7);
@@ -397,7 +398,16 @@ class FinanceRepository {
         .length;
     final upcomingSubscriptions = subscriptions
         .where((sub) => sub.status == SubscriptionStatus.active)
-        .where((sub) => _isDueThrough(sub.nextBillingDate, subscriptionHorizon))
+        .where(
+          (sub) => _isDueThrough(
+            nextSubscriptionBillingDate(
+              sub.nextBillingDate,
+              sub.frequency,
+              today,
+            ),
+            subscriptionHorizon,
+          ),
+        )
         .length;
     final monthlyEmis = emiDetails
         .where(
@@ -1032,14 +1042,60 @@ class FinanceRepository {
         'Subscription amount must be greater than zero.',
       );
     }
+    final name = item.name.present ? item.name.value : existing?.name ?? '';
+    final frequency = item.frequency.present
+        ? item.frequency.value
+        : existing?.frequency;
+    final due = item.nextBillingDate.present
+        ? item.nextBillingDate.value
+        : existing?.nextBillingDate;
+    final status = item.status.present ? item.status.value : existing?.status;
+    final category = item.category.present
+        ? item.category.value
+        : existing?.category;
+    final notes = item.notes.present ? item.notes.value : existing?.notes;
+    final paymentMethodId = item.paymentMethodId.present
+        ? item.paymentMethodId.value
+        : existing?.paymentMethodId;
+    if (existing != null &&
+        name == existing.name &&
+        amount == existing.amountPaise &&
+        frequency == existing.frequency &&
+        due == existing.nextBillingDate &&
+        status == existing.status &&
+        category == existing.category &&
+        notes == existing.notes &&
+        paymentMethodId == existing.paymentMethodId) {
+      return existing.id;
+    }
     return db.transaction(() async {
-      final id = await db.into(db.subscriptions).insertOnConflictUpdate(item);
+      final id = existing == null
+          ? await db.into(db.subscriptions).insert(item)
+          : existing.id;
+      if (existing != null) {
+        await (db.update(
+          db.subscriptions,
+        )..where((row) => row.id.equals(id))).write(item);
+      }
       final saved = await subscription(id);
+      final title = existing == null
+          ? '${displayName(name)} added'
+          : status != existing.status
+          ? '${displayName(name)} ${status == SubscriptionStatus.paused
+                ? 'paused'
+                : status == SubscriptionStatus.active
+                ? 'resumed'
+                : status!.label.toLowerCase()}'
+          : amount != existing.amountPaise
+          ? '${displayName(name)} price changed to ${formatMoney(amount)}'
+          : due != existing.nextBillingDate
+          ? '${displayName(name)} billing date changed to ${formatDate(due!)}'
+          : '${displayName(name)} updated';
       await _logActivity(
         type: isEdit
             ? ActivityType.subscriptionChanged
             : ActivityType.subscriptionCreated,
-        title: isEdit ? 'Subscription Changed' : 'Subscription Added',
+        title: title,
         description: saved == null
             ? 'Subscription'
             : '${displayName(saved.name)} · ${formatMoney(saved.amountPaise)}',
@@ -1058,7 +1114,7 @@ class FinanceRepository {
       if (existing == null) return;
       await _logActivity(
         type: ActivityType.subscriptionDeleted,
-        title: 'Subscription Deleted',
+        title: '${displayName(existing.name)} deleted',
         description:
             '${displayName(existing.name)} · ${formatMoney(existing.amountPaise)}',
         entityType: 'subscription',
@@ -1072,6 +1128,7 @@ class FinanceRepository {
     await db.transaction(() async {
       final existing = await subscription(id);
       if (existing == null) return;
+      if (existing.status == status) return;
       await (db.update(db.subscriptions)..where((t) => t.id.equals(id))).write(
         SubscriptionsCompanion(
           status: Value(status),
@@ -1080,11 +1137,29 @@ class FinanceRepository {
       );
       await _logActivity(
         type: ActivityType.subscriptionChanged,
-        title: 'Subscription Changed',
+        title:
+            '${displayName(existing.name)} ${status == SubscriptionStatus.paused
+                ? 'paused'
+                : status == SubscriptionStatus.active
+                ? 'resumed'
+                : status.label.toLowerCase()}',
         description:
             '${displayName(existing.name)} · ${formatMoney(existing.amountPaise)} · ${status.label}',
         entityType: 'subscription',
         entityId: id,
+      );
+    });
+  }
+
+  Future<void> restoreSubscription(Subscription item) async {
+    await db.transaction(() async {
+      await db.into(db.subscriptions).insertOnConflictUpdate(item);
+      await _logActivity(
+        type: ActivityType.subscriptionCreated,
+        title: '${displayName(item.name)} restored',
+        description: formatMoney(item.amountPaise),
+        entityType: 'subscription',
+        entityId: item.id,
       );
     });
   }
@@ -1184,15 +1259,20 @@ class FinanceRepository {
 
     final subscriptions = await db.select(db.subscriptions).get();
     for (final sub in subscriptions) {
+      final billingDate = nextSubscriptionBillingDate(
+        sub.nextBillingDate,
+        sub.frequency,
+        today,
+      );
       items.add(
         ReminderItem(
           title: displayName(sub.name),
           subtitle: sub.status == SubscriptionStatus.active
-              ? relativeDueText(sub.nextBillingDate, today)
+              ? relativeDueText(billingDate, today)
               : sub.status.label,
-          dueAt: sub.nextBillingDate,
+          dueAt: billingDate,
           status: sub.status == SubscriptionStatus.active
-              ? reminderStatusFor(sub.nextBillingDate, today)
+              ? reminderStatusFor(billingDate, today)
               : ReminderStatus.completed,
           entityType: 'subscription',
           entityId: sub.id,

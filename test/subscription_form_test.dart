@@ -162,7 +162,15 @@ void main() {
     'calculator destination transfers amount and inline calculator remains usable',
     (tester) async {
       await openForm(tester, fromCalculator: true);
-      await tester.tap(find.text('Subscription'));
+      await tester.ensureVisible(find.text('Use this amount'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Use this amount'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(
+        find.widgetWithText(ActionChip, 'Subscription'),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(ActionChip, 'Subscription'));
       await tester.pumpAndSettle();
       expect(
         tester.widget<TextFormField>(input('0.00')).controller!.text,
@@ -175,6 +183,8 @@ void main() {
       await tester.tap(find.text('5'));
       await tester.tap(find.text('0'));
       await tester.tap(find.text('0'));
+      await tester.ensureVisible(find.text('Use Amount'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Use Amount'));
       await tester.pumpAndSettle();
       expect(
