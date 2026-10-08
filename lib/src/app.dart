@@ -60,15 +60,7 @@ class _AppShellState extends ConsumerState<AppShell> {
       await ref.read(localBackupProvider).runAutoBackupIfDue();
       if (mounted) ref.invalidate(backupStatusProvider);
     } catch (_) {
-      if (mounted) {
-        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Auto-backup failed. Check the backup folder in Settings.',
-            ),
-          ),
-        );
-      }
+      // Automatic backup must never interrupt app startup.
     }
   }
 

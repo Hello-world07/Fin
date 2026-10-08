@@ -108,231 +108,254 @@ class _BackupSettingsSectionState extends ConsumerState<BackupSettingsSection> {
           ),
         SettingsRow(
           icon: Icons.folder_open_outlined,
-          title: status.folderName ?? 'Choose backup folder',
-          subtitle: 'For automatic backup',
+          title: 'Backup folder',
+          subtitle: status.folderName ?? 'Not chosen',
+          trailing: const Text('Change'),
           onTap: busy
               ? null
               : () => run(() async {
-                  final picked = await ref
-                      .read(localBackupProvider)
-                      .chooseAutoFolder();
+                  final service = ref.read(localBackupProvider);
+                  final picked = await service.chooseBackupFolder();
                   if (picked && mounted) {
-                    _message(this.context, 'Backup folder selected.');
+                    final result = await service.saveNow();
+                    if (mounted) _showBackupResult(this.context, result);
                   }
                 }),
         ),
         SettingsRow(
           icon: Icons.autorenew,
           title: 'Automatic backup',
-          subtitle: 'When FinKeep opens',
-          trailing: PopupMenuButton<String>(
-            tooltip: 'Automatic backup frequency',
-            initialValue: status.interval,
-            onSelected: busy
+          subtitle: 'Once a day when data changes',
+          trailing: Switch.adaptive(
+            value: status.interval != 'off',
+            onChanged: busy
                 ? null
-                : (value) => run(() async {
-                    if (value != 'off' && status.folderUri == null) {
-                      _message(context, 'Choose a backup folder first.');
+                : (enabled) => run(() async {
+                    if (enabled && status.folderUri == null) {
+                      await showCreateBackupFlow(context, ref);
                       return;
                     }
                     await ref
                         .read(localBackupProvider)
-                        .setAutoBackup(interval: value, keep: status.keep);
+                        .setAutoBackup(
+                          interval: enabled ? 'daily' : 'off',
+                          keep: status.keep,
+                        );
                   }),
-            itemBuilder: (_) => const [
-              PopupMenuItem(value: 'off', child: Text('Off')),
-              PopupMenuItem(value: 'daily', child: Text('Daily')),
-              PopupMenuItem(value: 'weekly', child: Text('Weekly')),
-            ],
+          ),
+        ),
+        SettingsRow(
+          icon: Icons.layers_outlined,
+          title: 'Keep recent backup days',
+          trailing: PopupMenuButton<int>(
+            tooltip: 'Number of backup days to keep',
+            initialValue: status.keep,
+            onSelected: busy
+                ? null
+                : (count) => run(
+                    () => ref
+                        .read(localBackupProvider)
+                        .setAutoBackup(
+                          interval: status.interval == 'off' ? 'off' : 'daily',
+                          keep: count,
+                        ),
+                  ),
+            itemBuilder: (_) => const [1, 3, 5, 10]
+                .map(
+                  (count) => PopupMenuItem(value: count, child: Text('$count')),
+                )
+                .toList(),
             child: Padding(
               padding: const EdgeInsets.all(8),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    status.interval == 'off'
-                        ? 'Off'
-                        : status.interval == 'daily'
-                        ? 'Daily'
-                        : 'Weekly',
-                  ),
+                  Text('${status.keep}'),
                   const Icon(Icons.arrow_drop_down),
                 ],
               ),
             ),
           ),
         ),
-        if (status.interval != 'off') ...[
+        SettingsRow(
+          icon: Icons.password_outlined,
+          title: 'Protect backups with a password',
+          subtitle: status.passwordProtected
+              ? 'Password set'
+              : 'Password not set',
+          trailing: Switch.adaptive(
+            value: status.passwordProtected,
+            onChanged: busy
+                ? null
+                : (enabled) =>
+                      run(() => _setBackupProtection(context, ref, enabled)),
+          ),
+        ),
+        if (status.lastError != null)
           SettingsRow(
-            icon: Icons.layers_outlined,
-            title: 'Keep recent backups',
-            trailing: PopupMenuButton<int>(
-              tooltip: 'Number of auto-backups to keep',
-              initialValue: status.keep,
-              onSelected: busy
-                  ? null
-                  : (count) => run(
-                      () => ref
-                          .read(localBackupProvider)
-                          .setAutoBackup(
-                            interval: status.interval,
-                            keep: count,
-                          ),
-                    ),
-              itemBuilder: (_) => const [3, 5, 10, 20]
-                  .map(
-                    (count) =>
-                        PopupMenuItem(value: count, child: Text('$count')),
-                  )
-                  .toList(),
-              child: Padding(
-                padding: const EdgeInsets.all(8),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text('${status.keep}'),
-                    const Icon(Icons.arrow_drop_down),
-                  ],
-                ),
-              ),
-            ),
+            icon: Icons.error_outline,
+            title: 'Last backup failed',
+            subtitle: status.lastError,
           ),
-          const Text(
-            'Automatic backups are not password protected. Choose a private folder.',
-          ),
-        ],
       ],
     );
   }
 }
 
 Future<void> showCreateBackupFlow(BuildContext context, WidgetRef ref) async {
-  final password = await _createPasswordChoice(context);
-  if (password == null || !context.mounted) return;
   final service = ref.read(localBackupProvider);
-  final saved = await AppLockSession.instance.keepUnlocked(
-    () => service.saveNow(password: password.$2),
-  );
-  if (saved == null || !context.mounted) return;
-  ref.invalidate(backupStatusProvider);
-  await showFinanceBottomSheet<void>(
+  if (!await service.hasUsableFolder()) {
+    if (!context.mounted) return;
+    final choose = await _showChooseFolderSheet(context);
+    if (choose != true || !context.mounted) return;
+    final selected = await AppLockSession.instance.keepUnlocked(
+      service.chooseBackupFolder,
+    );
+    if (!selected || !context.mounted) return;
+  }
+  try {
+    final result = await AppLockSession.instance.keepUnlocked(service.saveNow);
+    if (!context.mounted) return;
+    ref.invalidate(backupStatusProvider);
+    _showBackupResult(context, result);
+  } on BackupFolderUnavailableException {
+    if (!context.mounted) return;
+    final choose = await _showChooseFolderSheet(context);
+    if (choose != true || !context.mounted) return;
+    if (await service.chooseBackupFolder() && context.mounted) {
+      final result = await service.saveNow();
+      if (!context.mounted) return;
+      ref.invalidate(backupStatusProvider);
+      _showBackupResult(context, result);
+    }
+  }
+}
+
+Future<bool?> _showChooseFolderSheet(BuildContext context) {
+  return showFinanceBottomSheet<bool>(
     context,
-    builder: (sheetContext) => SafeArea(
-      child: SingleChildScrollView(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                'Backup saved',
-                style: Theme.of(sheetContext).textTheme.titleLarge,
-              ),
-              const SizedBox(height: 12),
-              Text(saved.name, maxLines: 2, overflow: TextOverflow.ellipsis),
-              Text(
-                '${(saved.size / 1024).toStringAsFixed(1)} KB · ${saved.location}',
-              ),
-              const SizedBox(height: 12),
-              _Counts(saved.counts),
-              const SizedBox(height: 16),
-              OutlinedButton.icon(
-                onPressed: () async {
-                  try {
-                    await service.openLocation(saved);
-                  } catch (error) {
-                    if (sheetContext.mounted) {
-                      _message(sheetContext, 'Could not open location: $error');
-                    }
-                  }
-                },
-                icon: const Icon(Icons.folder_open_outlined),
-                label: const Text('Open location'),
-              ),
-              TextButton.icon(
-                onPressed: () => service.shareSavedBackup(saved),
-                icon: const Icon(Icons.share_outlined),
-                label: const Text('Share backup file'),
-              ),
-            ],
+    builder: (sheetContext) => Padding(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Choose where to keep your backups',
+            style: Theme.of(sheetContext).textTheme.titleLarge,
           ),
-        ),
+          const SizedBox(height: 8),
+          const Text(
+            'FinKeep will save future backups there without opening a file picker.',
+          ),
+          const SizedBox(height: 20),
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(sheetContext, true),
+            icon: const Icon(Icons.folder_open_outlined),
+            label: const Text('Choose folder'),
+          ),
+        ],
       ),
     ),
   );
 }
 
-Future<(bool, String?)?> _createPasswordChoice(BuildContext context) async {
+void _showBackupResult(BuildContext context, BackupRunResult result) {
+  if (result.unchanged) {
+    _message(context, 'Already up to date');
+    return;
+  }
+  final saved = result.backup!;
+  _message(
+    context,
+    'Backed up - ${(saved.size / 1024).ceil()} KB - ${saved.location}',
+  );
+}
+
+Future<void> _setBackupProtection(
+  BuildContext context,
+  WidgetRef ref,
+  bool enabled,
+) async {
+  final service = ref.read(localBackupProvider);
+  if (!enabled) {
+    await service.setBackupPassword(null);
+    return;
+  }
+  final password = await _askNewBackupPassword(context);
+  if (password != null) await service.setBackupPassword(password);
+}
+
+Future<String?> _askNewBackupPassword(BuildContext context) async {
   final password = TextEditingController();
   final confirm = TextEditingController();
-  var protect = false;
   String? error;
-  final result = await showDialog<(bool, String?)>(
-    context: context,
-    builder: (dialogContext) => StatefulBuilder(
-      builder: (context, setDialogState) => AlertDialog(
-        title: const Text('Create backup'),
-        content: SingleChildScrollView(
+  final result = await showFinanceBottomSheet<String>(
+    context,
+    builder: (sheetContext) => StatefulBuilder(
+      builder: (context, setSheetState) => Padding(
+        padding: EdgeInsets.fromLTRB(
+          20,
+          12,
+          20,
+          24 + MediaQuery.viewInsetsOf(context).bottom,
+        ),
+        child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              SwitchListTile.adaptive(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Protect with a password'),
-                value: protect,
-                onChanged: (value) => setDialogState(() {
-                  protect = value;
-                  error = null;
-                }),
+              Text(
+                'Protect backups',
+                style: Theme.of(context).textTheme.titleLarge,
               ),
-              if (protect) ...[
-                TextField(
-                  controller: password,
-                  obscureText: true,
-                  decoration: const InputDecoration(labelText: 'Password'),
+              const SizedBox(height: 8),
+              const Text('A lost backup password cannot be recovered.'),
+              const SizedBox(height: 16),
+              TextField(
+                controller: password,
+                obscureText: true,
+                keyboardType: TextInputType.visiblePassword,
+                decoration: const InputDecoration(labelText: 'Backup password'),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: confirm,
+                obscureText: true,
+                keyboardType: TextInputType.visiblePassword,
+                decoration: const InputDecoration(
+                  labelText: 'Confirm password',
                 ),
-                TextField(
-                  controller: confirm,
-                  obscureText: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Confirm password',
+              ),
+              if (error != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    error!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
                   ),
                 ),
-                const SizedBox(height: 8),
-                const Text('A lost backup password cannot be recovered.'),
-              ],
-              if (error != null)
-                Text(
-                  error!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
-                ),
+              const SizedBox(height: 20),
+              FilledButton.icon(
+                onPressed: () {
+                  if (password.text.length < 8 ||
+                      password.text != confirm.text) {
+                    setSheetState(
+                      () => error =
+                          'Enter matching passwords of at least 8 characters.',
+                    );
+                    return;
+                  }
+                  Navigator.pop(sheetContext, password.text);
+                },
+                icon: const Icon(Icons.lock_outline),
+                label: const Text('Set password'),
+              ),
             ],
           ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () {
-              if (protect &&
-                  (password.text.length < 8 || password.text != confirm.text)) {
-                setDialogState(
-                  () => error =
-                      'Enter matching passwords of at least 8 characters.',
-                );
-                return;
-              }
-              Navigator.pop(dialogContext, (
-                true,
-                protect ? password.text : null,
-              ));
-            },
-            child: const Text('Continue'),
-          ),
-        ],
       ),
     ),
   );

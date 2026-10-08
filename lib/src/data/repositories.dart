@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:drift/drift.dart';
+import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -541,19 +542,23 @@ class FinanceRepository {
   Future<int> saveEmi(EmisCompanion item) async {
     final isEdit = item.id.present;
     final normalized = await _validatedEmiCompanion(item);
-    return db.transaction(() async {
-      final id = await db.into(db.emis).insertOnConflictUpdate(normalized);
-      final saved = await emiDetail(id);
-      await _logActivity(
-        type: isEdit ? ActivityType.emiEdited : ActivityType.emiCreated,
-        title: isEdit ? 'EMI Edited' : 'EMI Added',
-        description:
-            '${saved.emi.name} · ${formatMoney(saved.scheduledInstallmentPaise)} × ${saved.emi.tenureMonths}',
-        entityType: 'emi',
-        entityId: id,
-      );
-      return id;
+    final id = await db.transaction(() async {
+      if (!isEdit) return db.into(db.emis).insert(normalized);
+      await (db.update(
+        db.emis,
+      )..where((row) => row.id.equals(item.id.value))).write(normalized);
+      return item.id.value;
     });
+    final saved = await emiDetail(id);
+    await _logActivitySafely(
+      type: isEdit ? ActivityType.emiEdited : ActivityType.emiCreated,
+      title: isEdit ? 'EMI Edited' : 'EMI Added',
+      description:
+          '${saved.emi.name} · ${formatMoney(saved.scheduledInstallmentPaise)} × ${saved.emi.tenureMonths}',
+      entityType: 'emi',
+      entityId: id,
+    );
+    return id;
   }
 
   Future<EmisCompanion> _validatedEmiCompanion(EmisCompanion item) async {
@@ -952,28 +957,32 @@ class FinanceRepository {
     if (requestedAmount <= 0) {
       throw const FormatException('Amount must be greater than zero.');
     }
-    return db.transaction(() async {
-      final id = await db.into(db.moneyRecords).insertOnConflictUpdate(item);
-      final saved = await (db.select(
+    final id = await db.transaction(() async {
+      if (!isEdit) return db.into(db.moneyRecords).insert(item);
+      await (db.update(
         db.moneyRecords,
-      )..where((record) => record.id.equals(id))).getSingle();
-      await _logActivity(
-        type: isEdit
-            ? ActivityType.moneyEdited
-            : saved.direction == MoneyDirection.given
-            ? ActivityType.moneyGiven
-            : ActivityType.moneyBorrowed,
-        title: isEdit
-            ? 'Updated ${displayName(saved.personName)}\'s record'
-            : saved.direction == MoneyDirection.given
-            ? 'You gave ${displayName(saved.personName)} ${formatMoney(saved.amountPaise)}'
-            : 'You borrowed ${formatMoney(saved.amountPaise)} from ${displayName(saved.personName)}',
-        description: saved.notes,
-        entityType: 'money',
-        entityId: id,
-      );
-      return id;
+      )..where((record) => record.id.equals(item.id.value))).write(item);
+      return item.id.value;
     });
+    final saved = await (db.select(
+      db.moneyRecords,
+    )..where((record) => record.id.equals(id))).getSingle();
+    await _logActivitySafely(
+      type: isEdit
+          ? ActivityType.moneyEdited
+          : saved.direction == MoneyDirection.given
+          ? ActivityType.moneyGiven
+          : ActivityType.moneyBorrowed,
+      title: isEdit
+          ? 'Updated ${displayName(saved.personName)}\'s record'
+          : saved.direction == MoneyDirection.given
+          ? 'You gave ${displayName(saved.personName)} ${formatMoney(saved.amountPaise)}'
+          : 'You borrowed ${formatMoney(saved.amountPaise)} from ${displayName(saved.personName)}',
+      description: saved.notes,
+      entityType: 'money',
+      entityId: id,
+    );
+    return id;
   }
 
   Future<void> deleteMoneyRecord(int id) async {
@@ -1156,7 +1165,7 @@ class FinanceRepository {
         paymentMethodId == existing.paymentMethodId) {
       return existing.id;
     }
-    return db.transaction(() async {
+    final id = await db.transaction(() async {
       final id = existing == null
           ? await db.into(db.subscriptions).insert(item)
           : existing.id;
@@ -1165,33 +1174,34 @@ class FinanceRepository {
           db.subscriptions,
         )..where((row) => row.id.equals(id))).write(item);
       }
-      final saved = await subscription(id);
-      final title = existing == null
-          ? '${displayName(name)} added'
-          : status != existing.status
-          ? '${displayName(name)} ${status == SubscriptionStatus.paused
-                ? 'paused'
-                : status == SubscriptionStatus.active
-                ? 'resumed'
-                : status!.label.toLowerCase()}'
-          : amount != existing.amountPaise
-          ? '${displayName(name)} price changed to ${formatMoney(amount)}'
-          : due != existing.nextBillingDate
-          ? '${displayName(name)} billing date changed to ${formatDate(due!)}'
-          : '${displayName(name)} updated';
-      await _logActivity(
-        type: isEdit
-            ? ActivityType.subscriptionChanged
-            : ActivityType.subscriptionCreated,
-        title: title,
-        description: saved == null
-            ? 'Subscription'
-            : '${displayName(saved.name)} · ${formatMoney(saved.amountPaise)}',
-        entityType: 'subscription',
-        entityId: id,
-      );
       return id;
     });
+    final saved = await subscription(id);
+    final title = existing == null
+        ? '${displayName(name)} added'
+        : status != existing.status
+        ? '${displayName(name)} ${status == SubscriptionStatus.paused
+              ? 'paused'
+              : status == SubscriptionStatus.active
+              ? 'resumed'
+              : status!.label.toLowerCase()}'
+        : amount != existing.amountPaise
+        ? '${displayName(name)} price changed to ${formatMoney(amount)}'
+        : due != existing.nextBillingDate
+        ? '${displayName(name)} billing date changed to ${formatDate(due!)}'
+        : '${displayName(name)} updated';
+    await _logActivitySafely(
+      type: isEdit
+          ? ActivityType.subscriptionChanged
+          : ActivityType.subscriptionCreated,
+      title: title,
+      description: saved == null
+          ? 'Subscription'
+          : '${displayName(saved.name)} · ${formatMoney(saved.amountPaise)}',
+      entityType: 'subscription',
+      entityId: id,
+    );
+    return id;
   }
 
   Future<void> deleteSubscription(int id) async {
@@ -1426,6 +1436,27 @@ class FinanceRepository {
             occurredAt: Value(DateTime.now()),
           ),
         );
+  }
+
+  Future<void> _logActivitySafely({
+    required ActivityType type,
+    required String title,
+    required String? description,
+    required String entityType,
+    required int entityId,
+  }) async {
+    try {
+      await _logActivity(
+        type: type,
+        title: title,
+        description: description,
+        entityType: entityType,
+        entityId: entityId,
+      );
+    } catch (error, stackTrace) {
+      debugPrint('Activity log write failed: $error');
+      debugPrintStack(stackTrace: stackTrace);
+    }
   }
 
   bool _isDueThrough(DateTime date, DateTime horizon) =>

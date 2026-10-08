@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:drift/drift.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:intl/intl.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path/path.dart' as p;
@@ -31,6 +33,42 @@ class SavedBackup {
   final String uri;
 }
 
+class BackupRunResult {
+  const BackupRunResult.saved(this.backup) : unchanged = false;
+  const BackupRunResult.unchanged() : backup = null, unchanged = true;
+
+  final SavedBackup? backup;
+  final bool unchanged;
+}
+
+class BackupFolderUnavailableException implements Exception {
+  const BackupFolderUnavailableException();
+
+  @override
+  String toString() => 'Backup folder not available';
+}
+
+abstract class BackupSecretStore {
+  Future<String?> readPassword();
+  Future<void> writePassword(String? password);
+}
+
+class SecureBackupSecretStore implements BackupSecretStore {
+  SecureBackupSecretStore([FlutterSecureStorage? storage])
+    : _storage = storage ?? const FlutterSecureStorage();
+
+  static const _key = 'finkeep.backup.password';
+  final FlutterSecureStorage _storage;
+
+  @override
+  Future<String?> readPassword() => _storage.read(key: _key);
+
+  @override
+  Future<void> writePassword(String? password) => password == null
+      ? _storage.delete(key: _key)
+      : _storage.write(key: _key, value: password);
+}
+
 class BackupStatus {
   const BackupStatus({
     this.folderUri,
@@ -40,6 +78,10 @@ class BackupStatus {
     this.lastAt,
     this.lastName,
     this.lastLocation,
+    this.lastError,
+    this.passwordProtected = false,
+    this.lastDataChecksum,
+    this.lastAutoAttemptAt,
   });
   final String? folderUri;
   final String? folderName;
@@ -48,18 +90,32 @@ class BackupStatus {
   final DateTime? lastAt;
   final String? lastName;
   final String? lastLocation;
+  final String? lastError;
+  final bool passwordProtected;
+  final String? lastDataChecksum;
+  final DateTime? lastAutoAttemptAt;
 
   bool get needsReminder =>
       lastAt == null || DateTime.now().difference(lastAt!).inDays >= 7;
 }
 
 class LocalBackupService {
-  LocalBackupService(this.database);
+  LocalBackupService(
+    this.database, {
+    Saf? saf,
+    BackupSecretStore? secrets,
+    DateTime Function()? now,
+  }) : _saf = saf ?? Saf(),
+       _secrets = secrets ?? SecureBackupSecretStore(),
+       _now = now ?? DateTime.now;
 
   static const formatName = 'finkeep-local-backup';
   static const formatVersion = BackupCodec.version;
-  static const _autoPrefix = 'FinKeep-auto-backup-';
+  static final _backupNamePattern = RegExp(
+    r'^FinKeep-backup-\d{4}-\d{2}-\d{2}\.fin$',
+  );
   static const _backupSettingsPrefix = 'backup.local.';
+  static const _folderChannel = MethodChannel('finkeep/backup_folder');
 
   static const _insertOrder = [
     'payment_methods',
@@ -84,7 +140,9 @@ class LocalBackupService {
   ];
 
   final AppDatabase database;
-  final Saf _saf = Saf();
+  final Saf _saf;
+  final BackupSecretStore _secrets;
+  final DateTime Function() _now;
   bool canUndoRestore = false;
 
   Future<String> createBackupJson() async {
@@ -387,36 +445,100 @@ class LocalBackupService {
     }
   }
 
-  Future<SavedBackup?> saveNow({String? password}) async {
-    final bytes = await createBackupBytes(password: password);
-    final document = await inspectBytes(bytes, password: password);
-    final name =
-        'FinKeep-backup-${DateFormat('yyyy-MM-dd-HHmm').format(DateTime.now())}.finkeep';
-    final uri = await FilePicker.saveFile(
-      fileName: name,
-      bytes: bytes,
-      mimeType: 'application/octet-stream',
-      dialogTitle: 'Save FinKeep backup',
-    );
-    if (uri == null) return null;
-    String savedName = name;
-    try {
-      savedName = (await _saf.stat(uri.toString()))?.name ?? name;
-    } catch (_) {
-      // Some providers do not allow a metadata query after Save As.
+  Future<BackupRunResult> saveNow() async {
+    final config = await status();
+    if (!await hasUsableFolder(config)) {
+      await _setSetting('lastError', 'Folder not available');
+      throw const BackupFolderUnavailableException();
     }
-    final location = _locationFromUri(uri.toString());
-    await _setSetting('lastAt', DateTime.now().toUtc().toIso8601String());
-    await _setSetting('lastName', savedName);
-    await _setSetting('lastLocation', location);
-    return SavedBackup(
-      name: savedName,
-      location: location,
-      size: bytes.length,
-      counts: document.counts,
-      bytes: bytes,
-      uri: uri.toString(),
-    );
+    try {
+      final password = await _secrets.readPassword();
+      final bytes = await createBackupBytes(password: password);
+      final document = await inspectBytes(bytes, password: password);
+      final files = await _saf.list(config.folderUri!);
+      final priorName = config.lastName;
+      final priorStillExists =
+          priorName != null &&
+          files.any((file) => !file.isDir && file.name == priorName);
+      if (priorStillExists &&
+          config.lastDataChecksum == document.dataChecksum) {
+        await _setSetting('lastError', '');
+        return const BackupRunResult.unchanged();
+      }
+
+      final now = _now();
+      final name = 'FinKeep-backup-${DateFormat('yyyy-MM-dd').format(now)}.fin';
+      final temporaryName = '$name.${now.microsecondsSinceEpoch}.pending';
+      SafDocumentFile? pending;
+      try {
+        pending = await _saf.writeFileBytes(
+          config.folderUri!,
+          temporaryName,
+          'application/octet-stream',
+          bytes,
+        );
+        final verifiedBytes = await _saf.readFileBytes(pending.uri);
+        final verified = await inspectBytes(verifiedBytes, password: password);
+        if (verified.dataChecksum != document.dataChecksum) {
+          throw const FormatException('Backup verification failed.');
+        }
+        for (final old in files.where(
+          (file) => !file.isDir && file.name == name,
+        )) {
+          await _saf.delete(old.uri);
+        }
+        final savedFile = await _saf.rename(pending.uri, name);
+        pending = null;
+        await _rotateBackups(config.folderUri!, config.keep);
+        await _setSetting('lastAt', now.toUtc().toIso8601String());
+        await _setSetting('lastName', name);
+        await _setSetting(
+          'lastLocation',
+          config.folderName ?? 'Selected folder',
+        );
+        await _setSetting('lastDataChecksum', document.dataChecksum);
+        await _setSetting('lastError', '');
+        return BackupRunResult.saved(
+          SavedBackup(
+            name: name,
+            location: config.folderName ?? 'Selected folder',
+            size: verifiedBytes.length,
+            counts: verified.counts,
+            bytes: verifiedBytes,
+            uri: savedFile.uri,
+          ),
+        );
+      } finally {
+        if (pending != null) {
+          try {
+            await _saf.delete(pending.uri);
+          } catch (_) {
+            // A failed cleanup must not hide the original backup error.
+          }
+        }
+      }
+    } catch (error) {
+      await _setSetting(
+        'lastError',
+        error is BackupFolderUnavailableException
+            ? 'Folder not available'
+            : 'Could not write backup',
+      );
+      rethrow;
+    }
+  }
+
+  Future<void> _rotateBackups(String folderUri, int keep) async {
+    final files =
+        (await _saf.list(folderUri))
+            .where(
+              (file) => !file.isDir && _backupNamePattern.hasMatch(file.name),
+            )
+            .toList()
+          ..sort((a, b) => b.name.compareTo(a.name));
+    for (final old in files.skip(keep)) {
+      await _saf.delete(old.uri);
+    }
   }
 
   Future<void> shareSavedBackup(SavedBackup saved) async {
@@ -483,29 +605,136 @@ class LocalBackupService {
       for (final row in rows)
         row.key.substring(_backupSettingsPrefix.length): row.value,
     };
+    final storedKeep = int.tryParse(values['keep'] ?? '');
+    final keep = const {1, 3, 5, 10}.contains(storedKeep) ? storedKeep! : 5;
     return BackupStatus(
       folderUri: values['folderUri'],
       folderName: values['folderName'],
-      interval: values['interval'] ?? 'off',
-      keep: int.tryParse(values['keep'] ?? '')?.clamp(1, 20) ?? 5,
+      interval: values['interval'] == null || values['interval'] == 'off'
+          ? 'off'
+          : 'daily',
+      keep: keep,
       lastAt: DateTime.tryParse(values['lastAt'] ?? ''),
       lastName: values['lastName'],
       lastLocation: values['lastLocation'],
+      lastError: (values['lastError'] ?? '').isEmpty
+          ? null
+          : values['lastError'],
+      passwordProtected: await _secrets.readPassword() != null,
+      lastDataChecksum: values['lastDataChecksum'],
+      lastAutoAttemptAt: DateTime.tryParse(values['lastAutoAttemptAt'] ?? ''),
     );
   }
 
-  Future<bool> chooseAutoFolder() async {
-    final folder = await _saf.pickDirectory();
-    if (folder == null) return false;
-    await _setSetting('folderUri', folder.uri);
-    await _setSetting('folderName', _locationFromUri(folder.uri));
+  Future<bool> chooseBackupFolder() async {
+    final treeUri = Platform.isAndroid
+        ? await _folderChannel.invokeMethod<String>('pickTree')
+        : (await _saf.pickDirectory())?.uri;
+    if (treeUri == null) return false;
+    SafDocumentFile? probe;
+    try {
+      final grants = await _saf.persistedPermissions();
+      if (!grants.any(
+        (grant) => grant.uri == treeUri && grant.read && grant.write,
+      )) {
+        throw const FormatException(
+          'Folder access was not granted. Choose the folder and tap Allow.',
+        );
+      }
+      final probeBytes = Uint8List.fromList(const [
+        70,
+        105,
+        110,
+        75,
+        101,
+        101,
+        112,
+      ]);
+      probe = await _saf.writeFileBytes(
+        treeUri,
+        '.FinKeep-write-test-${_now().microsecondsSinceEpoch}.tmp',
+        'application/octet-stream',
+        probeBytes,
+      );
+      final readBack = await _saf.readFileBytes(probe.uri);
+      if (!_sameBytes(probeBytes, readBack)) {
+        throw const FormatException('The selected folder is not writable.');
+      }
+      await _saf.delete(probe.uri);
+      probe = null;
+    } on FormatException {
+      rethrow;
+    } catch (_) {
+      throw const FormatException(
+        'Could not write to this folder. Choose another folder and tap Allow.',
+      );
+    } finally {
+      if (probe != null) {
+        try {
+          await _saf.delete(probe.uri);
+        } catch (_) {
+          // Keep the folder unselected when the write probe cannot be cleaned up.
+        }
+      }
+    }
+    await _setSetting('folderUri', treeUri);
+    await _setSetting('folderName', _locationFromUri(treeUri));
+    await _setSetting('interval', 'daily');
+    await _setSetting('lastDataChecksum', '');
+    await _setSetting('lastError', '');
     return true;
   }
 
+  Future<bool> hasUsableFolder([BackupStatus? current]) async {
+    final config = current ?? await status();
+    if (config.folderUri == null) return false;
+    try {
+      final grants = await _saf.persistedPermissions();
+      if (!grants.any(
+        (grant) => grant.uri == config.folderUri && grant.read && grant.write,
+      )) {
+        await _clearSavedFolder();
+        return false;
+      }
+      final available = await _saf.stat(config.folderUri!) != null;
+      if (!available) await _clearSavedFolder();
+      return available;
+    } catch (_) {
+      await _clearSavedFolder();
+      return false;
+    }
+  }
+
+  Future<void> _clearSavedFolder() async {
+    await (database.delete(database.settings)..where(
+          (row) => row.key.isIn([
+            '${_backupSettingsPrefix}folderUri',
+            '${_backupSettingsPrefix}folderName',
+          ]),
+        ))
+        .go();
+    await _setSetting('lastError', 'Folder not available');
+  }
+
+  bool _sameBytes(Uint8List first, Uint8List second) {
+    if (first.length != second.length) return false;
+    for (var index = 0; index < first.length; index++) {
+      if (first[index] != second[index]) return false;
+    }
+    return true;
+  }
+
+  Future<void> setBackupPassword(String? password) async {
+    if (password != null && password.length < 8) {
+      throw const FormatException('Use a password of at least 8 characters.');
+    }
+    await _secrets.writePassword(password);
+    await _setSetting('lastDataChecksum', '');
+  }
+
   Future<void> setAutoBackup({required String interval, int keep = 5}) async {
-    if (!const {'off', 'daily', 'weekly'}.contains(interval) ||
-        keep < 1 ||
-        keep > 20) {
+    if (!const {'off', 'daily'}.contains(interval) ||
+        !const {1, 3, 5, 10}.contains(keep)) {
       throw const FormatException('Invalid auto-backup settings.');
     }
     await _setSetting('interval', interval);
@@ -515,57 +744,21 @@ class LocalBackupService {
   Future<SavedBackup?> runAutoBackupIfDue() async {
     final config = await status();
     if (config.interval == 'off' || config.folderUri == null) return null;
-    final every = config.interval == 'daily'
-        ? const Duration(days: 1)
-        : const Duration(days: 7);
-    if (config.lastAt != null &&
-        DateTime.now().difference(config.lastAt!) < every) {
+    final now = _now();
+    final lastAttempt = config.lastAutoAttemptAt;
+    if (lastAttempt != null &&
+        lastAttempt.year == now.year &&
+        lastAttempt.month == now.month &&
+        lastAttempt.day == now.day) {
       return null;
     }
-    final grants = await _saf.persistedPermissions();
-    if (!grants.any(
-      (grant) => grant.uri == config.folderUri && grant.read && grant.write,
-    )) {
-      throw const FormatException(
-        'Backup folder access expired. Choose the folder again in Settings.',
-      );
+    await _setSetting('lastAutoAttemptAt', now.toUtc().toIso8601String());
+    try {
+      final result = await saveNow();
+      return result.backup;
+    } catch (_) {
+      return null;
     }
-    final bytes = await createBackupBytes();
-    final name =
-        '$_autoPrefix${DateFormat('yyyy-MM-dd-HHmmss').format(DateTime.now())}.finkeep';
-    final file = await _saf.writeFileBytes(
-      config.folderUri!,
-      name,
-      'application/octet-stream',
-      bytes,
-    );
-    final document = await inspectBytes(bytes);
-    final files =
-        (await _saf.list(config.folderUri!))
-            .where(
-              (entry) =>
-                  !entry.isDir &&
-                  RegExp(
-                    r'^FinKeep-auto-backup-\d{4}-\d{2}-\d{2}-\d{6}\.finkeep$',
-                  ).hasMatch(entry.name),
-            )
-            .toList()
-          ..sort((a, b) => b.name.compareTo(a.name));
-    for (final old in files.skip(config.keep)) {
-      await _saf.delete(old.uri);
-    }
-    final now = DateTime.now();
-    await _setSetting('lastAt', now.toUtc().toIso8601String());
-    await _setSetting('lastName', file.name);
-    await _setSetting('lastLocation', config.folderName ?? 'Selected folder');
-    return SavedBackup(
-      name: file.name,
-      location: config.folderName ?? 'Selected folder',
-      size: bytes.length,
-      counts: document.counts,
-      bytes: bytes,
-      uri: file.uri,
-    );
   }
 
   Future<void> _setSetting(String key, String value) async {
@@ -585,12 +778,12 @@ class LocalBackupService {
     final decoded = Uri.decodeComponent(uri.pathSegments.lastOrNull ?? '');
     if (decoded.contains(':')) {
       final path = decoded.substring(decoded.indexOf(':') + 1);
-      if (path.contains('/')) {
-        final folder = path.substring(0, path.lastIndexOf('/'));
-        return folder.replaceFirst('Download', 'Downloads');
+      if (path.isNotEmpty && !RegExp(r'^\d+$').hasMatch(path)) {
+        return path
+            .split('/')
+            .map((part) => part == 'Download' ? 'Downloads' : part)
+            .join(' > ');
       }
-      if (path == 'Download') return 'Downloads';
-      if (path.isNotEmpty && !RegExp(r'^\d+$').hasMatch(path)) return path;
     }
     final authority = uri.host.toLowerCase();
     if (authority.contains('downloads')) return 'Downloads';

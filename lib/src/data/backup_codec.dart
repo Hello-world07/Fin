@@ -14,6 +14,7 @@ class BackupDocument {
     required this.schemaVersion,
     required this.encrypted,
     required this.legacy,
+    required this.dataChecksum,
   });
 
   final Map<String, dynamic> tables;
@@ -23,11 +24,12 @@ class BackupDocument {
   final int schemaVersion;
   final bool encrypted;
   final bool legacy;
+  final String dataChecksum;
 }
 
 class BackupCodec {
   static const format = 'finkeep-local-backup';
-  static const version = 2;
+  static const version = 3;
   static const maxBytes = 50 * 1024 * 1024;
   static const _iterations = 210000;
 
@@ -52,6 +54,7 @@ class BackupCodec {
       'counts': counts,
       'recycleBin': const [],
       'tables': tables,
+      'dataChecksum': dataChecksum(tables),
     };
     final checksum = hash.sha256
         .convert(utf8.encode(jsonEncode(payload)))
@@ -99,6 +102,14 @@ class BackupCodec {
       ),
     );
   }
+
+  static String dataChecksum(Map<String, dynamic> tables) => hash.sha256
+      .convert(
+        utf8.encode(
+          jsonEncode({'tables': tables, 'recycleBin': const <dynamic>[]}),
+        ),
+      )
+      .toString();
 
   static bool needsPassword(Uint8List bytes) {
     final envelope = _jsonMap(bytes);
@@ -167,7 +178,7 @@ class BackupCodec {
     if (tables is! Map<String, dynamic>) {
       throw const FormatException('The backup is missing records.');
     }
-    if (fileVersion == version) {
+    if (fileVersion >= 2) {
       final checksum = envelope.remove('checksum');
       if (checksum is! String ||
           hash.sha256.convert(utf8.encode(jsonEncode(envelope))).toString() !=
@@ -198,6 +209,10 @@ class BackupCodec {
           )) {
         throw const FormatException('The backup record counts are corrupt.');
       }
+      if (fileVersion >= 3 &&
+          envelope['dataChecksum'] != dataChecksum(tables)) {
+        throw const FormatException('The backup data checksum does not match.');
+      }
     }
     final date = DateTime.tryParse(
       (envelope['createdAt'] ?? envelope['exportedAt'] ?? '').toString(),
@@ -218,6 +233,9 @@ class BackupCodec {
       schemaVersion: schema,
       encrypted: encrypted,
       legacy: fileVersion == 1,
+      dataChecksum: envelope['dataChecksum'] is String
+          ? envelope['dataChecksum'] as String
+          : dataChecksum(tables),
     );
   }
 

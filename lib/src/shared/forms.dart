@@ -215,13 +215,9 @@ void closeFinanceSheetAndSave(
     if (closed != null) await closed;
     try {
       await save();
-    } on FormatException catch (error) {
-      if (messenger.mounted) {
-        messenger.showSnackBar(
-          SnackBar(content: Text(error.message.toString())),
-        );
-      }
-    } catch (_) {
+    } catch (error, stackTrace) {
+      debugPrint('Finance save failed: $error');
+      debugPrintStack(stackTrace: stackTrace);
       if (messenger.mounted) {
         messenger.showSnackBar(SnackBar(content: Text(errorMessage)));
       }
