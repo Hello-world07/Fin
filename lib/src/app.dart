@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -15,13 +17,16 @@ class FinKeepApp extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    ref.watch(numberGroupingProvider);
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'FinKeep',
       themeMode: ref.watch(appThemeModeProvider),
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
-      home: const AppLockGate(child: AppShell()),
+      home: const AppShell(),
+      builder: (context, child) =>
+          AppLockGate(child: child ?? const SizedBox.shrink()),
     );
   }
 }
@@ -41,6 +46,31 @@ class _AppShellState extends ConsumerState<AppShell> {
     SubscriptionsScreen(),
     MoreScreen(),
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_runAutoBackup());
+    });
+  }
+
+  Future<void> _runAutoBackup() async {
+    try {
+      await ref.read(localBackupProvider).runAutoBackupIfDue();
+      if (mounted) ref.invalidate(backupStatusProvider);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Auto-backup failed. Check the backup folder in Settings.',
+            ),
+          ),
+        );
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {

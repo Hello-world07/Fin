@@ -13,7 +13,9 @@ import '../emis/emis_screen.dart';
 import '../money/money_screen.dart';
 import '../subscriptions/subscriptions_screen.dart';
 import 'assistant_commands.dart';
+import 'assistant_actions.dart';
 import 'assistant_engine.dart';
+import 'assistant_visual_widgets.dart';
 
 Future<void> openAskFinKeep(BuildContext context) =>
     showFinanceBottomSheet<void>(
@@ -55,6 +57,9 @@ class _AskFinKeepSheetState extends ConsumerState<AskFinKeepSheet> {
   ];
   bool _typing = false;
   double _lastKeyboardInset = 0;
+  String? _lastEntityName;
+  AssistantEntityType? _lastEntityType;
+  final _resolvedMutationIds = <String>{};
 
   @override
   void didChangeDependencies() {
@@ -103,7 +108,12 @@ class _AskFinKeepSheetState extends ConsumerState<AskFinKeepSheet> {
       final started = DateTime.now();
       final reply = await engine.ask(
         trimmed,
-        ConversationContext(now: started, previousQuestions: previous),
+        ConversationContext(
+          now: started,
+          previousQuestions: previous,
+          lastEntityName: _lastEntityName,
+          lastEntityType: _lastEntityType,
+        ),
       );
       final elapsed = DateTime.now().difference(started);
       if (elapsed < const Duration(milliseconds: 400)) {
@@ -113,6 +123,8 @@ class _AskFinKeepSheetState extends ConsumerState<AskFinKeepSheet> {
       setState(() {
         _typing = false;
         _messages.add(_ChatMessage.assistant(reply));
+        _lastEntityName = reply.confirmation?.entityName ?? _lastEntityName;
+        _lastEntityType = reply.confirmation?.entityType ?? _lastEntityType;
       });
       if (reply.openForm != null) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -128,6 +140,85 @@ class _AskFinKeepSheetState extends ConsumerState<AskFinKeepSheet> {
             AssistantReply(
               'I could not read the local finance data just now. Please try again.',
             ),
+          ),
+        );
+      });
+    }
+    _scrollToEnd();
+    Future<void>.delayed(const Duration(milliseconds: 320), _scrollToEnd);
+  }
+
+  Future<void> _confirm(AssistantPendingMutation mutation) async {
+    if (_typing || _resolvedMutationIds.contains(mutation.id)) return;
+    final engine = ref.read(assistantEngineProvider);
+    if (engine is! AssistantActionEngine) return;
+    final actionEngine = engine as AssistantActionEngine;
+    setState(() {
+      _typing = true;
+      _resolvedMutationIds.add(mutation.id);
+    });
+    _scrollToEnd();
+    try {
+      final reply = await actionEngine.confirm(mutation);
+      if (!mounted) return;
+      setState(() {
+        _typing = false;
+        _messages.add(_ChatMessage.assistant(reply));
+        _lastEntityName = mutation.entityName;
+        _lastEntityType = mutation.entityType;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _typing = false;
+        _resolvedMutationIds.remove(mutation.id);
+        _messages.add(
+          const _ChatMessage.assistant(
+            AssistantReply(
+              'That change could not be completed. Your data was not changed.',
+            ),
+          ),
+        );
+      });
+    }
+    _scrollToEnd();
+  }
+
+  void _cancelMutation(AssistantPendingMutation mutation) {
+    if (_resolvedMutationIds.contains(mutation.id)) return;
+    setState(() {
+      _resolvedMutationIds.add(mutation.id);
+      _messages.add(
+        _ChatMessage.assistant(
+          AssistantReply(
+            '${mutation.confirmationTitle} cancelled. Nothing changed.',
+          ),
+        ),
+      );
+    });
+    _scrollToEnd();
+  }
+
+  Future<void> _undo(AssistantUndoMutation mutation) async {
+    if (_typing) return;
+    final engine = ref.read(assistantEngineProvider);
+    if (engine is! AssistantActionEngine) return;
+    final actionEngine = engine as AssistantActionEngine;
+    setState(() => _typing = true);
+    try {
+      final reply = await actionEngine.undo(mutation);
+      if (!mounted) return;
+      setState(() {
+        _typing = false;
+        _messages.add(_ChatMessage.assistant(reply));
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _typing = false;
+        _messages.add(
+          const _ChatMessage.assistant(
+            AssistantReply('Undo could not be completed.'),
           ),
         );
       });
@@ -294,6 +385,11 @@ class _AskFinKeepSheetState extends ConsumerState<AskFinKeepSheet> {
                     reply: message.reply!,
                     onSuggestion: _ask,
                     onAction: _openDestination,
+                    onConfirm: _confirm,
+                    onCancel: _cancelMutation,
+                    onUndo: _undo,
+                    isMutationResolved: (id) =>
+                        _resolvedMutationIds.contains(id),
                   ),
                 );
               },
@@ -389,16 +485,41 @@ class _ReplyContent extends StatelessWidget {
     required this.reply,
     required this.onSuggestion,
     required this.onAction,
+    required this.onConfirm,
+    required this.onCancel,
+    required this.onUndo,
+    required this.isMutationResolved,
   });
   final AssistantReply reply;
   final ValueChanged<String> onSuggestion;
   final ValueChanged<AssistantAction> onAction;
+  final ValueChanged<AssistantPendingMutation> onConfirm;
+  final ValueChanged<AssistantPendingMutation> onCancel;
+  final ValueChanged<AssistantUndoMutation> onUndo;
+  final bool Function(String id) isMutationResolved;
 
   @override
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       Text(reply.text, style: Theme.of(context).textTheme.bodyMedium),
+      if (reply.confirmation != null) ...[
+        const SizedBox(height: 12),
+        _ConfirmationCard(
+          mutation: reply.confirmation!,
+          onConfirm: onConfirm,
+          onCancel: onCancel,
+          resolved: isMutationResolved(reply.confirmation!.id),
+        ),
+      ],
+      if (reply.visuals.isNotEmpty) ...[
+        const SizedBox(height: 12),
+        for (final visual in reply.visuals)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: AssistantVisualWidget(part: visual),
+          ),
+      ],
       if (reply.rows.isNotEmpty) ...[
         const SizedBox(height: 10),
         for (final row in reply.rows)
@@ -482,6 +603,104 @@ class _ReplyContent extends StatelessWidget {
           ],
         ),
       ],
+      if (reply.undoMutation != null) ...[
+        const SizedBox(height: 8),
+        _UndoAction(mutation: reply.undoMutation!, onUndo: onUndo),
+      ],
     ],
+  );
+}
+
+class _ConfirmationCard extends StatelessWidget {
+  const _ConfirmationCard({
+    required this.mutation,
+    required this.onConfirm,
+    required this.onCancel,
+    required this.resolved,
+  });
+
+  final AssistantPendingMutation mutation;
+  final ValueChanged<AssistantPendingMutation> onConfirm;
+  final ValueChanged<AssistantPendingMutation> onCancel;
+  final bool resolved;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(
+      color: Theme.of(context).colorScheme.surface,
+      borderRadius: BorderRadius.circular(16),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          mutation.confirmationTitle,
+          style: Theme.of(
+            context,
+          ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 5),
+        Text(
+          mutation.confirmationEffect,
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: TextButton(
+                onPressed: resolved ? null : () => onCancel(mutation),
+                child: Text(resolved ? 'Resolved' : 'Cancel'),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: FilledButton.icon(
+                onPressed: resolved ? null : () => onConfirm(mutation),
+                icon: const Icon(Icons.check, size: 18),
+                label: const Text('Confirm'),
+              ),
+            ),
+          ],
+        ),
+      ],
+    ),
+  );
+}
+
+class _UndoAction extends StatefulWidget {
+  const _UndoAction({required this.mutation, required this.onUndo});
+  final AssistantUndoMutation mutation;
+  final ValueChanged<AssistantUndoMutation> onUndo;
+
+  @override
+  State<_UndoAction> createState() => _UndoActionState();
+}
+
+class _UndoActionState extends State<_UndoAction> {
+  bool expired = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final expiry = widget.mutation.expiresAt;
+    if (!widget.mutation.restore && expiry != null) {
+      final remaining = expiry.difference(DateTime.now());
+      if (remaining <= Duration.zero) {
+        expired = true;
+      } else {
+        Future<void>.delayed(remaining, () {
+          if (mounted) setState(() => expired = true);
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => TextButton.icon(
+    onPressed: expired ? null : () => widget.onUndo(widget.mutation),
+    icon: Icon(widget.mutation.restore ? Icons.restore : Icons.undo, size: 18),
+    label: Text(widget.mutation.restore ? 'Restore' : 'Undo'),
   );
 }

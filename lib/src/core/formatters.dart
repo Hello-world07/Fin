@@ -1,15 +1,24 @@
 import 'package:intl/intl.dart';
 
-final _currency = NumberFormat.currency(
+final _indianCurrency = NumberFormat.currency(
   locale: 'en_IN',
   symbol: '₹',
   decimalDigits: 0,
 );
+final _internationalCurrency = NumberFormat.currency(
+  locale: 'en_US',
+  symbol: '₹',
+  decimalDigits: 0,
+);
+bool useIndianNumberGrouping = true;
 
 final _date = DateFormat('dd MMM yyyy');
 final _dateTime = DateFormat('dd MMM yyyy, hh:mm a');
 
-String formatMoney(int paise) => _currency.format(paise / 100);
+String formatMoney(int paise) =>
+    (useIndianNumberGrouping ? _indianCurrency : _internationalCurrency).format(
+      paise / 100,
+    );
 
 String formatDate(DateTime date) => _date.format(date);
 

@@ -152,6 +152,8 @@ class FinanceRepository {
   FinanceRepository(this.db);
 
   static const _archivedEmiPrefix = 'emi.archived.';
+  static const _archivedMoneyPrefix = 'money.archived.';
+  static const _archivedSubscriptionPrefix = 'subscription.archived.';
   final AppDatabase db;
 
   Stream<List<Emi>> watchEmis() =>
@@ -202,17 +204,30 @@ class FinanceRepository {
     return controller.stream;
   }
 
-  Future<Set<int>> _archivedEmiIds() async {
+  Future<Set<int>> _archivedIds(String prefix) async {
     final rows = await (db.select(
       db.settings,
-    )..where((setting) => setting.key.like('$_archivedEmiPrefix%'))).get();
+    )..where((setting) => setting.key.like('$prefix%'))).get();
     final ids = <int>{};
     for (final row in rows) {
       if (row.value != 'true') continue;
-      final id = int.tryParse(row.key.substring(_archivedEmiPrefix.length));
+      final id = int.tryParse(row.key.substring(prefix.length));
       if (id != null) ids.add(id);
     }
     return ids;
+  }
+
+  Future<Set<int>> _archivedEmiIds() => _archivedIds(_archivedEmiPrefix);
+  Future<Set<int>> _archivedMoneyIds() => _archivedIds(_archivedMoneyPrefix);
+  Future<Set<int>> _archivedSubscriptionIds() =>
+      _archivedIds(_archivedSubscriptionPrefix);
+
+  Future<List<Subscription>> _visibleSubscriptions() async {
+    final archivedIds = await _archivedSubscriptionIds();
+    return (await db.select(db.subscriptions).get())
+        .where((item) => !archivedIds.contains(item.id))
+        .toList()
+      ..sort((a, b) => a.nextBillingDate.compareTo(b.nextBillingDate));
   }
 
   Future<bool> _isEmiArchived(int id) async =>
@@ -229,7 +244,10 @@ class FinanceRepository {
 
     Future<void> emit() async {
       if (controller.isClosed) return;
-      final records = await db.select(db.moneyRecords).get();
+      final archivedIds = await _archivedMoneyIds();
+      final records = (await db.select(db.moneyRecords).get()).where(
+        (record) => !archivedIds.contains(record.id),
+      );
       final details = <MoneyRecordDetail>[];
       for (final record in records) {
         details.add(await moneyDetail(record.id));
@@ -248,6 +266,7 @@ class FinanceRepository {
         for (final stream in [
           db.select(db.moneyRecords).watch().map((_) {}),
           db.select(db.moneyRepayments).watch().map((_) {}),
+          db.select(db.settings).watch().map((_) {}),
         ]) {
           subscriptions.add(stream.listen((_) => emit()));
         }
@@ -269,13 +288,19 @@ class FinanceRepository {
         return null;
       });
 
-  Stream<List<Subscription>> watchSubscriptions() => (db.select(
-    db.subscriptions,
-  )..orderBy([(t) => OrderingTerm(expression: t.nextBillingDate)])).watch();
+  Stream<List<Subscription>> watchSubscriptions() =>
+      db.select(db.subscriptions).watch().asyncMap((items) async {
+        final archivedIds = await _archivedSubscriptionIds();
+        return items.where((item) => !archivedIds.contains(item.id)).toList()
+          ..sort((a, b) => a.nextBillingDate.compareTo(b.nextBillingDate));
+      });
 
-  Future<Subscription?> subscription(int id) => (db.select(
-    db.subscriptions,
-  )..where((item) => item.id.equals(id))).getSingleOrNull();
+  Future<Subscription?> subscription(int id) async {
+    if ((await _archivedSubscriptionIds()).contains(id)) return null;
+    return (db.select(
+      db.subscriptions,
+    )..where((item) => item.id.equals(id))).getSingleOrNull();
+  }
 
   Stream<List<PaymentMethod>> watchPaymentMethods() => (db.select(
     db.paymentMethods,
@@ -307,6 +332,7 @@ class FinanceRepository {
           db.select(db.moneyRecords).watch().map((_) {}),
           db.select(db.moneyRepayments).watch().map((_) {}),
           db.select(db.subscriptions).watch().map((_) {}),
+          db.select(db.settings).watch().map((_) {}),
         ]) {
           subscriptions.add(stream.listen((_) => emit()));
         }
@@ -337,6 +363,7 @@ class FinanceRepository {
           db.select(db.moneyRecords).watch().map((_) {}),
           db.select(db.moneyRepayments).watch().map((_) {}),
           db.select(db.subscriptions).watch().map((_) {}),
+          db.select(db.settings).watch().map((_) {}),
         ]) {
           subscriptions.add(stream.listen((_) => emit()));
         }
@@ -360,7 +387,7 @@ class FinanceRepository {
       emiDetails.add(await emiDetail(emi.id));
     }
     final records = await moneyDetails();
-    final subscriptions = await db.select(db.subscriptions).get();
+    final subscriptions = await _visibleSubscriptions();
     final today = dateOnly(DateTime.now());
     final attentionHorizon = today.add(dashboardPaymentHorizon);
     final subscriptionHorizon = today.add(dashboardSubscriptionHorizon);
@@ -461,7 +488,10 @@ class FinanceRepository {
   }
 
   Future<List<MoneyRecordDetail>> moneyDetails() async {
-    final records = await db.select(db.moneyRecords).get();
+    final archivedIds = await _archivedMoneyIds();
+    final records = (await db.select(db.moneyRecords).get()).where(
+      (record) => !archivedIds.contains(record.id),
+    );
     final details = <MoneyRecordDetail>[];
     for (final record in records) {
       details.add(await moneyDetail(record.id));
@@ -675,6 +705,12 @@ class FinanceRepository {
         entityId: id,
       );
     });
+  }
+
+  Future<void> restoreEmi(int id) async {
+    await (db.delete(
+      db.settings,
+    )..where((setting) => setting.key.equals('$_archivedEmiPrefix$id'))).go();
   }
 
   Future<bool> markEmiPaid(
@@ -944,8 +980,16 @@ class FinanceRepository {
     final existing = await (db.select(
       db.moneyRecords,
     )..where((item) => item.id.equals(id))).getSingleOrNull();
-    if (existing == null) return;
+    if (existing == null || (await _archivedMoneyIds()).contains(id)) return;
     await db.transaction(() async {
+      await db
+          .into(db.settings)
+          .insertOnConflictUpdate(
+            SettingsCompanion.insert(
+              key: '$_archivedMoneyPrefix$id',
+              value: 'true',
+            ),
+          );
       await _logActivity(
         type: ActivityType.moneyDeleted,
         title: 'Deleted ${displayName(existing.personName)}\'s record',
@@ -953,13 +997,24 @@ class FinanceRepository {
         entityType: 'money',
         entityId: id,
       );
-      await (db.delete(
-        db.moneyRecords,
-      )..where((item) => item.id.equals(id))).go();
     });
   }
 
+  Future<void> restoreMoneyRecord(int id) async {
+    await (db.delete(
+      db.settings,
+    )..where((setting) => setting.key.equals('$_archivedMoneyPrefix$id'))).go();
+  }
+
   Future<void> updateMoneyDueDate(int id, DateTime dueDate) async {
+    await setMoneyDueDate(id, dueDate, activityVerb: 'Extended');
+  }
+
+  Future<void> setMoneyDueDate(
+    int id,
+    DateTime? dueDate, {
+    String activityVerb = 'Changed',
+  }) async {
     await db.transaction(() async {
       final record = await (db.select(
         db.moneyRecords,
@@ -975,15 +1030,19 @@ class FinanceRepository {
       );
       await _logActivity(
         type: ActivityType.moneyEdited,
-        title: 'Extended ${displayName(record.personName)}\'s due date',
-        description: 'Now due ${formatDate(dueDate)}',
+        title: dueDate == null
+            ? 'Removed ${displayName(record.personName)}\'s due date'
+            : '$activityVerb ${displayName(record.personName)}\'s due date',
+        description: dueDate == null
+            ? 'No due date'
+            : 'Now due ${formatDate(dueDate)}',
         entityType: 'money',
         entityId: id,
       );
     });
   }
 
-  Future<void> addRepayment(
+  Future<int> addRepayment(
     int moneyRecordId,
     int amountPaise,
     String? notes,
@@ -992,7 +1051,7 @@ class FinanceRepository {
     if (amountPaise <= 0) {
       throw const FormatException('Enter an amount greater than zero');
     }
-    await db.transaction(() async {
+    final repaymentId = await db.transaction(() async {
       final record = await (db.select(
         db.moneyRecords,
       )..where((item) => item.id.equals(moneyRecordId))).getSingleOrNull();
@@ -1008,7 +1067,7 @@ class FinanceRepository {
           'Repayment cannot exceed the remaining ${formatMoney(outstanding)}',
         );
       }
-      await db
+      final id = await db
           .into(db.moneyRepayments)
           .insert(
             MoneyRepaymentsCompanion.insert(
@@ -1027,8 +1086,37 @@ class FinanceRepository {
         entityType: 'money',
         entityId: moneyRecordId,
       );
+      return id;
     });
     await moneyDetail(moneyRecordId);
+    return repaymentId;
+  }
+
+  Future<bool> revertMoneyRepayment(int recordId, int repaymentId) async {
+    return db.transaction(() async {
+      final record = await (db.select(
+        db.moneyRecords,
+      )..where((item) => item.id.equals(recordId))).getSingleOrNull();
+      final repayment =
+          await (db.select(db.moneyRepayments)..where(
+                (item) =>
+                    item.id.equals(repaymentId) &
+                    item.moneyRecordId.equals(recordId),
+              ))
+              .getSingleOrNull();
+      if (record == null || repayment == null) return false;
+      await (db.delete(
+        db.moneyRepayments,
+      )..where((item) => item.id.equals(repaymentId))).go();
+      await _logActivity(
+        type: ActivityType.moneyEdited,
+        title: 'Undid repayment for ${displayName(record.personName)}',
+        description: formatMoney(repayment.amountPaise),
+        entityType: 'money',
+        entityId: recordId,
+      );
+      return true;
+    });
   }
 
   Future<int> saveSubscription(SubscriptionsCompanion item) async {
@@ -1111,7 +1199,19 @@ class FinanceRepository {
       final existing = await (db.select(
         db.subscriptions,
       )..where((t) => t.id.equals(id))).getSingleOrNull();
-      if (existing == null) return;
+      if (existing == null || (await _archivedSubscriptionIds()).contains(id)) {
+        return;
+      }
+      await db
+          .into(db.settings)
+          .insertOnConflictUpdate(
+            SettingsCompanion.insert(
+              key: '$_archivedSubscriptionPrefix$id',
+              value: 'true',
+            ),
+          );
+      await (db.update(db.subscriptions)..where((item) => item.id.equals(id)))
+          .write(SubscriptionsCompanion(updatedAt: Value(DateTime.now())));
       await _logActivity(
         type: ActivityType.subscriptionDeleted,
         title: '${displayName(existing.name)} deleted',
@@ -1120,7 +1220,6 @@ class FinanceRepository {
         entityType: 'subscription',
         entityId: id,
       );
-      await (db.delete(db.subscriptions)..where((t) => t.id.equals(id))).go();
     });
   }
 
@@ -1154,6 +1253,11 @@ class FinanceRepository {
   Future<void> restoreSubscription(Subscription item) async {
     await db.transaction(() async {
       await db.into(db.subscriptions).insertOnConflictUpdate(item);
+      await (db.delete(db.settings)..where(
+            (setting) =>
+                setting.key.equals('$_archivedSubscriptionPrefix${item.id}'),
+          ))
+          .go();
       await _logActivity(
         type: ActivityType.subscriptionCreated,
         title: '${displayName(item.name)} restored',
@@ -1162,6 +1266,13 @@ class FinanceRepository {
         entityId: item.id,
       );
     });
+  }
+
+  Future<void> restoreSubscriptionById(int id) async {
+    final item = await (db.select(
+      db.subscriptions,
+    )..where((row) => row.id.equals(id))).getSingleOrNull();
+    if (item != null) await restoreSubscription(item);
   }
 
   Future<int> addPaymentMethod(String label, String kind) => db
@@ -1176,9 +1287,13 @@ class FinanceRepository {
       await db.delete(db.moneyRecords).go();
       await db.delete(db.subscriptions).go();
       await db.delete(db.activityLogs).go();
-      await (db.delete(
-        db.settings,
-      )..where((setting) => setting.key.like('$_archivedEmiPrefix%'))).go();
+      await (db.delete(db.settings)..where(
+            (setting) =>
+                setting.key.like('$_archivedEmiPrefix%') |
+                setting.key.like('$_archivedMoneyPrefix%') |
+                setting.key.like('$_archivedSubscriptionPrefix%'),
+          ))
+          .go();
     });
   }
 
@@ -1257,7 +1372,7 @@ class FinanceRepository {
       );
     }
 
-    final subscriptions = await db.select(db.subscriptions).get();
+    final subscriptions = await _visibleSubscriptions();
     for (final sub in subscriptions) {
       final billingDate = nextSubscriptionBillingDate(
         sub.nextBillingDate,

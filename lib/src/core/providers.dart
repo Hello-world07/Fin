@@ -5,9 +5,11 @@ import 'package:flutter/material.dart';
 
 import '../data/database.dart';
 import '../data/backup_service.dart';
+import '../data/csv_export_service.dart';
 import '../data/repositories.dart';
 import '../domain/enums.dart';
 import '../features/assistant/assistant_engine.dart';
+import 'formatters.dart';
 
 final databaseProvider = Provider<AppDatabase>((ref) {
   final db = AppDatabase();
@@ -27,8 +29,16 @@ final pdfExportProvider = Provider<PdfExportService>((ref) {
   return PdfExportService(ref.watch(databaseProvider));
 });
 
+final csvExportProvider = Provider<CsvExportService>((ref) {
+  return CsvExportService(ref.watch(databaseProvider));
+});
+
 final localBackupProvider = Provider<LocalBackupService>((ref) {
   return LocalBackupService(ref.watch(databaseProvider));
+});
+
+final backupStatusProvider = FutureProvider<BackupStatus>((ref) {
+  return ref.watch(localBackupProvider).status();
 });
 
 final dashboardProvider = StreamProvider<DashboardSummary>((ref) {
@@ -75,6 +85,45 @@ final appThemeModeProvider =
     StateNotifierProvider<AppThemeModeController, ThemeMode>(
       (ref) => AppThemeModeController(ref.watch(databaseProvider)),
     );
+
+final numberGroupingProvider =
+    StateNotifierProvider<NumberGroupingController, bool>(
+      (ref) => NumberGroupingController(ref.watch(databaseProvider)),
+    );
+
+class NumberGroupingController extends StateNotifier<bool> {
+  NumberGroupingController(this._database) : super(true) {
+    unawaited(_restore());
+  }
+
+  final AppDatabase _database;
+  bool _hasUserSelection = false;
+
+  Future<void> _restore() async {
+    final row =
+        await (_database.select(_database.settings)
+              ..where((item) => item.key.equals('appearance.indianGrouping')))
+            .getSingleOrNull();
+    if (!_hasUserSelection) {
+      state = row?.value != 'false';
+      useIndianNumberGrouping = state;
+    }
+  }
+
+  Future<void> setIndian(bool value) async {
+    _hasUserSelection = true;
+    state = value;
+    useIndianNumberGrouping = value;
+    await _database
+        .into(_database.settings)
+        .insertOnConflictUpdate(
+          SettingsCompanion.insert(
+            key: 'appearance.indianGrouping',
+            value: value.toString(),
+          ),
+        );
+  }
+}
 
 class AppThemeModeController extends StateNotifier<ThemeMode> {
   AppThemeModeController(this._database) : super(ThemeMode.light) {

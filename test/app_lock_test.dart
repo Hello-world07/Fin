@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/widgets.dart';
 import 'dart:async';
 import 'package:personal_finance/src/core/app_lock.dart';
+import 'package:personal_finance/src/core/app_lock_policy.dart';
 
 void main() {
   test('PIN derivation is salted and does not store the raw PIN', () async {
@@ -65,6 +66,66 @@ void main() {
         isSuppressed: false,
       ),
       isTrue,
+    );
+  });
+
+  test('each auto-lock delay applies at its boundary', () {
+    final leftAt = DateTime(2026, 10, 8, 10);
+    for (final delay in AutoLockDelay.values) {
+      expect(
+        shouldLockOnResume(
+          enabled: true,
+          wasBackgrounded: true,
+          backgroundedAt: leftAt,
+          resumedAt: leftAt.add(delay.duration),
+          isSuppressed: false,
+          delay: delay,
+        ),
+        isTrue,
+      );
+      if (delay.duration > Duration.zero) {
+        expect(
+          shouldLockOnResume(
+            enabled: true,
+            wasBackgrounded: true,
+            backgroundedAt: leftAt,
+            resumedAt: leftAt.add(
+              delay.duration - const Duration(milliseconds: 1),
+            ),
+            isSuppressed: false,
+            delay: delay,
+          ),
+          isFalse,
+        );
+      }
+    }
+  });
+
+  test('PIN lockout grows after every five failures', () {
+    final now = DateTime(2026, 10, 8, 10);
+    var state = const PinLockoutState();
+    for (var i = 0; i < 4; i++) {
+      state = state.recordFailure(now);
+      expect(state.remainingAt(now), Duration.zero);
+    }
+    state = state.recordFailure(now);
+    expect(state.remainingAt(now), const Duration(seconds: 30));
+    expect(state.recordFailure(now), same(state));
+
+    final next = now.add(const Duration(seconds: 30));
+    for (var i = 0; i < 5; i++) {
+      state = state.recordFailure(next);
+    }
+    expect(state.remainingAt(next), const Duration(minutes: 1));
+
+    final third = next.add(const Duration(minutes: 1));
+    for (var i = 0; i < 5; i++) {
+      state = state.recordFailure(third);
+    }
+    expect(state.remainingAt(third), const Duration(minutes: 5));
+    expect(
+      state.remainingAt(third.add(const Duration(minutes: 5))),
+      Duration.zero,
     );
   });
 

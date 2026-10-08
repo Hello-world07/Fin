@@ -1,3 +1,5 @@
+import 'package:drift/drift.dart';
+
 import '../../core/formatters.dart';
 import '../../domain/due_status.dart';
 import '../../data/database.dart';
@@ -8,19 +10,30 @@ import '../../domain/enums.dart';
 import '../../domain/money_math.dart';
 import '../../domain/subscription_schedule.dart';
 import 'assistant_commands.dart';
+import 'assistant_actions.dart';
 import 'assistant_math.dart';
+import 'assistant_visuals.dart';
 
 abstract class AssistantEngine {
   Future<AssistantReply> ask(String question, ConversationContext ctx);
+}
+
+abstract class AssistantActionEngine {
+  Future<AssistantReply> confirm(AssistantPendingMutation mutation);
+  Future<AssistantReply> undo(AssistantUndoMutation mutation);
 }
 
 class ConversationContext {
   const ConversationContext({
     required this.now,
     this.previousQuestions = const [],
+    this.lastEntityName,
+    this.lastEntityType,
   });
   final DateTime now;
   final List<String> previousQuestions;
+  final String? lastEntityName;
+  final AssistantEntityType? lastEntityType;
 }
 
 enum AssistantDestination { home, emis, money, subscriptions }
@@ -59,6 +72,9 @@ class AssistantReply {
     this.actions = const [],
     this.suggestions = const [],
     this.openForm,
+    this.visuals = const [],
+    this.confirmation,
+    this.undoMutation,
   });
   final String text;
   final List<AssistantRow> rows;
@@ -66,6 +82,9 @@ class AssistantReply {
   final List<AssistantAction> actions;
   final List<String> suggestions;
   final AssistantFormDraft? openForm;
+  final List<AssistantVisualPart> visuals;
+  final AssistantPendingMutation? confirmation;
+  final AssistantUndoMutation? undoMutation;
 }
 
 enum AssistantIntent {
@@ -651,7 +670,7 @@ class FinanceFacts {
 }
 
 // Replace this provider's engine with an LLM implementation later; the UI uses only AssistantEngine.
-class LocalAssistantEngine implements AssistantEngine {
+class LocalAssistantEngine implements AssistantEngine, AssistantActionEngine {
   const LocalAssistantEngine(this.repository);
   final FinanceRepository repository;
 
@@ -732,6 +751,32 @@ class LocalAssistantEngine implements AssistantEngine {
       }
     }
 
+    final facts = FinanceFacts(
+      emis: await repository.watchEmiDetails().first,
+      money: await repository.moneyDetails(),
+      subscriptions: await repository.watchSubscriptions().first,
+      now: ctx.now,
+    );
+    var actionCommand = parseAssistantActionCommand(question);
+    if (actionCommand != null &&
+        const {'it', 'that', 'that one'}.contains(actionCommand.targetText) &&
+        ctx.lastEntityType != null &&
+        actionCommand.kind == AssistantMutationKind.deleteSubscription) {
+      actionCommand = AssistantActionCommand(
+        kind: switch (ctx.lastEntityType!) {
+          AssistantEntityType.emi => AssistantMutationKind.deleteEmi,
+          AssistantEntityType.money => AssistantMutationKind.deleteMoney,
+          AssistantEntityType.subscription =>
+            AssistantMutationKind.deleteSubscription,
+        },
+        entityType: ctx.lastEntityType!,
+        targetText: actionCommand.targetText,
+      );
+    }
+    if (actionCommand != null) {
+      return _prepareMutation(actionCommand, facts, ctx);
+    }
+
     var command = parseAssistantCommand(question, ctx.now);
     if (command == null &&
         ctx.previousQuestions.isNotEmpty &&
@@ -775,12 +820,6 @@ class LocalAssistantEngine implements AssistantEngine {
       );
     }
 
-    final facts = FinanceFacts(
-      emis: await repository.watchEmiDetails().first,
-      money: await repository.moneyDetails(),
-      subscriptions: await repository.watchSubscriptions().first,
-      now: ctx.now,
-    );
     final names = facts.money.map((item) => item.record.personName).toSet();
     var effectiveQuestion = question;
     if (ctx.previousQuestions.isNotEmpty &&
@@ -829,7 +868,7 @@ class LocalAssistantEngine implements AssistantEngine {
         );
       case AssistantIntent.help:
         return const AssistantReply(
-          'Try these questions:\nStatus: My financial status\nEMIs: When is my next EMI?\nMoney: Who owes me?\nSubscriptions: Subscriptions per month\nMaths: 15% of 8000\nAdd something: I gave Nivas 500',
+          'Try these questions:\nStatus: My financial status\nEMIs: When is my next EMI? or Mark Slice paid\nMoney: Who owes me? or Nivas paid 50\nSubscriptions: Subscriptions per month or Pause Netflix\nMaths: 15% of 8000\nAdd something: I gave Nivas 500\nChanges always show a confirmation before anything is updated.',
           suggestions: [
             'My financial status',
             'Next EMI date',
@@ -960,6 +999,31 @@ class LocalAssistantEngine implements AssistantEngine {
             ),
             AssistantRow('Total', formatMoney(total)),
           ],
+          visuals: due.isEmpty
+              ? const [
+                  AssistantVisualPart(
+                    kind: AssistantVisualKind.timeline,
+                    title: 'Due timeline',
+                  ),
+                ]
+              : [
+                  AssistantVisualPart(
+                    kind: AssistantVisualKind.timeline,
+                    title: 'Due timeline',
+                    data: [
+                      for (final item in due.take(12))
+                        AssistantVisualDatum(
+                          label: '${item.label} · ${formatDate(item.dueDate)}',
+                          value: item.amountPaise.toDouble(),
+                          displayValue: formatMoney(item.amountPaise),
+                          date: item.dueDate,
+                          isOverdue: dateOnly(
+                            item.dueDate,
+                          ).isBefore(dateOnly(ctx.now)),
+                        ),
+                    ],
+                  ),
+                ],
           actions: const [emiAction, moneyAction, subsAction],
         );
       case AssistantIntent.status:
@@ -992,8 +1056,9 @@ class LocalAssistantEngine implements AssistantEngine {
           actions: const [emiAction, moneyAction],
         );
       case AssistantIntent.owedToMe:
+        final count = facts.given.length;
         return AssistantReply(
-          'People owe you ${formatMoney(facts.toReceivePaise)} across ${facts.given.length} open records.',
+          'People owe you ${formatMoney(facts.toReceivePaise)} across $count open ${count == 1 ? 'record' : 'records'}.',
           actions: const [moneyAction],
         );
       case AssistantIntent.whoOwesMe:
@@ -1021,6 +1086,24 @@ class LocalAssistantEngine implements AssistantEngine {
             for (final row in rows)
               AssistantRow(displayName(row.key), formatMoney(row.value)),
           ],
+          visuals: rows.isEmpty
+              ? const []
+              : [
+                  AssistantVisualPart(
+                    kind: AssistantVisualKind.horizontalBars,
+                    title: match.intent == AssistantIntent.whoOwesMe
+                        ? 'Outstanding by person'
+                        : 'Amount owed by person',
+                    data: [
+                      for (final row in rows)
+                        AssistantVisualDatum(
+                          label: displayName(row.key),
+                          value: row.value.toDouble(),
+                          displayValue: formatMoney(row.value),
+                        ),
+                    ],
+                  ),
+                ],
           actions: const [moneyAction],
         );
       case AssistantIntent.emi:
@@ -1069,6 +1152,31 @@ class LocalAssistantEngine implements AssistantEngine {
                 formatMoney(item.amountPaise),
               ),
           ],
+          visuals: due.isEmpty
+              ? const [
+                  AssistantVisualPart(
+                    kind: AssistantVisualKind.timeline,
+                    title: 'Due timeline',
+                  ),
+                ]
+              : [
+                  AssistantVisualPart(
+                    kind: AssistantVisualKind.timeline,
+                    title: 'Due timeline',
+                    data: [
+                      for (final item in due.take(12))
+                        AssistantVisualDatum(
+                          label: '${item.label} · ${formatDate(item.dueDate)}',
+                          value: item.amountPaise.toDouble(),
+                          displayValue: formatMoney(item.amountPaise),
+                          date: item.dueDate,
+                          isOverdue: dateOnly(
+                            item.dueDate,
+                          ).isBefore(dateOnly(ctx.now)),
+                        ),
+                    ],
+                  ),
+                ],
           actions: const [emiAction, moneyAction, subsAction],
         );
       case AssistantIntent.outflow:
@@ -1088,22 +1196,69 @@ class LocalAssistantEngine implements AssistantEngine {
               formatMoney(facts.upcomingBorrowedPaise),
             ),
           ],
-          chart: AssistantChart(
-            kind: AssistantChartKind.bar,
-            fraction: facts.monthlyOutflowPaise == 0
-                ? 0
-                : facts.monthlyEmiPaise / facts.monthlyOutflowPaise,
-            label: 'EMI share',
-          ),
+          visuals: [
+            AssistantVisualPart(
+              kind: AssistantVisualKind.stackedBar,
+              title: 'Monthly outflow split',
+              bigValue: formatMoney(facts.monthlyOutflowPaise),
+              data: [
+                AssistantVisualDatum(
+                  label: 'EMIs',
+                  value: facts.monthlyEmiPaise.toDouble(),
+                  displayValue:
+                      '${formatMoney(facts.monthlyEmiPaise)} · ${facts.monthlyOutflowPaise == 0 ? 0 : (facts.monthlyEmiPaise / facts.monthlyOutflowPaise * 100).round()}%',
+                ),
+                AssistantVisualDatum(
+                  label: 'Subscriptions',
+                  value: facts.monthlySubscriptionsPaise.toDouble(),
+                  displayValue:
+                      '${formatMoney(facts.monthlySubscriptionsPaise)} · ${facts.monthlyOutflowPaise == 0 ? 0 : (facts.monthlySubscriptionsPaise / facts.monthlyOutflowPaise * 100).round()}%',
+                ),
+                AssistantVisualDatum(
+                  label: 'Money due',
+                  value: facts.upcomingBorrowedPaise.toDouble(),
+                  displayValue:
+                      '${formatMoney(facts.upcomingBorrowedPaise)} · ${facts.monthlyOutflowPaise == 0 ? 0 : (facts.upcomingBorrowedPaise / facts.monthlyOutflowPaise * 100).round()}%',
+                ),
+              ],
+            ),
+          ],
           actions: const [emiAction, subsAction],
         );
       case AssistantIntent.subscriptions:
+        final categories = <String, int>{};
+        for (final item in facts.activeSubscriptions) {
+          categories.update(
+            item.category?.trim().isNotEmpty == true
+                ? item.category!.trim()
+                : 'Other',
+            (value) =>
+                value +
+                monthlyEquivalentPaise(item.amountPaise, item.frequency),
+            ifAbsent: () =>
+                monthlyEquivalentPaise(item.amountPaise, item.frequency),
+          );
+        }
         return AssistantReply(
-          '${facts.activeSubscriptions.length} active subscriptions cost about ${formatMoney(facts.monthlySubscriptionsPaise)} per month.',
+          '${facts.activeSubscriptions.length} active ${facts.activeSubscriptions.length == 1 ? 'subscription costs' : 'subscriptions cost'} about ${formatMoney(facts.monthlySubscriptionsPaise)} per month.',
           rows: [
             AssistantRow(
               'Yearly equivalent',
               formatMoney(facts.yearlySubscriptionsPaise),
+            ),
+          ],
+          visuals: [
+            AssistantVisualPart(
+              kind: AssistantVisualKind.horizontalBars,
+              title: 'Subscriptions by category',
+              data: [
+                for (final entry in categories.entries)
+                  AssistantVisualDatum(
+                    label: entry.key,
+                    value: entry.value.toDouble(),
+                    displayValue: formatMoney(entry.value),
+                  ),
+              ],
             ),
           ],
           actions: const [subsAction],
@@ -1134,12 +1289,50 @@ class LocalAssistantEngine implements AssistantEngine {
         );
       case AssistantIntent.debtFree:
         final date = facts.debtFreeDate;
+        final totalScheduled = facts.activeEmis.fold<int>(
+          0,
+          (sum, item) => sum + item.totalRepaymentPaise,
+        );
+        final paid = facts.activeEmis.fold<int>(
+          0,
+          (sum, item) => sum + item.paidPaise,
+        );
+        final months = date == null
+            ? null
+            : (dateOnly(date).difference(dateOnly(ctx.now)).inDays / 30).ceil();
         return AssistantReply(
           date == null
               ? 'I cannot give a reliable debt-free date because at least one borrowed Money record has no due date.'
               : facts.totalDebtPaise == 0
               ? 'No open EMI or borrowed Money debt is tracked.'
               : 'Your last tracked debt due date is ${formatDate(date)}. This uses EMI schedules and dated borrowed Money; subscriptions are not included.',
+          visuals: [
+            AssistantVisualPart(
+              kind: AssistantVisualKind.scoreRing,
+              title: 'Debt payoff progress',
+              score: totalScheduled == 0 ? 0 : paid / totalScheduled * 100,
+              bigValue: totalScheduled == 0
+                  ? '0%'
+                  : '${(paid / totalScheduled * 100).round()}%',
+              subtitle: months == null
+                  ? 'Debt-free date unknown'
+                  : months <= 0
+                  ? 'Due now'
+                  : '$months ${months == 1 ? 'month' : 'months'} to the last tracked due date',
+              data: [
+                AssistantVisualDatum(
+                  label: 'Paid',
+                  value: paid.toDouble(),
+                  displayValue: formatMoney(paid),
+                ),
+                AssistantVisualDatum(
+                  label: 'Remaining',
+                  value: facts.emiRemainingPaise.toDouble(),
+                  displayValue: formatMoney(facts.emiRemainingPaise),
+                ),
+              ],
+            ),
+          ],
           actions: const [emiAction, moneyAction],
         );
       case AssistantIntent.debtFirst:
@@ -1257,6 +1450,544 @@ class LocalAssistantEngine implements AssistantEngine {
         );
     }
   }
+
+  AssistantReply _prepareMutation(
+    AssistantActionCommand command,
+    FinanceFacts facts,
+    ConversationContext context,
+  ) {
+    final requestedTarget = switch (command.targetText) {
+      'it' || 'that' || 'that one' => context.lastEntityName,
+      final value => value,
+    };
+    switch (command.entityType) {
+      case AssistantEntityType.subscription:
+        final subscriptionPool = switch (command.kind) {
+          AssistantMutationKind.cancelSubscription ||
+          AssistantMutationKind.pauseSubscription => facts.subscriptions.where(
+            (item) => item.status == SubscriptionStatus.active,
+          ),
+          AssistantMutationKind.resumeSubscription => facts.subscriptions.where(
+            (item) => item.status == SubscriptionStatus.paused,
+          ),
+          _ => facts.subscriptions,
+        };
+        final resolution = resolveAssistantEntity<Subscription>(
+          requestedTarget,
+          subscriptionPool.map(
+            (item) => AssistantEntityCandidate(item.name, item),
+          ),
+        );
+        if (resolution.match == null) {
+          return _resolutionReply(command, resolution);
+        }
+        final item = resolution.match!.value;
+        if (command.kind == AssistantMutationKind.changeSubscriptionAmount &&
+            command.amountPaise == null) {
+          return AssistantReply(
+            'What should ${displayName(item.name)} cost?',
+            suggestions: ['Change ${item.name} to 600'],
+          );
+        }
+        final yearly = switch (item.frequency) {
+          PaymentFrequency.weekly => item.amountPaise * 52,
+          PaymentFrequency.monthly => item.amountPaise * 12,
+          PaymentFrequency.quarterly => item.amountPaise * 4,
+          PaymentFrequency.yearly => item.amountPaise,
+          PaymentFrequency.once => item.amountPaise,
+        };
+        final title = switch (command.kind) {
+          AssistantMutationKind.cancelSubscription =>
+            'Cancel ${displayName(item.name)}',
+          AssistantMutationKind.pauseSubscription =>
+            'Pause ${displayName(item.name)}${command.pauseMonths == null ? '' : ' for ${command.pauseMonths} months'}',
+          AssistantMutationKind.resumeSubscription =>
+            'Resume ${displayName(item.name)}',
+          AssistantMutationKind.deleteSubscription =>
+            'Move ${displayName(item.name)} to Deleted',
+          AssistantMutationKind.changeSubscriptionAmount =>
+            'Change ${displayName(item.name)} to ${formatMoney(command.amountPaise!)}',
+          _ => 'Update ${displayName(item.name)}',
+        };
+        final effect = switch (command.kind) {
+          AssistantMutationKind.cancelSubscription =>
+            'Reminders will stop. This removes about ${formatMoney(yearly)} from the yearly recurring total.',
+          AssistantMutationKind.pauseSubscription
+              when command.pauseMonths != null =>
+            'The next billing date will move forward ${command.pauseMonths} months; reminders resume from that date.',
+          AssistantMutationKind.pauseSubscription =>
+            'Reminders and recurring totals will pause until you resume it.',
+          AssistantMutationKind.resumeSubscription =>
+            'It will return to active recurring totals and reminders.',
+          AssistantMutationKind.deleteSubscription =>
+            'The record will leave active views and can be restored from Deleted.',
+          AssistantMutationKind.changeSubscriptionAmount =>
+            'The recurring amount changes from ${formatMoney(item.amountPaise)} to ${formatMoney(command.amountPaise!)}.',
+          _ => '',
+        };
+        return AssistantReply(
+          'Please confirm this change.',
+          confirmation: AssistantPendingMutation(
+            id: '${command.kind.name}:subscription:${item.id}:${context.now.microsecondsSinceEpoch}',
+            kind: command.kind,
+            entityType: AssistantEntityType.subscription,
+            entityId: item.id,
+            entityName: item.name,
+            confirmationTitle: title,
+            confirmationEffect: effect,
+            amountPaise: command.amountPaise,
+            oldAmountPaise: item.amountPaise,
+            pauseMonths: command.pauseMonths,
+          ),
+        );
+      case AssistantEntityType.emi:
+        final emiPool = command.kind == AssistantMutationKind.deleteEmi
+            ? facts.emis
+            : facts.activeEmis;
+        final resolution = resolveAssistantEntity<EmiDetail>(
+          requestedTarget,
+          emiPool.map((item) => AssistantEntityCandidate(item.emi.name, item)),
+        );
+        if (resolution.match == null) {
+          return _resolutionReply(command, resolution);
+        }
+        final detail = resolution.match!.value;
+        final next = detail.nextUnpaidInstallment;
+        if ((command.kind == AssistantMutationKind.markEmiPaid ||
+                command.kind == AssistantMutationKind.closeEmi) &&
+            next == null) {
+          return AssistantReply(
+            '${displayName(detail.emi.name)} is already completed.',
+          );
+        }
+        if (command.installmentMonth != null &&
+            next!.dueDate.month != command.installmentMonth) {
+          return AssistantReply(
+            'The next unpaid installment for ${displayName(detail.emi.name)} is due ${formatDate(next.dueDate)}. Only the earliest unpaid installment can be marked paid.',
+          );
+        }
+        final title = switch (command.kind) {
+          AssistantMutationKind.deleteEmi =>
+            'Move ${displayName(detail.emi.name)} to Deleted',
+          AssistantMutationKind.closeEmi =>
+            'Close ${displayName(detail.emi.name)} EMI',
+          _ =>
+            'Mark ${displayName(detail.emi.name)} installment ${next!.number} paid${command.paidEarly ? ' early' : ''}',
+        };
+        final effect = switch (command.kind) {
+          AssistantMutationKind.deleteEmi =>
+            'The EMI and its installment history will leave active views and can be restored from Deleted.',
+          AssistantMutationKind.closeEmi =>
+            'All ${detail.remainingInstallments} remaining installments totaling ${formatMoney(detail.remainingBalancePaise)} will be recorded as paid early.',
+          _ =>
+            '${formatMoney(detail.amountForInstallment(next!.number))} due ${formatDate(next.dueDate)} will be recorded as paid.',
+        };
+        return AssistantReply(
+          'Please confirm this change.',
+          confirmation: AssistantPendingMutation(
+            id: '${command.kind.name}:emi:${detail.emi.id}:${context.now.microsecondsSinceEpoch}',
+            kind: command.kind,
+            entityType: AssistantEntityType.emi,
+            entityId: detail.emi.id,
+            entityName: detail.emi.name,
+            confirmationTitle: title,
+            confirmationEffect: effect,
+            amountPaise: next == null
+                ? detail.remainingBalancePaise
+                : detail.amountForInstallment(next.number),
+            expectedDueDate: next?.dueDate,
+            expectedInstallmentNumber: next?.number,
+            paidEarly: command.paidEarly,
+          ),
+        );
+      case AssistantEntityType.money:
+        final moneyPool = command.kind == AssistantMutationKind.deleteMoney
+            ? facts.money
+            : facts.money.where(
+                (item) => item.summary.remainingAmountPaise > 0,
+              );
+        final resolution = resolveAssistantEntity<MoneyRecordDetail>(
+          requestedTarget,
+          moneyPool.map(
+            (item) => AssistantEntityCandidate(
+              '${item.record.personName} ${item.record.direction == MoneyDirection.given ? 'given' : 'borrowed'}',
+              item,
+            ),
+          ),
+        );
+        if (resolution.match == null) {
+          return _resolutionReply(command, resolution);
+        }
+        final detail = resolution.match!.value;
+        final remaining = detail.summary.remainingAmountPaise;
+        if (command.kind == AssistantMutationKind.addMoneyRepayment &&
+            command.amountPaise == null) {
+          return AssistantReply(
+            'How much did ${displayName(detail.record.personName)} repay?',
+          );
+        }
+        if (command.amountPaise != null && command.amountPaise! > remaining) {
+          return AssistantReply(
+            '${formatMoney(command.amountPaise!)} is more than the remaining ${formatMoney(remaining)} for ${displayName(detail.record.personName)}.',
+          );
+        }
+        if (command.kind == AssistantMutationKind.extendMoneyDueDate &&
+            command.extendDays == null) {
+          return AssistantReply(
+            'How many days should I extend ${displayName(detail.record.personName)}’s due date?',
+            suggestions: [
+              'Extend ${detail.record.personName} due date by 7 days',
+              'Extend ${detail.record.personName} due date by 30 days',
+            ],
+          );
+        }
+        final repayment = command.kind == AssistantMutationKind.settleMoney
+            ? remaining
+            : command.amountPaise;
+        final title = switch (command.kind) {
+          AssistantMutationKind.deleteMoney =>
+            'Move ${displayName(detail.record.personName)}’s record to Deleted',
+          AssistantMutationKind.extendMoneyDueDate =>
+            'Extend ${displayName(detail.record.personName)}’s due date by ${command.extendDays} days',
+          AssistantMutationKind.settleMoney =>
+            'Mark ${displayName(detail.record.personName)} settled',
+          _ =>
+            'Record ${formatMoney(repayment!)} from ${displayName(detail.record.personName)}',
+        };
+        final effect = switch (command.kind) {
+          AssistantMutationKind.deleteMoney =>
+            'The record and repayment history will leave active views and can be restored from Deleted.',
+          AssistantMutationKind.extendMoneyDueDate =>
+            'The due date will move from ${detail.record.dueDate == null ? 'not set' : formatDate(detail.record.dueDate!)} to ${formatDate((detail.record.dueDate ?? context.now).add(Duration(days: command.extendDays!)))}.',
+          AssistantMutationKind.settleMoney =>
+            '${formatMoney(remaining)} will be recorded as the final repayment.',
+          _ =>
+            'The outstanding balance will become ${formatMoney(remaining - repayment!)}.',
+        };
+        return AssistantReply(
+          'Please confirm this change.',
+          confirmation: AssistantPendingMutation(
+            id: '${command.kind.name}:money:${detail.record.id}:${context.now.microsecondsSinceEpoch}',
+            kind: command.kind,
+            entityType: AssistantEntityType.money,
+            entityId: detail.record.id,
+            entityName: detail.record.personName,
+            confirmationTitle: title,
+            confirmationEffect: effect,
+            amountPaise: repayment,
+            extendDays: command.extendDays,
+            expectedDueDate: detail.record.dueDate,
+          ),
+        );
+    }
+  }
+
+  AssistantReply _resolutionReply<T>(
+    AssistantActionCommand command,
+    AssistantEntityResolution<T> resolution,
+  ) {
+    final verb = _mutationVerb(command.kind);
+    if (resolution.ambiguous.isNotEmpty) {
+      return AssistantReply(
+        'Which one should I $verb?',
+        suggestions: [
+          for (final item in resolution.ambiguous.take(6))
+            _commandSuggestion(command, item.name),
+        ],
+      );
+    }
+    return AssistantReply(
+      'I could not find that ${command.entityType.name}.',
+      suggestions: [
+        for (final item in resolution.suggestions)
+          _commandSuggestion(command, item.name),
+      ],
+    );
+  }
+
+  @override
+  Future<AssistantReply> confirm(AssistantPendingMutation mutation) async {
+    switch (mutation.kind) {
+      case AssistantMutationKind.cancelSubscription:
+      case AssistantMutationKind.pauseSubscription:
+      case AssistantMutationKind.resumeSubscription:
+      case AssistantMutationKind.changeSubscriptionAmount:
+        final item = await repository.subscription(mutation.entityId);
+        if (item == null) {
+          return const AssistantReply('That subscription no longer exists.');
+        }
+        if (mutation.kind == AssistantMutationKind.pauseSubscription &&
+            mutation.pauseMonths != null) {
+          final next = DateTime(
+            item.nextBillingDate.year,
+            item.nextBillingDate.month + mutation.pauseMonths!,
+            item.nextBillingDate.day,
+          );
+          await repository.saveSubscription(
+            SubscriptionsCompanion(
+              id: Value(item.id),
+              name: Value(item.name),
+              amountPaise: Value(item.amountPaise),
+              frequency: Value(item.frequency),
+              nextBillingDate: Value(next),
+              paymentMethodId: Value(item.paymentMethodId),
+              category: Value(item.category),
+              status: const Value(SubscriptionStatus.active),
+              notes: Value(item.notes),
+              updatedAt: Value(DateTime.now()),
+            ),
+          );
+          return _successReply(
+            '${displayName(item.name)} is paused until ${formatDate(next)}.',
+            AssistantUndoMutation(
+              kind: mutation.kind,
+              entityType: mutation.entityType,
+              entityId: item.id,
+              entityName: item.name,
+              date: item.nextBillingDate,
+              expiresAt: DateTime.now().add(const Duration(seconds: 6)),
+            ),
+          );
+        }
+        if (mutation.kind == AssistantMutationKind.changeSubscriptionAmount) {
+          await repository.saveSubscription(
+            SubscriptionsCompanion(
+              id: Value(item.id),
+              name: Value(item.name),
+              amountPaise: Value(mutation.amountPaise!),
+              frequency: Value(item.frequency),
+              nextBillingDate: Value(item.nextBillingDate),
+              paymentMethodId: Value(item.paymentMethodId),
+              category: Value(item.category),
+              status: Value(item.status),
+              notes: Value(item.notes),
+              updatedAt: Value(DateTime.now()),
+            ),
+          );
+          return _successReply(
+            '${displayName(item.name)} now costs ${formatMoney(mutation.amountPaise!)}.',
+            AssistantUndoMutation(
+              kind: mutation.kind,
+              entityType: mutation.entityType,
+              entityId: item.id,
+              entityName: item.name,
+              value: item.amountPaise,
+              expiresAt: DateTime.now().add(const Duration(seconds: 6)),
+            ),
+          );
+        }
+        final status = switch (mutation.kind) {
+          AssistantMutationKind.cancelSubscription =>
+            SubscriptionStatus.cancelled,
+          AssistantMutationKind.pauseSubscription => SubscriptionStatus.paused,
+          _ => SubscriptionStatus.active,
+        };
+        await repository.setSubscriptionStatus(item.id, status);
+        return _successReply(
+          '${displayName(item.name)} ${status.label.toLowerCase()}.',
+          AssistantUndoMutation(
+            kind: mutation.kind,
+            entityType: mutation.entityType,
+            entityId: item.id,
+            entityName: item.name,
+            value: item.status,
+            expiresAt: DateTime.now().add(const Duration(seconds: 6)),
+          ),
+        );
+      case AssistantMutationKind.deleteSubscription:
+        await repository.deleteSubscription(mutation.entityId);
+        return _restoreReply(mutation, 'Subscription moved to Deleted.');
+      case AssistantMutationKind.deleteEmi:
+        await repository.deleteEmi(mutation.entityId);
+        return _restoreReply(mutation, 'EMI moved to Deleted.');
+      case AssistantMutationKind.markEmiPaid:
+        final before = await repository.emiDetail(mutation.entityId);
+        final ok = await repository.markEmiPaid(
+          mutation.entityId,
+          expectedDueDate: mutation.expectedDueDate!,
+          expectedInstallmentNumber: mutation.expectedInstallmentNumber,
+          paidEarly: mutation.paidEarly,
+        );
+        if (!ok) {
+          return const AssistantReply(
+            'That installment changed before it could be marked paid.',
+          );
+        }
+        final after = await repository.emiDetail(mutation.entityId);
+        final priorIds = before.payments.map((item) => item.id).toSet();
+        final payment = after.payments
+            .where((item) => !priorIds.contains(item.id))
+            .firstOrNull;
+        return _successReply(
+          '${displayName(mutation.entityName)} installment marked paid.',
+          AssistantUndoMutation(
+            kind: mutation.kind,
+            entityType: mutation.entityType,
+            entityId: mutation.entityId,
+            entityName: mutation.entityName,
+            relatedId: payment?.id,
+            expiresAt: DateTime.now().add(const Duration(seconds: 6)),
+          ),
+        );
+      case AssistantMutationKind.closeEmi:
+        final before = await repository.emiDetail(mutation.entityId);
+        while (true) {
+          final detail = await repository.emiDetail(mutation.entityId);
+          final next = detail.nextUnpaidInstallment;
+          if (next == null) break;
+          final ok = await repository.markEmiPaid(
+            mutation.entityId,
+            expectedDueDate: next.dueDate,
+            expectedInstallmentNumber: next.number,
+            paidEarly: true,
+          );
+          if (!ok) break;
+        }
+        final after = await repository.emiDetail(mutation.entityId);
+        final priorIds = before.payments.map((item) => item.id).toSet();
+        final ids = after.payments
+            .where((item) => !priorIds.contains(item.id))
+            .map((item) => item.id)
+            .toList();
+        return _successReply(
+          '${displayName(mutation.entityName)} is closed.',
+          AssistantUndoMutation(
+            kind: mutation.kind,
+            entityType: mutation.entityType,
+            entityId: mutation.entityId,
+            entityName: mutation.entityName,
+            value: ids,
+            expiresAt: DateTime.now().add(const Duration(seconds: 6)),
+          ),
+        );
+      case AssistantMutationKind.deleteMoney:
+        await repository.deleteMoneyRecord(mutation.entityId);
+        return _restoreReply(mutation, 'Money record moved to Deleted.');
+      case AssistantMutationKind.addMoneyRepayment:
+      case AssistantMutationKind.settleMoney:
+        final id = await repository.addRepayment(
+          mutation.entityId,
+          mutation.amountPaise!,
+          'Recorded through Ask FinKeep',
+          DateTime.now(),
+        );
+        return _successReply(
+          mutation.kind == AssistantMutationKind.settleMoney
+              ? '${displayName(mutation.entityName)} is settled.'
+              : '${formatMoney(mutation.amountPaise!)} repayment recorded for ${displayName(mutation.entityName)}.',
+          AssistantUndoMutation(
+            kind: mutation.kind,
+            entityType: mutation.entityType,
+            entityId: mutation.entityId,
+            entityName: mutation.entityName,
+            relatedId: id,
+            expiresAt: DateTime.now().add(const Duration(seconds: 6)),
+          ),
+        );
+      case AssistantMutationKind.extendMoneyDueDate:
+        final detail = await repository.moneyDetail(mutation.entityId);
+        final next = (detail.record.dueDate ?? DateTime.now()).add(
+          Duration(days: mutation.extendDays!),
+        );
+        await repository.updateMoneyDueDate(mutation.entityId, next);
+        return _successReply(
+          '${displayName(mutation.entityName)} is now due ${formatDate(next)}.',
+          AssistantUndoMutation(
+            kind: mutation.kind,
+            entityType: mutation.entityType,
+            entityId: mutation.entityId,
+            entityName: mutation.entityName,
+            date: detail.record.dueDate,
+            expiresAt: DateTime.now().add(const Duration(seconds: 6)),
+          ),
+        );
+    }
+  }
+
+  @override
+  Future<AssistantReply> undo(AssistantUndoMutation mutation) async {
+    if (!mutation.restore &&
+        mutation.expiresAt != null &&
+        DateTime.now().isAfter(mutation.expiresAt!)) {
+      return const AssistantReply('The 6-second undo window has ended.');
+    }
+    switch (mutation.kind) {
+      case AssistantMutationKind.deleteSubscription:
+        await repository.restoreSubscriptionById(mutation.entityId);
+      case AssistantMutationKind.deleteEmi:
+        await repository.restoreEmi(mutation.entityId);
+      case AssistantMutationKind.deleteMoney:
+        await repository.restoreMoneyRecord(mutation.entityId);
+      case AssistantMutationKind.markEmiPaid:
+        if (mutation.relatedId != null) {
+          await repository.revertEmiPayment(
+            mutation.entityId,
+            mutation.relatedId!,
+          );
+        }
+      case AssistantMutationKind.closeEmi:
+        final ids = (mutation.value as List<int>?) ?? const [];
+        for (final id in ids.reversed) {
+          await repository.revertEmiPayment(mutation.entityId, id);
+        }
+      case AssistantMutationKind.addMoneyRepayment:
+      case AssistantMutationKind.settleMoney:
+        if (mutation.relatedId != null) {
+          await repository.revertMoneyRepayment(
+            mutation.entityId,
+            mutation.relatedId!,
+          );
+        }
+      case AssistantMutationKind.extendMoneyDueDate:
+        await repository.setMoneyDueDate(mutation.entityId, mutation.date);
+      case AssistantMutationKind.changeSubscriptionAmount:
+        final item = await repository.subscription(mutation.entityId);
+        if (item != null) {
+          await repository.saveSubscription(
+            SubscriptionsCompanion(
+              id: Value(item.id),
+              name: Value(item.name),
+              amountPaise: Value(mutation.value! as int),
+              frequency: Value(item.frequency),
+              nextBillingDate: Value(item.nextBillingDate),
+              paymentMethodId: Value(item.paymentMethodId),
+              category: Value(item.category),
+              status: Value(item.status),
+              notes: Value(item.notes),
+              updatedAt: Value(DateTime.now()),
+            ),
+          );
+        }
+      case AssistantMutationKind.pauseSubscription when mutation.date != null:
+        final item = await repository.subscription(mutation.entityId);
+        if (item != null) {
+          await repository.saveSubscription(
+            SubscriptionsCompanion(
+              id: Value(item.id),
+              name: Value(item.name),
+              amountPaise: Value(item.amountPaise),
+              frequency: Value(item.frequency),
+              nextBillingDate: Value(mutation.date!),
+              paymentMethodId: Value(item.paymentMethodId),
+              category: Value(item.category),
+              status: Value(item.status),
+              notes: Value(item.notes),
+              updatedAt: Value(DateTime.now()),
+            ),
+          );
+        }
+      case AssistantMutationKind.cancelSubscription:
+      case AssistantMutationKind.pauseSubscription:
+      case AssistantMutationKind.resumeSubscription:
+        await repository.setSubscriptionStatus(
+          mutation.entityId,
+          mutation.value! as SubscriptionStatus,
+        );
+    }
+    return AssistantReply(
+      '${displayName(mutation.entityName)} restored to its previous state.',
+    );
+  }
 }
 
 AssistantDestination _destinationForDraft(AssistantFormKind kind) =>
@@ -1266,6 +1997,59 @@ AssistantDestination _destinationForDraft(AssistantFormKind kind) =>
       AssistantFormKind.moneyBorrowed => AssistantDestination.money,
       AssistantFormKind.subscription => AssistantDestination.subscriptions,
     };
+
+String _mutationVerb(AssistantMutationKind kind) => switch (kind) {
+  AssistantMutationKind.cancelSubscription => 'cancel',
+  AssistantMutationKind.pauseSubscription => 'pause',
+  AssistantMutationKind.resumeSubscription => 'resume',
+  AssistantMutationKind.deleteSubscription ||
+  AssistantMutationKind.deleteEmi ||
+  AssistantMutationKind.deleteMoney => 'delete',
+  AssistantMutationKind.changeSubscriptionAmount => 'change',
+  AssistantMutationKind.markEmiPaid => 'mark paid',
+  AssistantMutationKind.closeEmi => 'close',
+  AssistantMutationKind.addMoneyRepayment => 'record repayment for',
+  AssistantMutationKind.extendMoneyDueDate => 'extend',
+  AssistantMutationKind.settleMoney => 'settle',
+};
+
+String _commandSuggestion(
+  AssistantActionCommand command,
+  String entityName,
+) => switch (command.kind) {
+  AssistantMutationKind.cancelSubscription => 'Cancel subscription $entityName',
+  AssistantMutationKind.pauseSubscription =>
+    'Pause $entityName${command.pauseMonths == null ? '' : ' for ${command.pauseMonths} months'}',
+  AssistantMutationKind.resumeSubscription => 'Resume $entityName',
+  AssistantMutationKind.deleteSubscription => 'Delete subscription $entityName',
+  AssistantMutationKind.changeSubscriptionAmount =>
+    'Change $entityName to ${formatMoney(command.amountPaise!)}',
+  AssistantMutationKind.deleteEmi => 'Delete EMI $entityName',
+  AssistantMutationKind.markEmiPaid =>
+    'Mark $entityName paid${command.paidEarly ? ' early' : ''}',
+  AssistantMutationKind.closeEmi => 'Close EMI $entityName',
+  AssistantMutationKind.deleteMoney => 'Delete $entityName money',
+  AssistantMutationKind.addMoneyRepayment =>
+    '$entityName paid ${formatMoney(command.amountPaise!)}',
+  AssistantMutationKind.extendMoneyDueDate =>
+    'Extend $entityName due date by ${command.extendDays} days',
+  AssistantMutationKind.settleMoney => 'Mark $entityName settled',
+};
+
+AssistantReply _successReply(String text, AssistantUndoMutation undo) =>
+    AssistantReply(text, undoMutation: undo);
+
+AssistantReply _restoreReply(AssistantPendingMutation mutation, String text) =>
+    AssistantReply(
+      text,
+      undoMutation: AssistantUndoMutation(
+        kind: mutation.kind,
+        entityType: mutation.entityType,
+        entityId: mutation.entityId,
+        entityName: mutation.entityName,
+        restore: true,
+      ),
+    );
 
 List<AssistantAction> _amountActions(int amountPaise) {
   if (amountPaise <= 0) return const [];
@@ -1334,6 +2118,10 @@ List<String> _closestSuggestions(String question, FinanceFacts facts) {
     'Subscriptions per month',
     'Analyze my portfolio',
     'Monthly outflow',
+    'Pause a subscription',
+    'Mark an EMI paid',
+    'Record a repayment',
+    'Delete a record',
   }.toList();
   final tokens = normalizeQuestion(
     question,
@@ -1448,8 +2236,39 @@ AssistantReply _analyzePortfolio(FinanceFacts facts) {
     suggestions.add('${suggestions.length + 1}. $fallback');
   }
   final debtDate = facts.debtFreeDate;
+  final undatedTotal = undated.fold<int>(
+    0,
+    (sum, item) => sum + item.summary.remainingAmountPaise,
+  );
+  final health = calculateAssistantHealthScore(
+    AssistantHealthInput(
+      emiShare: emiShare,
+      overdueCount: overdue.length,
+      undatedLentShare: facts.toReceivePaise == 0
+          ? 0
+          : undatedTotal / facts.toReceivePaise,
+      subscriptionShare: subscriptionsShare,
+    ),
+  );
+  final nextThirty = facts.dueItemsInRange(
+    dateOnly(facts.now),
+    dateOnly(facts.now).add(const Duration(days: 30)),
+    includeOverdue: true,
+  );
+  final categories = <String, int>{};
+  for (final item in facts.activeSubscriptions) {
+    final category = item.category?.trim().isNotEmpty == true
+        ? item.category!.trim()
+        : 'Other';
+    categories.update(
+      category,
+      (value) =>
+          value + monthlyEquivalentPaise(item.amountPaise, item.frequency),
+      ifAbsent: () => monthlyEquivalentPaise(item.amountPaise, item.frequency),
+    );
+  }
   return AssistantReply(
-    'FinKeep portfolio review (${formatDate(dateOnly(facts.now))}).\n${suggestions.take(5).join('\n')}\nNot financial advice.',
+    'FinKeep portfolio review (${formatDate(dateOnly(facts.now))}).\n${suggestions.take(5).join('\n')}\nBased only on data on this phone. Not financial advice.',
     rows: [
       AssistantRow(
         'EMI share of monthly outflow',
@@ -1487,11 +2306,103 @@ AssistantReply _analyzePortfolio(FinanceFacts facts) {
             : '${formatDate(debtDate)} · ${dateOnly(debtDate).difference(dateOnly(facts.now)).inDays < 0 ? 'past due' : 'in ${dateOnly(debtDate).difference(dateOnly(facts.now)).inDays} days'}',
       ),
     ],
-    chart: AssistantChart(
-      kind: AssistantChartKind.bar,
-      fraction: emiShare.clamp(0, 1),
-      label: 'EMI share',
-    ),
+    visuals: [
+      AssistantVisualPart(
+        kind: AssistantVisualKind.bigNumber,
+        title: 'Net position',
+        bigValue: formatMoney(facts.netPositionPaise),
+        subtitle: 'Money owed to you minus Money you borrowed',
+      ),
+      AssistantVisualPart(
+        kind: AssistantVisualKind.donut,
+        title: 'Coming to me vs I need to pay',
+        bigValue: formatMoney(facts.toReceivePaise - facts.totalDebtPaise),
+        data: [
+          AssistantVisualDatum(
+            label: 'Coming to me',
+            value: facts.toReceivePaise.toDouble(),
+            displayValue: formatMoney(facts.toReceivePaise),
+          ),
+          AssistantVisualDatum(
+            label: 'I need to pay',
+            value: facts.totalDebtPaise.toDouble(),
+            displayValue: formatMoney(facts.totalDebtPaise),
+          ),
+        ],
+      ),
+      AssistantVisualPart(
+        kind: AssistantVisualKind.stackedBar,
+        title: 'Monthly outflow',
+        bigValue: formatMoney(outflow),
+        data: [
+          AssistantVisualDatum(
+            label: 'EMIs',
+            value: facts.monthlyEmiPaise.toDouble(),
+            displayValue: '${(emiShare * 100).round()}%',
+          ),
+          AssistantVisualDatum(
+            label: 'Subscriptions',
+            value: facts.monthlySubscriptionsPaise.toDouble(),
+            displayValue: '${(subscriptionsShare * 100).round()}%',
+          ),
+          AssistantVisualDatum(
+            label: 'Money due',
+            value: facts.upcomingBorrowedPaise.toDouble(),
+            displayValue: outflow == 0
+                ? '0%'
+                : '${(facts.upcomingBorrowedPaise / outflow * 100).round()}%',
+          ),
+        ],
+      ),
+      AssistantVisualPart(
+        kind: AssistantVisualKind.weeklyBars,
+        title: 'Next 30 days by week',
+        data: buildWeeklyChartData(
+          nextThirty.map(
+            (item) => AssistantDatedAmount(
+              item.dueDate,
+              item.amountPaise,
+              overdue: dateOnly(item.dueDate).isBefore(dateOnly(facts.now)),
+            ),
+          ),
+          facts.now,
+        ),
+      ),
+      AssistantVisualPart(
+        kind: AssistantVisualKind.progressRows,
+        title: debtDate == null
+            ? 'EMI progress'
+            : 'EMI progress · debt-free ${formatDate(debtDate)}',
+        data: [
+          for (final item in facts.activeEmis)
+            AssistantVisualDatum(
+              label: displayName(item.emi.name),
+              value: item.progress,
+              displayValue: '${(item.progress * 100).round()}%',
+              detail: '${formatMoney(item.remainingBalancePaise)} remaining',
+            ),
+        ],
+      ),
+      AssistantVisualPart(
+        kind: AssistantVisualKind.horizontalBars,
+        title: 'Subscriptions by category',
+        data: [
+          for (final entry in categories.entries)
+            AssistantVisualDatum(
+              label: entry.key,
+              value: entry.value.toDouble(),
+              displayValue: formatMoney(entry.value),
+            ),
+        ],
+      ),
+      AssistantVisualPart(
+        kind: AssistantVisualKind.scoreRing,
+        title: 'Financial health',
+        score: health.score.toDouble(),
+        subtitle: 'Calculated from four local-data factors',
+        data: health.factors,
+      ),
+    ],
     actions: const [
       AssistantAction('Open EMIs', AssistantDestination.emis),
       AssistantAction('Open Money', AssistantDestination.money),

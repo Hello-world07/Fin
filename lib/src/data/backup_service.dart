@@ -3,18 +3,63 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:drift/drift.dart';
+import 'package:intl/intl.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:saf/saf.dart';
 import 'package:share_plus/share_plus.dart';
 
+import 'backup_codec.dart';
 import 'database.dart';
 import '../domain/enums.dart';
+
+class SavedBackup {
+  const SavedBackup({
+    required this.name,
+    required this.location,
+    required this.size,
+    required this.counts,
+    required this.bytes,
+    required this.uri,
+  });
+  final String name;
+  final String location;
+  final int size;
+  final Map<String, int> counts;
+  final Uint8List bytes;
+  final String uri;
+}
+
+class BackupStatus {
+  const BackupStatus({
+    this.folderUri,
+    this.folderName,
+    this.interval = 'off',
+    this.keep = 5,
+    this.lastAt,
+    this.lastName,
+    this.lastLocation,
+  });
+  final String? folderUri;
+  final String? folderName;
+  final String interval;
+  final int keep;
+  final DateTime? lastAt;
+  final String? lastName;
+  final String? lastLocation;
+
+  bool get needsReminder =>
+      lastAt == null || DateTime.now().difference(lastAt!).inDays >= 7;
+}
 
 class LocalBackupService {
   LocalBackupService(this.database);
 
   static const formatName = 'finkeep-local-backup';
-  static const formatVersion = 1;
+  static const formatVersion = BackupCodec.version;
+  static const _autoPrefix = 'FinKeep-auto-backup-';
+  static const _backupSettingsPrefix = 'backup.local.';
 
   static const _insertOrder = [
     'payment_methods',
@@ -39,44 +84,106 @@ class LocalBackupService {
   ];
 
   final AppDatabase database;
+  final Saf _saf = Saf();
+  bool canUndoRestore = false;
 
   Future<String> createBackupJson() async {
-    final tables = <String, List<Map<String, Object?>>>{};
-    for (final table in _insertOrder) {
-      final rows = await database.customSelect('SELECT * FROM $table').get();
-      tables[table] = rows
-          .map((row) => Map<String, Object?>.from(row.data))
-          .where(
-            (row) =>
-                table != 'settings' ||
-                !(row['key'] as String).startsWith('privacy.appLock.'),
-          )
-          .toList();
-    }
-    return const JsonEncoder.withIndent('  ').convert({
-      'format': formatName,
-      'formatVersion': formatVersion,
-      'schemaVersion': database.schemaVersion,
-      'exportedAt': DateTime.now().toUtc().toIso8601String(),
-      'tables': tables,
-    });
+    return utf8.decode(await createBackupBytes());
   }
 
+  Future<Uint8List> createBackupBytes({String? password}) async {
+    final tables = await database.transaction(() async {
+      final snapshot = <String, List<Map<String, Object?>>>{};
+      for (final table in _insertOrder) {
+        final rows = await database.customSelect('SELECT * FROM $table').get();
+        snapshot[table] = rows
+            .map((row) => Map<String, Object?>.from(row.data))
+            .where(
+              (row) =>
+                  table != 'settings' ||
+                  (!(row['key'] as String).startsWith('privacy.appLock.') &&
+                      !(row['key'] as String).startsWith(
+                        _backupSettingsPrefix,
+                      )),
+            )
+            .toList();
+      }
+      return snapshot;
+    });
+    String version;
+    try {
+      version = (await PackageInfo.fromPlatform()).version;
+    } catch (_) {
+      version = '1.0.0';
+    }
+    return BackupCodec.encode(
+      tables: tables,
+      schemaVersion: database.schemaVersion,
+      appVersion: version,
+      createdAt: DateTime.now(),
+      password: password,
+    );
+  }
+
+  Future<BackupDocument> inspectBytes(Uint8List bytes, {String? password}) =>
+      BackupCodec.decode(bytes, password: password);
+
   Future<void> restoreJson(String content) async {
-    if (content.length > 50 * 1024 * 1024) {
-      throw const FormatException('The selected backup is too large.');
+    final document = await inspectBytes(
+      Uint8List.fromList(utf8.encode(content)),
+    );
+    await restoreDocument(document);
+  }
+
+  Future<void> restoreDocument(BackupDocument document) async {
+    final columns = await validateDocument(document);
+    final tables = document.tables;
+    final deviceSecuritySettings =
+        await (database.select(database.settings)..where(
+              (setting) =>
+                  setting.key.like('privacy.appLock.%') |
+                  setting.key.like('$_backupSettingsPrefix%'),
+            ))
+            .get();
+
+    await database.transaction(() async {
+      for (final table in _deleteOrder) {
+        await database.customStatement('DELETE FROM $table');
+      }
+      for (final table in _insertOrder) {
+        final tableColumns = columns[table]!.toList();
+        final columnSql = tableColumns.map((column) => '"$column"').join(', ');
+        final placeholders = List.filled(tableColumns.length, '?').join(', ');
+        final rows = <dynamic>[
+          ...(tables[table] as List<dynamic>),
+          if (table == 'settings')
+            ...deviceSecuritySettings.map(
+              (setting) => {'key': setting.key, 'value': setting.value},
+            ),
+        ];
+        for (final source in rows) {
+          final row = source as Map<String, dynamic>;
+          await database.customStatement(
+            'INSERT INTO $table ($columnSql) VALUES ($placeholders)',
+            tableColumns.map((column) => row[column]).toList(),
+          );
+        }
+      }
+    });
+    database.markTablesUpdated(database.allTables);
+  }
+
+  Future<Map<String, Set<String>>> validateDocument(
+    BackupDocument document,
+  ) async {
+    if (document.schemaVersion != database.schemaVersion &&
+        document.schemaVersion != 3) {
+      throw const FormatException(
+        'This backup uses an unsupported database version.',
+      );
     }
-    final decoded = jsonDecode(content);
-    if (decoded is! Map<String, dynamic> ||
-        decoded['format'] != formatName ||
-        decoded['formatVersion'] != formatVersion ||
-        (decoded['schemaVersion'] != database.schemaVersion &&
-            decoded['schemaVersion'] != 3) ||
-        decoded['tables'] is! Map<String, dynamic>) {
-      throw const FormatException('This is not a supported FinKeep backup.');
-    }
-    final tables = decoded['tables'] as Map<String, dynamic>;
-    if (decoded['schemaVersion'] == 3) {
+    final tables = document.tables;
+    if (document.schemaVersion == 3) {
       final oldEmis = tables['emis'];
       if (oldEmis is List) {
         for (final row in oldEmis.whereType<Map<String, dynamic>>()) {
@@ -107,9 +214,12 @@ class LocalBackupService {
           throw FormatException('Invalid row in $table.');
         }
         if (table == 'settings' &&
-            (sourceRow['key'] as String).startsWith('privacy.appLock.')) {
+            ((sourceRow['key'] as String).startsWith('privacy.appLock.') ||
+                (sourceRow['key'] as String).startsWith(
+                  _backupSettingsPrefix,
+                ))) {
           throw const FormatException(
-            'Device security settings are not included in a data backup.',
+            'Device-specific security and backup settings cannot be restored.',
           );
         }
         if (sourceRow.values.any(
@@ -125,35 +235,7 @@ class LocalBackupService {
     }
     _validateFinanceRows(tables);
 
-    final deviceSecuritySettings = await (database.select(
-      database.settings,
-    )..where((setting) => setting.key.like('privacy.appLock.%'))).get();
-
-    await database.transaction(() async {
-      for (final table in _deleteOrder) {
-        await database.customStatement('DELETE FROM $table');
-      }
-      for (final table in _insertOrder) {
-        final tableColumns = columns[table]!.toList();
-        final columnSql = tableColumns.map((column) => '"$column"').join(', ');
-        final placeholders = List.filled(tableColumns.length, '?').join(', ');
-        final rows = <dynamic>[
-          ...(tables[table] as List<dynamic>),
-          if (table == 'settings')
-            ...deviceSecuritySettings.map(
-              (setting) => {'key': setting.key, 'value': setting.value},
-            ),
-        ];
-        for (final source in rows) {
-          final row = source as Map<String, dynamic>;
-          await database.customStatement(
-            'INSERT INTO $table ($columnSql) VALUES ($placeholders)',
-            tableColumns.map((column) => row[column]).toList(),
-          );
-        }
-      }
-    });
-    database.markTablesUpdated(database.allTables);
+    return columns;
   }
 
   void _validateFinanceRows(Map<String, dynamic> tables) {
@@ -305,41 +387,216 @@ class LocalBackupService {
     }
   }
 
-  Future<void> shareBackup() async {
-    final content = await createBackupJson();
-    final directory = await getApplicationDocumentsDirectory();
-    final file = File(
-      p.join(
-        directory.path,
-        'finkeep-backup-${DateTime.now().millisecondsSinceEpoch}.json',
-      ),
+  Future<SavedBackup?> saveNow({String? password}) async {
+    final bytes = await createBackupBytes(password: password);
+    final document = await inspectBytes(bytes, password: password);
+    final name =
+        'FinKeep-backup-${DateFormat('yyyy-MM-dd-HHmm').format(DateTime.now())}.finkeep';
+    final uri = await FilePicker.saveFile(
+      fileName: name,
+      bytes: bytes,
+      mimeType: 'application/octet-stream',
+      dialogTitle: 'Save FinKeep backup',
     );
-    await file.writeAsString(content, flush: true);
+    if (uri == null) return null;
+    String savedName = name;
+    try {
+      savedName = (await _saf.stat(uri.toString()))?.name ?? name;
+    } catch (_) {
+      // Some providers do not allow a metadata query after Save As.
+    }
+    final location = _locationFromUri(uri.toString());
+    await _setSetting('lastAt', DateTime.now().toUtc().toIso8601String());
+    await _setSetting('lastName', savedName);
+    await _setSetting('lastLocation', location);
+    return SavedBackup(
+      name: savedName,
+      location: location,
+      size: bytes.length,
+      counts: document.counts,
+      bytes: bytes,
+      uri: uri.toString(),
+    );
+  }
+
+  Future<void> shareSavedBackup(SavedBackup saved) async {
+    final directory = await getTemporaryDirectory();
+    final file = File(p.join(directory.path, saved.name));
+    await file.writeAsBytes(saved.bytes, flush: true);
     await SharePlus.instance.share(
       ShareParams(
-        files: [XFile(file.path)],
-        subject: 'FinKeep data backup',
-        text: 'FinKeep local data backup',
+        files: [XFile(file.path, mimeType: 'application/octet-stream')],
+        subject: 'FinKeep backup file',
       ),
     );
   }
 
-  Future<bool> pickAndRestore() async {
+  Future<void> openLocation(SavedBackup saved) async {
+    await _saf.pickFile(initialUri: saved.uri);
+  }
+
+  Future<Uint8List?> pickBackupBytes() async {
     final file = await FilePicker.pickFile(
-      type: FileType.custom,
-      allowedExtensions: const ['json'],
+      type: FileType.any,
       dialogTitle: 'Choose a FinKeep backup',
     );
-    if (file == null) return false;
-    if (file.path == null) {
-      throw const FormatException('The selected file could not be read.');
+    if (file == null) return null;
+    if ((await file.length() ?? BackupCodec.maxBytes + 1) >
+            BackupCodec.maxBytes ||
+        file.path == null) {
+      throw const FormatException(
+        'The selected backup is too large or unreadable.',
+      );
     }
-    final sourceFile = File(file.path!);
-    if (await sourceFile.length() > 50 * 1024 * 1024) {
-      throw const FormatException('The selected backup is too large.');
-    }
-    final content = await sourceFile.readAsString();
-    await restoreJson(content);
+    return File(file.path!).readAsBytes();
+  }
+
+  Future<void> restoreWithSafety(BackupDocument document) async {
+    await validateDocument(document);
+    final safety = await _safetyFile();
+    final temp = File('${safety.path}.tmp');
+    final bytes = await createBackupBytes();
+    await temp.writeAsBytes(bytes, flush: true);
+    await temp.rename(safety.path);
+    await restoreDocument(document);
+    canUndoRestore = true;
+  }
+
+  Future<void> undoRestore() async {
+    if (!canUndoRestore) return;
+    final safety = await _safetyFile();
+    final document = await inspectBytes(await safety.readAsBytes());
+    await restoreDocument(document);
+    canUndoRestore = false;
+  }
+
+  Future<File> _safetyFile() async {
+    final directory = await getApplicationSupportDirectory();
+    return File(p.join(directory.path, 'FinKeep-pre-restore.finkeep'));
+  }
+
+  Future<BackupStatus> status() async {
+    final rows = await (database.select(
+      database.settings,
+    )..where((row) => row.key.like('$_backupSettingsPrefix%'))).get();
+    final values = {
+      for (final row in rows)
+        row.key.substring(_backupSettingsPrefix.length): row.value,
+    };
+    return BackupStatus(
+      folderUri: values['folderUri'],
+      folderName: values['folderName'],
+      interval: values['interval'] ?? 'off',
+      keep: int.tryParse(values['keep'] ?? '')?.clamp(1, 20) ?? 5,
+      lastAt: DateTime.tryParse(values['lastAt'] ?? ''),
+      lastName: values['lastName'],
+      lastLocation: values['lastLocation'],
+    );
+  }
+
+  Future<bool> chooseAutoFolder() async {
+    final folder = await _saf.pickDirectory();
+    if (folder == null) return false;
+    await _setSetting('folderUri', folder.uri);
+    await _setSetting('folderName', _locationFromUri(folder.uri));
     return true;
+  }
+
+  Future<void> setAutoBackup({required String interval, int keep = 5}) async {
+    if (!const {'off', 'daily', 'weekly'}.contains(interval) ||
+        keep < 1 ||
+        keep > 20) {
+      throw const FormatException('Invalid auto-backup settings.');
+    }
+    await _setSetting('interval', interval);
+    await _setSetting('keep', keep.toString());
+  }
+
+  Future<SavedBackup?> runAutoBackupIfDue() async {
+    final config = await status();
+    if (config.interval == 'off' || config.folderUri == null) return null;
+    final every = config.interval == 'daily'
+        ? const Duration(days: 1)
+        : const Duration(days: 7);
+    if (config.lastAt != null &&
+        DateTime.now().difference(config.lastAt!) < every) {
+      return null;
+    }
+    final grants = await _saf.persistedPermissions();
+    if (!grants.any(
+      (grant) => grant.uri == config.folderUri && grant.read && grant.write,
+    )) {
+      throw const FormatException(
+        'Backup folder access expired. Choose the folder again in Settings.',
+      );
+    }
+    final bytes = await createBackupBytes();
+    final name =
+        '$_autoPrefix${DateFormat('yyyy-MM-dd-HHmmss').format(DateTime.now())}.finkeep';
+    final file = await _saf.writeFileBytes(
+      config.folderUri!,
+      name,
+      'application/octet-stream',
+      bytes,
+    );
+    final document = await inspectBytes(bytes);
+    final files =
+        (await _saf.list(config.folderUri!))
+            .where(
+              (entry) =>
+                  !entry.isDir &&
+                  RegExp(
+                    r'^FinKeep-auto-backup-\d{4}-\d{2}-\d{2}-\d{6}\.finkeep$',
+                  ).hasMatch(entry.name),
+            )
+            .toList()
+          ..sort((a, b) => b.name.compareTo(a.name));
+    for (final old in files.skip(config.keep)) {
+      await _saf.delete(old.uri);
+    }
+    final now = DateTime.now();
+    await _setSetting('lastAt', now.toUtc().toIso8601String());
+    await _setSetting('lastName', file.name);
+    await _setSetting('lastLocation', config.folderName ?? 'Selected folder');
+    return SavedBackup(
+      name: file.name,
+      location: config.folderName ?? 'Selected folder',
+      size: bytes.length,
+      counts: document.counts,
+      bytes: bytes,
+      uri: file.uri,
+    );
+  }
+
+  Future<void> _setSetting(String key, String value) async {
+    await database
+        .into(database.settings)
+        .insertOnConflictUpdate(
+          SettingsCompanion.insert(
+            key: '$_backupSettingsPrefix$key',
+            value: value,
+          ),
+        );
+  }
+
+  String _locationFromUri(String value) {
+    final uri = Uri.tryParse(value);
+    if (uri == null) return 'Selected location';
+    final decoded = Uri.decodeComponent(uri.pathSegments.lastOrNull ?? '');
+    if (decoded.contains(':')) {
+      final path = decoded.substring(decoded.indexOf(':') + 1);
+      if (path.contains('/')) {
+        final folder = path.substring(0, path.lastIndexOf('/'));
+        return folder.replaceFirst('Download', 'Downloads');
+      }
+      if (path == 'Download') return 'Downloads';
+      if (path.isNotEmpty && !RegExp(r'^\d+$').hasMatch(path)) return path;
+    }
+    final authority = uri.host.toLowerCase();
+    if (authority.contains('downloads')) return 'Downloads';
+    if (authority.contains('google') || authority.contains('drive')) {
+      return 'Google Drive';
+    }
+    return 'Selected location';
   }
 }

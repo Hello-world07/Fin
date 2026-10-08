@@ -18,6 +18,7 @@ import '../activity/activity_screen.dart';
 import '../assistant/ask_finkeep_sheet.dart';
 import '../emis/emis_screen.dart';
 import '../money/money_screen.dart';
+import '../settings/backup_settings_section.dart';
 import '../subscriptions/subscriptions_screen.dart';
 
 class DashboardScreen extends ConsumerStatefulWidget {
@@ -61,6 +62,27 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                   padding: EdgeInsets.zero,
                   children: [
                     _DashboardHeader(onAsk: () => openAskFinKeep(context)),
+                    BackupReminderBanner(
+                      onBackUp: () async {
+                        try {
+                          await showCreateBackupFlow(context, ref);
+                        } on FormatException catch (error) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text(error.message.toString())),
+                            );
+                          }
+                        } catch (_) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Could not save the backup.'),
+                              ),
+                            );
+                          }
+                        }
+                      },
+                    ),
                     if (noFinanceData)
                       const Padding(
                         padding: EdgeInsets.fromLTRB(24, 36, 24, 32),
