@@ -169,6 +169,11 @@ class PinLockService {
     return int.tryParse(_values?[_lengthKey] ?? '');
   }
 
+  Future<bool> hasPin() async {
+    await warm();
+    return _values?[_fastHashKey] != null || _values?[_hashKey] != null;
+  }
+
   Future<void> rememberPinLength(int length) async {
     _values?[_lengthKey] = length.toString();
     await _storage.write(key: _lengthKey, value: length.toString());
@@ -389,6 +394,7 @@ class _AppLockGateState extends ConsumerState<AppLockGate>
       final secureFuture = _lock.refresh();
       final rows = await rowsFuture;
       await secureFuture;
+      await ref.read(privacyModeProvider.notifier).ready;
       final values = {for (final row in rows) row.key: row.value};
       final pinLength = await _lock.pinLength();
       final lockout = await _lock.lockoutState();

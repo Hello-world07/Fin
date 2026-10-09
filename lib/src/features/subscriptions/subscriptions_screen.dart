@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:drift/drift.dart' hide Column;
 import 'package:flutter/material.dart';
@@ -448,10 +449,9 @@ class _RenewalRadar extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.labelSmall,
                   ),
-                  Text(
-                    formatMoney(item.amountPaise),
+                  AmountText(
+                    item.amountPaise,
                     maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.labelSmall?.copyWith(
                       fontWeight: FontWeight.w700,
                     ),
@@ -1326,48 +1326,122 @@ class _CategoryBreakdown extends StatelessWidget {
       children: [
         const _ListHeading('By category'),
         const SizedBox(height: 12),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(4),
-          child: SizedBox(
-            height: 8,
-            child: Row(
-              children: [
-                for (final entry in totals.entries)
-                  Expanded(
-                    flex: entry.value,
-                    child: ColoredBox(
-                      color: _categoryColor(context, entry.key),
+        Row(
+          children: [
+            SizedBox.square(
+              dimension: 112,
+              child: RepaintBoundary(
+                child: CustomPaint(
+                  painter: _CategoryDonutPainter(
+                    segments: [
+                      for (final entry in totals.entries)
+                        (
+                          entry.value / total,
+                          _categoryColor(context, entry.key),
+                        ),
+                    ],
+                    track: AppTheme.colorsOf(context).fieldFill,
+                  ),
+                  child: Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        AmountText(
+                          total,
+                          style: Theme.of(context).textTheme.labelMedium
+                              ?.copyWith(fontWeight: FontWeight.w800),
+                        ),
+                        Text(
+                          '/ month',
+                          style: Theme.of(context).textTheme.labelSmall,
+                        ),
+                      ],
                     ),
                   ),
-              ],
+                ),
+              ),
             ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        Wrap(
-          spacing: 16,
-          runSpacing: 8,
-          children: [
-            for (final entry in totals.entries)
-              Row(
-                mainAxisSize: MainAxisSize.min,
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  CircleAvatar(
-                    radius: 4,
-                    backgroundColor: _categoryColor(context, entry.key),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    entry.key,
-                    style: Theme.of(context).textTheme.labelMedium,
-                  ),
+                  for (final entry in totals.entries)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 5),
+                      child: Row(
+                        children: [
+                          CircleAvatar(
+                            radius: 4,
+                            backgroundColor: _categoryColor(context, entry.key),
+                          ),
+                          const SizedBox(width: 7),
+                          Expanded(
+                            child: Text(
+                              entry.key,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.labelMedium,
+                            ),
+                          ),
+                          AmountText(
+                            entry.value,
+                            style: Theme.of(context).textTheme.labelSmall,
+                          ),
+                        ],
+                      ),
+                    ),
                 ],
               ),
+            ),
           ],
         ),
       ],
     );
   }
+}
+
+class _CategoryDonutPainter extends CustomPainter {
+  const _CategoryDonutPainter({required this.segments, required this.track});
+  final List<(double, Color)> segments;
+  final Color track;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 12;
+    canvas.drawArc(
+      rect.deflate(9),
+      0,
+      2 * math.pi,
+      false,
+      paint..color = track,
+    );
+    var start = -math.pi / 2;
+    for (final (fraction, color) in segments) {
+      final sweep = 2 * math.pi * fraction;
+      canvas.drawArc(
+        rect.deflate(9),
+        start,
+        sweep,
+        false,
+        paint..color = color,
+      );
+      start += sweep;
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _CategoryDonutPainter old) =>
+      old.track != track ||
+      old.segments.length != segments.length ||
+      Iterable<int>.generate(segments.length).any(
+        (i) =>
+            old.segments[i].$1 != segments[i].$1 ||
+            old.segments[i].$2 != segments[i].$2,
+      );
 }
 
 class SubscriptionFormSheet extends ConsumerStatefulWidget {

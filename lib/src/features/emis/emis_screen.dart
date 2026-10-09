@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:drift/drift.dart' hide Column;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
 
 import '../../core/formatters.dart';
 import '../../core/app_theme.dart';
@@ -110,7 +111,7 @@ class _EmisScreenState extends ConsumerState<EmisScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            _EmiHero(items: active),
+                            _EmiHero(items: active, allItems: items),
                             const SizedBox(height: 24),
                             _EmiTabs(
                               activeCount: active.length,
@@ -215,9 +216,10 @@ class _EmiTabs extends StatelessWidget {
 }
 
 class _EmiHero extends StatelessWidget {
-  const _EmiHero({required this.items});
+  const _EmiHero({required this.items, required this.allItems});
 
   final List<EmiDetail> items;
+  final List<EmiDetail> allItems;
 
   @override
   Widget build(BuildContext context) {
@@ -228,6 +230,11 @@ class _EmiHero extends StatelessWidget {
     final monthly = items.fold<int>(
       0,
       (sum, item) => sum + item.scheduledInstallmentPaise,
+    );
+    final paid = allItems.fold<int>(0, (sum, item) => sum + item.paidPaise);
+    final payable = allItems.fold<int>(
+      0,
+      (sum, item) => sum + item.totalRepaymentPaise,
     );
     final finalDue = items.isEmpty
         ? null
@@ -270,58 +277,223 @@ class _EmiHero extends StatelessWidget {
           const SizedBox(height: 18),
           Row(
             children: [
-              Expanded(
-                child: _HeroFigure(
-                  label: 'Monthly commitment',
-                  value: formatMoney(monthly),
+              RepaintBoundary(
+                child: MiniProgressRing(
+                  progress: payable == 0 ? 0 : paid / payable,
+                  size: 76,
+                  strokeWidth: 7,
+                  child: Text(
+                    '${payable == 0 ? 0 : (paid * 100 / payable).round()}%',
+                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
                 ),
               ),
+              const SizedBox(width: 16),
               Expanded(
-                child: _HeroFigure(
-                  label: 'Debt-free date',
-                  value: finalDue == null ? '—' : formatDate(finalDue),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      countdown,
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    Text(
+                      finalDue == null ? '—' : formatDate(finalDue),
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: AppTheme.colorsOf(context).secondaryText,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Monthly commitment',
+                      style: Theme.of(context).textTheme.labelSmall,
+                    ),
+                    AmountText(
+                      monthly,
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 6),
-          Text(
-            countdown,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: AppTheme.colorsOf(context).secondaryText,
-            ),
-          ),
+          if (items.isNotEmpty) ...[
+            const SizedBox(height: 20),
+            _EmiLoadChart(items: items),
+          ],
         ],
       ),
     );
   }
 }
 
-class _HeroFigure extends StatelessWidget {
-  const _HeroFigure({required this.label, required this.value});
-  final String label;
-  final String value;
+class _EmiLoadChart extends StatelessWidget {
+  const _EmiLoadChart({required this.items});
+  final List<EmiDetail> items;
 
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text(
-        label,
-        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-          color: AppTheme.colorsOf(context).secondaryText,
+  Widget build(BuildContext context) {
+    final now = DateTime.now();
+    final months = List.generate(
+      12,
+      (index) => DateTime(now.year, now.month + index),
+    );
+    final values = List<int>.filled(12, 0);
+    final closes = List<bool>.filled(12, false);
+    for (final detail in items) {
+      final unpaid = detail.installments.where((part) => !part.isPaid).toList();
+      if (unpaid.isEmpty) continue;
+      final last = unpaid.last.dueDate;
+      for (final part in unpaid) {
+        final index =
+            (part.dueDate.year - now.year) * 12 +
+            part.dueDate.month -
+            now.month;
+        if (index >= 0 && index < 12) {
+          values[index] += detail.amountForInstallment(part.number);
+          if (part.dueDate.year == last.year &&
+              part.dueDate.month == last.month) {
+            closes[index] = true;
+          }
+        }
+      }
+    }
+    int? drop;
+    for (var index = 1; index < 12; index++) {
+      if (values[index - 1] > 0 && values[index] < values[index - 1]) {
+        drop = index;
+        break;
+      }
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '12-month EMI load',
+          style: Theme.of(
+            context,
+          ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
         ),
-      ),
-      const SizedBox(height: 3),
-      Text(
-        value,
-        style: Theme.of(
-          context,
-        ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
-      ),
-    ],
-  );
+        const SizedBox(height: 10),
+        SizedBox(
+          height: 82,
+          child: RepaintBoundary(
+            child: CustomPaint(
+              painter: _EmiLoadPainter(
+                values: values,
+                closes: closes,
+                bar: AppTheme.colorsOf(context).emi,
+                track: AppTheme.colorsOf(context).fieldFill,
+                flag: Theme.of(context).colorScheme.primary,
+              ),
+              child: const SizedBox.expand(),
+            ),
+          ),
+        ),
+        const SizedBox(height: 5),
+        Row(
+          children: [
+            for (var index = 0; index < 12; index++)
+              Expanded(
+                child: Text(
+                  index.isEven ? '${months[index].month}' : '',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.labelSmall,
+                ),
+              ),
+          ],
+        ),
+        if (drop != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 7),
+            child: Wrap(
+              spacing: 3,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                const Text('Load drops to'),
+                AmountText(
+                  values[drop],
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w700),
+                ),
+                Text('in ${DateFormat('MMM y').format(months[drop])}'),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
 }
+
+class _EmiLoadPainter extends CustomPainter {
+  const _EmiLoadPainter({
+    required this.values,
+    required this.closes,
+    required this.bar,
+    required this.track,
+    required this.flag,
+  });
+  final List<int> values;
+  final List<bool> closes;
+  final Color bar, track, flag;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final max = values.fold<int>(0, math.max);
+    final slot = size.width / 12;
+    final width = math.min(18.0, slot * 0.62);
+    for (var index = 0; index < 12; index++) {
+      final left = slot * index + (slot - width) / 2;
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(left, 0, width, size.height),
+          const Radius.circular(4),
+        ),
+        Paint()..color = track,
+      );
+      if (max > 0 && values[index] > 0) {
+        final height = math.max(5.0, size.height * values[index] / max);
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(
+            Rect.fromLTWH(left, size.height - height, width, height),
+            const Radius.circular(4),
+          ),
+          Paint()..color = bar,
+        );
+      }
+      if (closes[index]) {
+        final x = left + width / 2;
+        final marker = Paint()
+          ..color = flag
+          ..strokeWidth = 2;
+        canvas.drawLine(Offset(x, 3), Offset(x, 15), marker);
+        canvas.drawCircle(Offset(x + 3, 5), 3, Paint()..color = flag);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _EmiLoadPainter old) =>
+      old.bar != bar ||
+      old.track != track ||
+      old.flag != flag ||
+      !_sameValues(old.values, values) ||
+      !_sameFlags(old.closes, closes);
+}
+
+bool _sameValues(List<int> a, List<int> b) =>
+    a.length == b.length &&
+    !Iterable<int>.generate(a.length).any((i) => a[i] != b[i]);
+bool _sameFlags(List<bool> a, List<bool> b) =>
+    a.length == b.length &&
+    !Iterable<int>.generate(a.length).any((i) => a[i] != b[i]);
 
 class _EmiRow extends StatelessWidget {
   const _EmiRow({required this.detail, required this.completed});
@@ -412,6 +584,14 @@ class _EmiRow extends StatelessWidget {
                 style: Theme.of(context).textTheme.labelSmall?.copyWith(
                   color: AppTheme.colorsOf(context).secondaryText,
                 ),
+              ),
+            ),
+          if (!completed && detail.remainingInstallments <= 2)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: StatusPill(
+                label: 'Closing soon',
+                color: AppTheme.colorsOf(context).receive,
               ),
             ),
         ],
@@ -640,8 +820,7 @@ class _EmiDetailScreenState extends ConsumerState<EmiDetailScreen> {
                     ),
                     const SizedBox(height: 12),
                     _InstallmentTimeline(detail: detail, onRevert: _revert),
-                    if (detail.emi.interestRate != null &&
-                        detail.nextUnpaidInstallment != null) ...[
+                    if (detail.nextUnpaidInstallment != null) ...[
                       const SizedBox(height: 28),
                       _EmiWhatIf(detail: detail),
                     ],
@@ -1129,6 +1308,9 @@ class _EmiWhatIfState extends State<_EmiWhatIf> {
       PaymentFrequency.yearly => periodsSooner * 12,
       _ => periodsSooner,
     };
+    final newEnd = projectedPayments == 0
+        ? DateTime.now()
+        : unpaid[projectedPayments - 1].dueDate;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1139,20 +1321,28 @@ class _EmiWhatIfState extends State<_EmiWhatIf> {
           ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
         ),
         const SizedBox(height: 10),
-        Text(
-          'Pay extra ${formatMoney(extra)} now',
-          style: Theme.of(context).textTheme.titleSmall,
+        Row(
+          children: [
+            const Text('Pay extra '),
+            AmountText(extra, style: Theme.of(context).textTheme.titleSmall),
+            const Text(' now'),
+          ],
         ),
         Slider(
           value: _fraction,
           onChanged: (value) => setState(() => _fraction = value),
         ),
         Text(
-          '$monthsSooner ${monthsSooner == 1 ? 'month' : 'months'} sooner · Estimated ${formatMoney(saved)} interest saved',
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: AppTheme.colorsOf(context).secondaryText,
-          ),
+          'New end ${formatDate(newEnd)} · $monthsSooner ${monthsSooner == 1 ? 'month' : 'months'} sooner',
+          style: Theme.of(context).textTheme.bodySmall,
         ),
+        if (detail.emi.interestRate != null && detail.emi.interestRate! > 0)
+          Row(
+            children: [
+              const Text('Estimated interest saved '),
+              AmountText(saved, style: Theme.of(context).textTheme.bodySmall),
+            ],
+          ),
       ],
     );
   }

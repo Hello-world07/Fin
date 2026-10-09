@@ -11,6 +11,7 @@ import '../domain/enums.dart';
 import '../features/assistant/assistant_engine.dart';
 import 'formatters.dart';
 import 'app_lock.dart';
+import 'privacy_reveal.dart';
 
 final databaseProvider = Provider<AppDatabase>((ref) {
   final db = AppDatabase();
@@ -97,10 +98,15 @@ final privacyModeProvider =
     );
 
 class PrivacySettings {
-  const PrivacySettings({this.enabled = false, this.hideOnOpen = false});
+  const PrivacySettings({
+    this.enabled = false,
+    this.hideOnOpen = false,
+    this.requireUnlock = false,
+  });
 
   final bool enabled;
   final bool hideOnOpen;
+  final bool requireUnlock;
 }
 
 class PrivacyModeController extends StateNotifier<PrivacySettings> {
@@ -118,6 +124,7 @@ class PrivacyModeController extends StateNotifier<PrivacySettings> {
               (row) => row.key.isIn([
                 'privacy.mode',
                 'privacy.hideOnOpen',
+                'privacy.requireUnlock',
                 'privacy.appLock.secureScreen',
               ]),
             ))
@@ -126,15 +133,32 @@ class PrivacyModeController extends StateNotifier<PrivacySettings> {
     final values = {for (final row in rows) row.key: row.value};
     final hideOnOpen = values['privacy.hideOnOpen'] == 'true';
     final enabled = values['privacy.mode'] == 'true' || hideOnOpen;
+    final requireUnlock = values['privacy.requireUnlock'] == 'true';
+    PrivacyRevealGate.instance.requiresUnlock = requireUnlock;
     privacyAmountsHidden = enabled;
-    state = PrivacySettings(enabled: enabled, hideOnOpen: hideOnOpen);
+    state = PrivacySettings(
+      enabled: enabled,
+      hideOnOpen: hideOnOpen,
+      requireUnlock: requireUnlock,
+    );
     await _setSecure(enabled, values['privacy.appLock.secureScreen'] == 'true');
   }
 
-  Future<void> setEnabled(bool enabled) async {
+  Future<void> setEnabled(bool enabled, {required BuildContext context}) async {
+    if (!enabled &&
+        state.enabled &&
+        state.requireUnlock &&
+        !await PrivacyRevealGate.instance.authorize(context)) {
+      return;
+    }
+    if (!mounted || !context.mounted) return;
     _changed = true;
     privacyAmountsHidden = enabled;
-    state = PrivacySettings(enabled: enabled, hideOnOpen: state.hideOnOpen);
+    state = PrivacySettings(
+      enabled: enabled,
+      hideOnOpen: state.hideOnOpen,
+      requireUnlock: state.requireUnlock,
+    );
     await _write('privacy.mode', enabled);
     final secure =
         await (_database.select(_database.settings)
@@ -150,13 +174,31 @@ class PrivacyModeController extends StateNotifier<PrivacySettings> {
 
   Future<void> setHideOnOpen(bool enabled) async {
     _changed = true;
-    state = PrivacySettings(enabled: state.enabled, hideOnOpen: enabled);
+    state = PrivacySettings(
+      enabled: state.enabled,
+      hideOnOpen: enabled,
+      requireUnlock: state.requireUnlock,
+    );
     await _write('privacy.hideOnOpen', enabled);
     unawaited(
       FinanceRepository(
         _database,
       ).refreshLocalReminders().catchError((Object _) {}),
     );
+  }
+
+  Future<void> setRequireUnlock(bool enabled, BuildContext context) async {
+    if (enabled && !await PrivacyRevealGate.instance.ensurePin(context)) return;
+    if (!mounted || !context.mounted) return;
+    _changed = true;
+    PrivacyRevealGate.instance.requiresUnlock = enabled;
+    PrivacyRevealGate.instance.clearGrace();
+    state = PrivacySettings(
+      enabled: state.enabled,
+      hideOnOpen: state.hideOnOpen,
+      requireUnlock: enabled,
+    );
+    await _write('privacy.requireUnlock', enabled);
   }
 
   Future<void> _write(String key, bool value) => _database

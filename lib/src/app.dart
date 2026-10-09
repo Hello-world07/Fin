@@ -14,6 +14,7 @@ import 'features/dashboard/dashboard_screen.dart';
 import 'features/emis/emis_screen.dart';
 import 'features/money/money_screen.dart';
 import 'features/subscriptions/subscriptions_screen.dart';
+import 'features/onboarding/intro_screen.dart';
 import 'features/assistant/ask_finkeep_sheet.dart';
 import 'shared/notched_navigation_bar.dart';
 
@@ -37,7 +38,7 @@ class FinKeepApp extends ConsumerWidget {
       darkTheme: AppTheme.dark().copyWith(
         extensions: [AppTheme.darkColors, _PrivacyTheme(privacy.enabled)],
       ),
-      home: const AppShell(),
+      home: const IntroGate(child: AppShell()),
       builder: (context, child) {
         final dark = Theme.of(context).brightness == Brightness.dark;
         final background = AppTheme.colorsOf(context).background;

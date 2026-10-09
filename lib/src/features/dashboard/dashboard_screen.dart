@@ -78,7 +78,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                     private: ref.watch(privacyModeProvider).enabled,
                     onPrivacy: () => ref
                         .read(privacyModeProvider.notifier)
-                        .setEnabled(!ref.read(privacyModeProvider).enabled),
+                        .setEnabled(
+                          !ref.read(privacyModeProvider).enabled,
+                          context: context,
+                        ),
                     onSettings: () => openSettings(context),
                   ),
                   (_) => BackupReminderBanner(

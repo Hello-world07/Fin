@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../core/app_theme.dart';
 import '../core/formatters.dart';
+import '../core/privacy_reveal.dart';
 
 class AmountText extends StatefulWidget {
   const AmountText(this.paise, {super.key, this.style, this.maxLines});
@@ -70,11 +73,38 @@ class DueListHeader extends StatelessWidget {
 
 class _AmountTextState extends State<AmountText> {
   bool _revealed = false;
+  bool _held = false;
+  Timer? _peekTimer;
+
+  @override
+  void dispose() {
+    _peekTimer?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) => GestureDetector(
-    onLongPressStart: (_) => setState(() => _revealed = true),
-    onLongPressEnd: (_) => setState(() => _revealed = false),
+    onLongPressStart: (_) async {
+      _peekTimer?.cancel();
+      _peekTimer = null;
+      _held = true;
+      final allowed =
+          !privacyAmountsHidden ||
+          await PrivacyRevealGate.instance.authorize(context);
+      if (!mounted || !allowed) return;
+      setState(() => _revealed = true);
+      if (!_held) {
+        _peekTimer?.cancel();
+        _peekTimer = Timer(const Duration(seconds: 3), () {
+          _peekTimer = null;
+          if (mounted) setState(() => _revealed = false);
+        });
+      }
+    },
+    onLongPressEnd: (_) {
+      _held = false;
+      if (mounted && _peekTimer == null) setState(() => _revealed = false);
+    },
     child: Text(
       _revealed ? formatMoneyUnmasked(widget.paise) : formatMoney(widget.paise),
       style: (widget.style ?? Theme.of(context).textTheme.bodyMedium)?.copyWith(

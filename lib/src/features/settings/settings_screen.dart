@@ -14,7 +14,9 @@ import '../../data/repositories.dart';
 import '../../app.dart';
 import '../reminders/reminders_screen.dart';
 import '../activity/activity_screen.dart';
+import '../onboarding/intro_screen.dart';
 import 'backup_settings_section.dart';
+import 'privacy_data_screen.dart';
 import 'settings_widgets.dart';
 
 void openSettings(BuildContext context) => Navigator.of(context).push(
@@ -262,8 +264,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           subtitle: 'Hide amounts throughout FinKeep',
           trailing: Switch.adaptive(
             value: privacy.enabled,
-            onChanged: (value) =>
-                ref.read(privacyModeProvider.notifier).setEnabled(value),
+            onChanged: (value) => ref
+                .read(privacyModeProvider.notifier)
+                .setEnabled(value, context: context),
           ),
         ),
         SettingsRow(
@@ -273,6 +276,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             value: privacy.hideOnOpen,
             onChanged: (value) =>
                 ref.read(privacyModeProvider.notifier).setHideOnOpen(value),
+          ),
+        ),
+        SettingsRow(
+          icon: Icons.verified_user_outlined,
+          title: 'Require unlock to reveal amounts',
+          subtitle: 'PIN or fingerprint / face · 30-second grace',
+          trailing: Switch.adaptive(
+            value: privacy.requireUnlock,
+            onChanged: (value) => ref
+                .read(privacyModeProvider.notifier)
+                .setRequireUnlock(value, context),
           ),
         ),
 
@@ -407,6 +421,22 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           title: 'FinKeep',
           subtitle: 'Local-first personal finance',
           onTap: _showAbout,
+        ),
+        SettingsRow(
+          icon: Icons.slideshow_outlined,
+          title: 'Replay intro',
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => const IntroScreen(replay: true),
+            ),
+          ),
+        ),
+        SettingsRow(
+          icon: Icons.privacy_tip_outlined,
+          title: 'Privacy & data',
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(builder: (_) => const PrivacyDataScreen()),
+          ),
         ),
 
         const SizedBox(height: 30),
