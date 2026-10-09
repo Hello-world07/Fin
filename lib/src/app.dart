@@ -8,6 +8,8 @@ import 'package:flutter/services.dart';
 import 'core/app_theme.dart';
 import 'core/app_lock.dart';
 import 'core/providers.dart';
+import 'core/notifications.dart';
+import 'domain/reminder_schedule.dart';
 import 'features/dashboard/dashboard_screen.dart';
 import 'features/emis/emis_screen.dart';
 import 'features/money/money_screen.dart';
@@ -89,7 +91,13 @@ class _AppShellState extends ConsumerState<AppShell> {
   @override
   void initState() {
     super.initState();
+    LocalReminderService().setOpenHandler(_openReminder);
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(
+        LocalReminderService().launchLink().then((link) {
+          if (mounted && link != null) _openReminder(link);
+        }),
+      );
       SchedulerBinding.instance.scheduleTask(() {
         if (!mounted) return;
         ref.read(assistantChatControllerProvider);
@@ -97,6 +105,35 @@ class _AppShellState extends ConsumerState<AppShell> {
         unawaited(_runAutoBackup());
       }, Priority.idle);
     });
+  }
+
+  void _openReminder(ReminderDeepLink link) {
+    if (!mounted) return;
+    if (link.type == FinanceReminderType.emi) {
+      Navigator.of(
+        context,
+      ).push(MaterialPageRoute(builder: (_) => EmiDetailScreen(link.entityId)));
+    } else if (link.type == FinanceReminderType.money) {
+      Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => MoneyDetailScreen(link.entityId)),
+      );
+    } else {
+      unawaited(
+        ref.read(financeRepositoryProvider).subscription(link.entityId).then((
+          item,
+        ) {
+          if (mounted && item != null) {
+            openSubscriptionDetailSheet(context, item);
+          }
+        }),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    LocalReminderService().setOpenHandler(null);
+    super.dispose();
   }
 
   Future<void> _primeNotifications() async {

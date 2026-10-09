@@ -11,6 +11,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../core/formatters.dart';
 import '../core/notifications.dart';
+import '../domain/reminder_schedule.dart';
 import '../domain/due_status.dart';
 import '../domain/emi_math.dart';
 import '../domain/emi_payment_rules.dart' show dateOnly;
@@ -283,6 +284,191 @@ class FinanceRepository {
   static const _archivedSubscriptionPrefix = 'subscription.archived.';
   static const _subscriptionExtraPrefix = 'subscription.extra.';
   final LocalReminderService _localReminders = LocalReminderService();
+  Future<void> _reminderQueue = Future<void>.value();
+  bool _legacyRemindersCleared = false;
+
+  Future<ReminderPlanSettings> reminderSettings() async {
+    final rows = await (db.select(
+      db.settings,
+    )..where((row) => row.key.like('reminders.%'))).get();
+    final values = {for (final row in rows) row.key: row.value};
+    final time = (values['reminders.time'] ?? '09:00').split(':');
+    final leads = (values['reminders.leads'] ?? '3,1,0')
+        .split(',')
+        .map(int.tryParse)
+        .whereType<int>()
+        .toSet();
+    return ReminderPlanSettings(
+      enabled: values['reminders.enabled'] == 'true',
+      hour: int.tryParse(time.first) ?? 9,
+      minute: time.length > 1 ? int.tryParse(time[1]) ?? 0 : 0,
+      leadDays: leads,
+      overdueNudge: values['reminders.overdue'] != 'false',
+      emis: values['reminders.emis'] != 'false',
+      money: values['reminders.money'] != 'false',
+      subscriptions: values['reminders.subscriptions'] != 'false',
+    );
+  }
+
+  Future<void> saveReminderSettings(ReminderPlanSettings settings) async {
+    final values = <String, String>{
+      'reminders.enabled': settings.enabled.toString(),
+      'reminders.time':
+          '${settings.hour.toString().padLeft(2, '0')}:${settings.minute.toString().padLeft(2, '0')}',
+      'reminders.leads': (settings.leadDays.toList()..sort()).join(','),
+      'reminders.overdue': settings.overdueNudge.toString(),
+      'reminders.emis': settings.emis.toString(),
+      'reminders.money': settings.money.toString(),
+      'reminders.subscriptions': settings.subscriptions.toString(),
+    };
+    await db.transaction(() async {
+      for (final entry in values.entries) {
+        await db
+            .into(db.settings)
+            .insertOnConflictUpdate(
+              SettingsCompanion.insert(key: entry.key, value: entry.value),
+            );
+      }
+    });
+    await refreshLocalReminders();
+  }
+
+  Future<void> refreshLocalReminders() {
+    final task = _reminderQueue.then((_) => _rebuildLocalReminders());
+    _reminderQueue = task.catchError((Object error, StackTrace stack) {
+      debugPrint('Reminder scheduling failed: $error');
+      debugPrintStack(stackTrace: stack);
+    });
+    return task;
+  }
+
+  void _queueReminderRefresh() {
+    unawaited(
+      refreshLocalReminders().catchError((Object error, StackTrace stack) {}),
+    );
+  }
+
+  Future<void> _rebuildLocalReminders() async {
+    if (!Platform.isAndroid && !Platform.isIOS) return;
+    if (!_legacyRemindersCleared) {
+      await _localReminders.clearLegacySubscriptionReminders();
+      _legacyRemindersCleared = true;
+    }
+    final settings = await reminderSettings();
+    final now = DateTime.now();
+    final targets = <ReminderTarget>[];
+    var threeDays = true;
+    var oneDay = true;
+    if (settings.enabled) {
+      for (final detail in await _visibleEmiDetails()) {
+        if (detail.emi.status != EmiStatus.active) continue;
+        for (final installment in detail.installments) {
+          if (installment.isPaid) continue;
+          targets.add(
+            ReminderTarget(
+              type: FinanceReminderType.emi,
+              entityId: detail.emi.id,
+              name: detail.emi.name,
+              dueDate: installment.dueDate,
+              amountPaise: detail.amountForInstallment(installment.number),
+              installmentNumber: installment.number,
+            ),
+          );
+        }
+      }
+      for (final detail in await moneyDetails()) {
+        if (detail.summary.remainingAmountPaise <= 0 ||
+            detail.record.dueDate == null) {
+          continue;
+        }
+        targets.add(
+          ReminderTarget(
+            type: FinanceReminderType.money,
+            entityId: detail.record.id,
+            name: detail.record.personName,
+            dueDate: detail.record.dueDate!,
+            amountPaise: detail.summary.remainingAmountPaise,
+          ),
+        );
+      }
+      final extras = await subscriptionExtras();
+      (threeDays, oneDay) = await subscriptionReminderDays();
+      for (final item in await _visibleSubscriptions()) {
+        if (item.status != SubscriptionStatus.active) continue;
+        for (final due in subscriptionOccurrences(
+          item.nextBillingDate,
+          item.frequency,
+          now,
+          now.add(const Duration(days: 63)),
+        )) {
+          targets.add(
+            ReminderTarget(
+              type: FinanceReminderType.subscription,
+              entityId: item.id,
+              name: item.name,
+              dueDate: due,
+              amountPaise: item.amountPaise,
+            ),
+          );
+        }
+        final trial = extras[item.id]?.trialEndsOn;
+        if (trial != null) {
+          targets.add(
+            ReminderTarget(
+              type: FinanceReminderType.subscription,
+              entityId: item.id,
+              name: item.name,
+              dueDate: trial,
+              amountPaise: item.amountPaise,
+              trial: true,
+            ),
+          );
+        }
+      }
+    }
+    final privacy =
+        await (db.select(db.settings)..where(
+              (row) => row.key.isIn(['privacy.mode', 'privacy.hideOnOpen']),
+            ))
+            .get();
+    final hideAmounts = privacy.any((row) => row.value == 'true');
+    final plan = buildReminderPlan(targets, settings, now)
+        .where(
+          (event) =>
+              event.target.type != FinanceReminderType.subscription ||
+              event.target.trial ||
+              ((event.leadDays == 3 && threeDays) ||
+                  (event.leadDays == 1 && oneDay)),
+        )
+        .toList();
+    await _localReminders.replaceManaged(plan.map((event) => event.id));
+    for (final event in plan) {
+      final target = event.target;
+      final dueText = formatDate(target.dueDate);
+      final verb = switch (target.type) {
+        FinanceReminderType.emi => 'EMI',
+        FinanceReminderType.money => 'Money',
+        FinanceReminderType.subscription => 'Subscription',
+      };
+      final title = target.trial
+          ? '${target.name} trial ends soon'
+          : event.leadDays < 0
+          ? '$verb overdue: ${target.name}'
+          : '$verb due: ${target.name}';
+      final body =
+          '${target.name} · ${target.trial ? 'Trial ends' : 'Due'} $dueText'
+          '${hideAmounts ? '' : ' · ${formatMoneyUnmasked(target.amountPaise)}'}';
+      await _localReminders.scheduleReminder(
+        id: event.id,
+        title: title,
+        body: body,
+        when: event.when,
+        type: target.type,
+        payload: LocalReminderService.payloadFor(target),
+      );
+    }
+  }
+
   Future<void> scheduleAssistantReminder({
     required int id,
     required String title,
@@ -553,9 +739,7 @@ class FinanceRepository {
     if (_subscriptionRemindersPrimed) return;
     _subscriptionRemindersPrimed = true;
     try {
-      for (final item in await _visibleSubscriptions()) {
-        unawaited(_syncSubscriptionNotifications(item.id));
-      }
+      await refreshLocalReminders();
     } catch (_) {
       _subscriptionRemindersPrimed = false;
       rethrow;
@@ -705,9 +889,7 @@ class FinanceRepository {
             ),
           );
     }
-    for (final item in await _visibleSubscriptions()) {
-      unawaited(_syncSubscriptionNotifications(item.id));
-    }
+    _queueReminderRefresh();
   }
 
   Future<void> _syncSubscriptionNotifications(int id) async {
@@ -716,50 +898,7 @@ class FinanceRepository {
       for (var slot = 0; slot < 4; slot++) {
         await _localReminders.cancelReminder(1000000 + id * 10 + slot);
       }
-      final item = await subscription(id);
-      if (item == null) return;
-      final extra = await subscriptionExtra(id);
-      final now = DateTime.now();
-      if (item.status == SubscriptionStatus.paused &&
-          extra.pauseUntil != null) {
-        await _localReminders.scheduleReminder(
-          id: 1000000 + id * 10 + 3,
-          title: '${item.name} resumes soon',
-          body: 'FinKeep will resume tracking this subscription.',
-          when: DateTime(
-            extra.pauseUntil!.year,
-            extra.pauseUntil!.month,
-            extra.pauseUntil!.day,
-            9,
-          ),
-        );
-      }
-      if (item.status != SubscriptionStatus.active) return;
-      final due = nextSubscriptionBillingDate(
-        item.nextBillingDate,
-        item.frequency,
-        now,
-      );
-      final (threeDays, oneDay) = await subscriptionReminderDays();
-      for (final (slot, days, enabled) in [(0, 3, threeDays), (1, 1, oneDay)]) {
-        if (!enabled) continue;
-        await _localReminders.scheduleReminder(
-          id: 1000000 + id * 10 + slot,
-          title: '${item.name} renews in $days ${days == 1 ? 'day' : 'days'}',
-          body: 'Open FinKeep to see the amount.',
-          when: DateTime(due.year, due.month, due.day - days, 9),
-        );
-      }
-      if (extra.trialEndsOn != null) {
-        final trial = extra.trialEndsOn!;
-        await _localReminders.scheduleReminder(
-          id: 1000000 + id * 10 + 2,
-          title: '${item.name} trial ends in 2 days',
-          body:
-              'Cancel the trial before ${formatDate(trial)} or you may be charged.',
-          when: DateTime(trial.year, trial.month, trial.day - 2, 9),
-        );
-      }
+      await refreshLocalReminders();
     } catch (error, stackTrace) {
       debugPrint('Subscription reminder scheduling failed: $error');
       debugPrintStack(stackTrace: stackTrace);
@@ -1067,6 +1206,7 @@ class FinanceRepository {
       entityType: 'emi',
       entityId: id,
     );
+    _queueReminderRefresh();
     return id;
   }
 
@@ -1219,12 +1359,14 @@ class FinanceRepository {
         entityId: id,
       );
     });
+    _queueReminderRefresh();
   }
 
   Future<void> restoreEmi(int id) async {
     await (db.delete(
       db.settings,
     )..where((setting) => setting.key.equals('$_archivedEmiPrefix$id'))).go();
+    _queueReminderRefresh();
   }
 
   Future<bool> markEmiPaid(
@@ -1233,7 +1375,7 @@ class FinanceRepository {
     int? expectedInstallmentNumber,
     bool paidEarly = false,
   }) async {
-    return db.transaction(() async {
+    final changed = await db.transaction(() async {
       final emi = await (db.select(
         db.emis,
       )..where((t) => t.id.equals(emiId))).getSingleOrNull();
@@ -1367,10 +1509,12 @@ class FinanceRepository {
       }
       return true;
     });
+    if (changed) _queueReminderRefresh();
+    return changed;
   }
 
   Future<bool> revertEmiPayment(int emiId, int paymentId) async {
-    return db.transaction(() async {
+    final changed = await db.transaction(() async {
       final emi = await (db.select(
         db.emis,
       )..where((t) => t.id.equals(emiId))).getSingleOrNull();
@@ -1421,6 +1565,8 @@ class FinanceRepository {
       );
       return true;
     });
+    if (changed) _queueReminderRefresh();
+    return changed;
   }
 
   Future<int> saveMoneyRecord(MoneyRecordsCompanion item) async {
@@ -1491,6 +1637,7 @@ class FinanceRepository {
       entityType: 'money',
       entityId: id,
     );
+    _queueReminderRefresh();
     return id;
   }
 
@@ -1516,12 +1663,14 @@ class FinanceRepository {
         entityId: id,
       );
     });
+    _queueReminderRefresh();
   }
 
   Future<void> restoreMoneyRecord(int id) async {
     await (db.delete(
       db.settings,
     )..where((setting) => setting.key.equals('$_archivedMoneyPrefix$id'))).go();
+    _queueReminderRefresh();
   }
 
   Future<void> updateMoneyDueDate(int id, DateTime dueDate) async {
@@ -1558,6 +1707,7 @@ class FinanceRepository {
         entityId: id,
       );
     });
+    _queueReminderRefresh();
   }
 
   Future<int> addRepayment(
@@ -1607,11 +1757,12 @@ class FinanceRepository {
       return id;
     });
     await moneyDetail(moneyRecordId);
+    _queueReminderRefresh();
     return repaymentId;
   }
 
   Future<bool> revertMoneyRepayment(int recordId, int repaymentId) async {
-    return db.transaction(() async {
+    final changed = await db.transaction(() async {
       final record = await (db.select(
         db.moneyRecords,
       )..where((item) => item.id.equals(recordId))).getSingleOrNull();
@@ -1635,6 +1786,8 @@ class FinanceRepository {
       );
       return true;
     });
+    if (changed) _queueReminderRefresh();
+    return changed;
   }
 
   Future<int> saveSubscription(SubscriptionsCompanion item) async {
@@ -1805,6 +1958,7 @@ class FinanceRepository {
         entityId: item.id,
       );
     });
+    unawaited(_syncSubscriptionNotifications(item.id));
   }
 
   Future<void> restoreSubscriptionById(int id) async {

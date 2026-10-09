@@ -141,12 +141,22 @@ class PrivacyModeController extends StateNotifier<PrivacySettings> {
               ..where((row) => row.key.equals('privacy.appLock.secureScreen')))
             .getSingleOrNull();
     await _setSecure(enabled, secure?.value == 'true');
+    unawaited(
+      FinanceRepository(
+        _database,
+      ).refreshLocalReminders().catchError((Object _) {}),
+    );
   }
 
   Future<void> setHideOnOpen(bool enabled) async {
     _changed = true;
     state = PrivacySettings(enabled: state.enabled, hideOnOpen: enabled);
     await _write('privacy.hideOnOpen', enabled);
+    unawaited(
+      FinanceRepository(
+        _database,
+      ).refreshLocalReminders().catchError((Object _) {}),
+    );
   }
 
   Future<void> _write(String key, bool value) => _database

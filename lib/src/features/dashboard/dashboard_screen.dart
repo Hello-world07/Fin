@@ -2,13 +2,13 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/app_theme.dart';
 import '../../core/formatters.dart';
 import '../../core/providers.dart';
 import '../../data/repositories.dart';
-import '../../data/database.dart';
 import '../../domain/enums.dart';
 import '../../shared/calculator_sheet.dart';
 import '../../shared/empty_state.dart';
@@ -16,7 +16,6 @@ import '../../shared/finance_display_widgets.dart';
 import '../../shared/forms.dart';
 import '../../shared/notched_navigation_bar.dart';
 import '../../shared/screen_header.dart';
-import '../activity/activity_screen.dart';
 import '../assistant/ask_finkeep_sheet.dart';
 import '../emis/emis_screen.dart';
 import '../money/money_screen.dart';
@@ -41,7 +40,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     final summary = ref.watch(dashboardProvider);
     final emis = ref.watch(emiDetailsProvider);
     final actions = ref.watch(financialActionsProvider);
-    final activity = ref.watch(dashboardActivityProvider);
     final records = ref.watch(moneyRecordsProvider);
     final subscriptions = ref.watch(subscriptionsProvider);
     return Scaffold(
@@ -70,98 +68,73 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                     (emis.valueOrNull?.isEmpty ?? false) &&
                     (records.valueOrNull?.isEmpty ?? false) &&
                     (subscriptions.valueOrNull?.isEmpty ?? false);
-                return ListView(
+                final items = actions.valueOrNull ?? const <ReminderItem>[];
+                final emiItems = emis.valueOrNull ?? const <EmiDetail>[];
+                final moneyItems =
+                    records.valueOrNull ?? const <MoneyRecordDetail>[];
+                final sections = <WidgetBuilder>[
+                  (_) => _DashboardHeader(
+                    onAsk: () => openAskFinKeep(context),
+                    private: ref.watch(privacyModeProvider).enabled,
+                    onPrivacy: () => ref
+                        .read(privacyModeProvider.notifier)
+                        .setEnabled(!ref.read(privacyModeProvider).enabled),
+                    onSettings: () => openSettings(context),
+                  ),
+                  (_) => BackupReminderBanner(
+                    onBackUp: () async {
+                      try {
+                        await showCreateBackupFlow(context, ref);
+                      } on FormatException catch (error) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text(error.message.toString())),
+                          );
+                        }
+                      } catch (_) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Could not save the backup.'),
+                            ),
+                          );
+                        }
+                      }
+                    },
+                  ),
+                  if (noFinanceData)
+                    (_) => const _FirstRunActions()
+                  else ...[
+                    (_) => _BalanceHero(
+                      incoming: data.comingToMePaise,
+                      payable: data.needToPayPaise,
+                    ),
+                    (_) => _HomeBand(
+                      child: _MonthlyCarousel(
+                        summary: data,
+                        emis: emiItems,
+                        records: moneyItems,
+                      ),
+                    ),
+                    (_) => _HomeBand(child: _ThirtyDayTimeline(items: items)),
+                    (_) =>
+                        _HomeBand(child: _EmiProgressSection(items: emiItems)),
+                    (_) => _HomeBand(child: _NextActions(items: items)),
+                    (_) => _HomeBand(
+                      child: _Insights(
+                        summary: data,
+                        actions: items,
+                        records: moneyItems,
+                      ),
+                    ),
+                  ],
+                ];
+                return ListView.builder(
                   padding: EdgeInsets.only(
                     bottom: NotchedNavigationMetrics.tabContentPadding(context),
                   ),
-                  children: [
-                    _DashboardHeader(
-                      onAsk: () => openAskFinKeep(context),
-                      private: ref.watch(privacyModeProvider).enabled,
-                      onPrivacy: () => ref
-                          .read(privacyModeProvider.notifier)
-                          .setEnabled(!ref.read(privacyModeProvider).enabled),
-                      onSettings: () => openSettings(context),
-                    ),
-                    BackupReminderBanner(
-                      onBackUp: () async {
-                        try {
-                          await showCreateBackupFlow(context, ref);
-                        } on FormatException catch (error) {
-                          if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text(error.message.toString())),
-                            );
-                          }
-                        } catch (_) {
-                          if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Could not save the backup.'),
-                              ),
-                            );
-                          }
-                        }
-                      },
-                    ),
-                    if (noFinanceData)
-                      const Padding(
-                        padding: EdgeInsets.fromLTRB(24, 36, 24, 32),
-                        child: EmptyState(
-                          icon: Icons.savings_outlined,
-                          title: 'Your money overview starts here',
-                          message:
-                              'Add an EMI, money record, or subscription to see your financial picture.',
-                        ),
-                      )
-                    else ...[
-                      _BalanceHero(
-                        incoming: data.comingToMePaise,
-                        payable: data.needToPayPaise,
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(20, 26, 20, 32),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            _OutflowSection(summary: data),
-                            const SizedBox(height: 32),
-                            actions.when(
-                              data: (items) => _ThirtyDayTimeline(
-                                items: items,
-                                dueInSevenDays: data.upcomingPayments,
-                                subscriptionsInFourteenDays:
-                                    data.upcomingSubscriptions,
-                              ),
-                              error: (_, _) => const SizedBox.shrink(),
-                              loading: () => const SizedBox.shrink(),
-                            ),
-                            const SizedBox(height: 32),
-                            emis.when(
-                              data: (items) =>
-                                  _EmiProgressSection(items: items),
-                              error: (_, _) => const SizedBox.shrink(),
-                              loading: () => const SizedBox.shrink(),
-                            ),
-                            const SizedBox(height: 28),
-                            _Insights(
-                              summary: data,
-                              actions: actions.valueOrNull ?? const [],
-                              records: records.valueOrNull ?? const [],
-                            ),
-                            const SizedBox(height: 28),
-                            _NextActions(
-                              items: actions.valueOrNull ?? const [],
-                            ),
-                            const SizedBox(height: 28),
-                            _RecentActivity(
-                              items: activity.valueOrNull ?? const [],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ],
+                  itemCount: sections.length,
+                  itemBuilder: (context, index) => sections[index](context),
                 );
               },
             ),
@@ -432,6 +405,63 @@ class _AskSearchStripState extends State<_AskSearchStrip> {
   }
 }
 
+class _HomeBand extends StatelessWidget {
+  const _HomeBand({required this.child});
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) =>
+      Padding(padding: const EdgeInsets.fromLTRB(20, 24, 20, 0), child: child);
+}
+
+class _FirstRunActions extends StatelessWidget {
+  const _FirstRunActions();
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(22, 34, 22, 24),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          'Start your money picture',
+          style: Theme.of(context).textTheme.headlineSmall,
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Your records stay on this phone.',
+          style: Theme.of(context).textTheme.bodyMedium,
+        ),
+        const SizedBox(height: 24),
+        for (final (label, icon, form) in <(String, IconData, Widget)>[
+          (
+            'Add your first EMI',
+            Icons.account_balance_outlined,
+            const EmiFormSheet(),
+          ),
+          (
+            'Add your first Money record',
+            Icons.swap_horiz,
+            const MoneyFormSheet(),
+          ),
+          (
+            'Add your first Subscription',
+            Icons.autorenew,
+            const SubscriptionFormSheet(),
+          ),
+        ]) ...[
+          FilledButton.icon(
+            onPressed: () => openFinanceSheet(context, form),
+            icon: Icon(icon),
+            label: Text(label),
+          ),
+          const SizedBox(height: 10),
+        ],
+      ],
+    ),
+  );
+}
+
 class _BalanceHero extends StatelessWidget {
   const _BalanceHero({required this.incoming, required this.payable});
 
@@ -463,17 +493,21 @@ class _BalanceHero extends StatelessWidget {
               fontWeight: FontWeight.w700,
             ),
           ),
+          Tooltip(
+            message:
+                'Position reflects outstanding Money records; recurring commitments are shown below.',
+            child: Icon(
+              Icons.info_outline,
+              size: 16,
+              color: AppTheme.heroMutedOf(context),
+            ),
+          ),
           const SizedBox(height: 9),
-          TweenAnimationBuilder<int>(
-            tween: IntTween(begin: 0, end: net),
-            duration: const Duration(milliseconds: 650),
-            curve: Curves.easeOutCubic,
-            builder: (context, value, _) => Text(
-              formatMoney(value),
-              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                color: AppTheme.heroTextOf(context),
-                fontWeight: FontWeight.w800,
-              ),
+          AmountText(
+            net,
+            style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+              color: AppTheme.heroTextOf(context),
+              fontWeight: FontWeight.w800,
             ),
           ),
           const SizedBox(height: 20),
@@ -504,7 +538,7 @@ class _BalanceHero extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(width: 22),
+              const SizedBox(width: 18),
               Expanded(
                 child: Column(
                   children: [
@@ -513,23 +547,22 @@ class _BalanceHero extends StatelessWidget {
                       label: 'Coming to me',
                       value: incoming,
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 9),
                     _HeroLegend(
                       color: AppTheme.colorsOf(context).pay,
                       label: 'I need to pay',
                       value: payable,
                     ),
+                    const SizedBox(height: 9),
+                    _HeroLegend(
+                      color: AppTheme.accent,
+                      label: 'Net',
+                      value: net,
+                    ),
                   ],
                 ),
               ),
             ],
-          ),
-          const SizedBox(height: 13),
-          Text(
-            'Position reflects outstanding Money records; recurring commitments are shown below.',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: AppTheme.heroTextOf(context).withValues(alpha: 0.72),
-            ),
           ),
         ],
       ),
@@ -565,16 +598,11 @@ class _HeroLegend extends StatelessWidget {
           ).textTheme.bodySmall?.copyWith(color: AppTheme.heroMutedOf(context)),
         ),
       ),
-      TweenAnimationBuilder<int>(
-        tween: IntTween(begin: 0, end: value),
-        duration: const Duration(milliseconds: 650),
-        curve: Curves.easeOutCubic,
-        builder: (context, animated, _) => Text(
-          formatMoney(animated),
-          style: Theme.of(context).textTheme.titleSmall?.copyWith(
-            color: AppTheme.heroTextOf(context),
-            fontWeight: FontWeight.w700,
-          ),
+      AmountText(
+        value,
+        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+          color: AppTheme.heroTextOf(context),
+          fontWeight: FontWeight.w700,
         ),
       ),
     ],
@@ -636,6 +664,257 @@ class _BalanceRingPainter extends CustomPainter {
       oldDelegate.track != track;
 }
 
+class _MonthlyCarousel extends StatefulWidget {
+  const _MonthlyCarousel({
+    required this.summary,
+    required this.emis,
+    required this.records,
+  });
+  final DashboardSummary summary;
+  final List<EmiDetail> emis;
+  final List<MoneyRecordDetail> records;
+
+  @override
+  State<_MonthlyCarousel> createState() => _MonthlyCarouselState();
+}
+
+class _MonthlyCarouselState extends State<_MonthlyCarousel> {
+  int _page = 0;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      const _SectionTitle('This month'),
+      const SizedBox(height: 12),
+      SizedBox(
+        height: 220,
+        child: PageView.builder(
+          itemCount: 3,
+          onPageChanged: (page) => setState(() => _page = page),
+          itemBuilder: (context, page) => switch (page) {
+            0 => _OutflowSection(summary: widget.summary),
+            1 => _EmiLoadChart(items: widget.emis),
+            _ => _CollectBars(items: widget.records),
+          },
+        ),
+      ),
+      const SizedBox(height: 8),
+      Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          for (var index = 0; index < 3; index++)
+            AnimatedContainer(
+              duration: AppTheme.motionDuration,
+              width: index == _page ? 18 : 6,
+              height: 6,
+              margin: const EdgeInsets.symmetric(horizontal: 3),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(3),
+                color: index == _page
+                    ? Theme.of(context).colorScheme.primary
+                    : Theme.of(context).colorScheme.outlineVariant,
+              ),
+            ),
+        ],
+      ),
+    ],
+  );
+}
+
+class _EmiLoadChart extends StatelessWidget {
+  const _EmiLoadChart({required this.items});
+  final List<EmiDetail> items;
+
+  @override
+  Widget build(BuildContext context) {
+    final today = DateTime.now();
+    final months = List.generate(
+      6,
+      (offset) => DateTime(today.year, today.month + offset),
+    );
+    final values = <int>[];
+    final endings = <bool>[];
+    for (final month in months) {
+      var amount = 0;
+      var ending = false;
+      for (final detail in items) {
+        if (detail.emi.status != EmiStatus.active) continue;
+        final unpaid = detail.installments
+            .where((part) => !part.isPaid)
+            .toList();
+        for (final part in unpaid) {
+          if (part.dueDate.year == month.year &&
+              part.dueDate.month == month.month) {
+            amount += detail.amountForInstallment(part.number);
+            if (part.number == detail.emi.tenureMonths) ending = true;
+          }
+        }
+      }
+      values.add(amount);
+      endings.add(ending);
+    }
+    final color = AppTheme.colorsOf(context).emi;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('EMI load', style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 4),
+        Text(
+          'Next 6 months · dot = an EMI ends',
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: AppTheme.colorsOf(context).secondaryText,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Expanded(
+          child: RepaintBoundary(
+            child: CustomPaint(
+              painter: _SixMonthBarsPainter(
+                values: values,
+                endings: endings,
+                bar: color,
+                track: AppTheme.colorsOf(context).fieldFill,
+              ),
+              child: const SizedBox.expand(),
+            ),
+          ),
+        ),
+        const SizedBox(height: 5),
+        Row(
+          children: [
+            for (final month in months)
+              Expanded(
+                child: Text(
+                  _monthShort(month.month),
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.labelSmall,
+                ),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _SixMonthBarsPainter extends CustomPainter {
+  const _SixMonthBarsPainter({
+    required this.values,
+    required this.endings,
+    required this.bar,
+    required this.track,
+  });
+  final List<int> values;
+  final List<bool> endings;
+  final Color bar, track;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final maxValue = values.fold<int>(0, math.max);
+    final slot = size.width / 6;
+    final width = math.min(30.0, slot * 0.48);
+    for (var i = 0; i < 6; i++) {
+      final left = slot * i + (slot - width) / 2;
+      final base = RRect.fromRectAndRadius(
+        Rect.fromLTWH(left, 0, width, size.height),
+        const Radius.circular(8),
+      );
+      canvas.drawRRect(base, Paint()..color = track);
+      if (values[i] > 0 && maxValue > 0) {
+        final height = math.max(8.0, size.height * values[i] / maxValue);
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(
+            Rect.fromLTWH(left, size.height - height, width, height),
+            const Radius.circular(8),
+          ),
+          Paint()..color = bar,
+        );
+      }
+      if (endings[i]) {
+        canvas.drawCircle(
+          Offset(left + width / 2, size.height - 5),
+          3,
+          Paint()..color = track,
+        );
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _SixMonthBarsPainter old) =>
+      old.bar != bar ||
+      old.track != track ||
+      !listEquals(old.values, values) ||
+      !listEquals(old.endings, endings);
+}
+
+class _CollectBars extends StatelessWidget {
+  const _CollectBars({required this.items});
+  final List<MoneyRecordDetail> items;
+
+  @override
+  Widget build(BuildContext context) {
+    final totals = <String, int>{};
+    for (final detail in items) {
+      if (detail.record.direction != MoneyDirection.given ||
+          detail.summary.remainingAmountPaise <= 0) {
+        continue;
+      }
+      final name = displayName(detail.record.personName);
+      totals[name] = (totals[name] ?? 0) + detail.summary.remainingAmountPaise;
+    }
+    final people = totals.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    final top = people.take(3).toList();
+    final max = top.isEmpty ? 1 : top.first.value;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Money to collect',
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
+        const SizedBox(height: 10),
+        if (top.isEmpty)
+          Text(
+            'Nothing outstanding to collect.',
+            style: Theme.of(context).textTheme.bodyMedium,
+          )
+        else
+          for (final person in top) ...[
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    person.key,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                AmountText(
+                  person.value,
+                  style: Theme.of(context).textTheme.labelMedium,
+                ),
+              ],
+            ),
+            const SizedBox(height: 5),
+            RepaintBoundary(
+              child: LinearProgressIndicator(
+                value: person.value / max,
+                minHeight: 7,
+                borderRadius: BorderRadius.circular(5),
+                color: AppTheme.colorsOf(context).receive,
+                backgroundColor: AppTheme.colorsOf(context).fieldFill,
+              ),
+            ),
+            const SizedBox(height: 13),
+          ],
+      ],
+    );
+  }
+}
+
 class _OutflowSection extends StatelessWidget {
   const _OutflowSection({required this.summary});
 
@@ -665,8 +944,8 @@ class _OutflowSection extends StatelessWidget {
           detail: '30-day view · dated money due included',
         ),
         const SizedBox(height: 4),
-        Text(
-          formatMoney(total),
+        AmountText(
+          total,
           style: Theme.of(
             context,
           ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
@@ -743,7 +1022,7 @@ class _OutflowLegend extends StatelessWidget {
         ),
         const SizedBox(width: 6),
         Text(
-          '$label $percent%',
+          privacyAmountsHidden ? label : '$label $percent%',
           style: Theme.of(
             context,
           ).textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w600),
@@ -754,15 +1033,9 @@ class _OutflowLegend extends StatelessWidget {
 }
 
 class _ThirtyDayTimeline extends StatefulWidget {
-  const _ThirtyDayTimeline({
-    required this.items,
-    required this.dueInSevenDays,
-    required this.subscriptionsInFourteenDays,
-  });
+  const _ThirtyDayTimeline({required this.items});
 
   final List<ReminderItem> items;
-  final int dueInSevenDays;
-  final int subscriptionsInFourteenDays;
 
   @override
   State<_ThirtyDayTimeline> createState() => _ThirtyDayTimelineState();
@@ -786,9 +1059,15 @@ class _ThirtyDayTimelineState extends State<_ThirtyDayTimeline> {
     final upcoming = widget.items.where((item) {
       final day = DateTime(item.dueAt.year, item.dueAt.month, item.dueAt.day);
       return !day.isBefore(today) &&
-          day.difference(today).inDays < 30 &&
+          day.difference(today).inDays < 14 &&
           item.status != ReminderStatus.completed;
     }).toList();
+    final clearThisWeek = !widget.items.any(
+      (item) =>
+          item.status != ReminderStatus.completed &&
+          item.dueAt.isBefore(today.add(const Duration(days: 7))),
+    );
+    final next = upcoming.firstOrNull;
     final selectedItems = _showOverdue
         ? overdue
         : widget.items
@@ -806,10 +1085,7 @@ class _ThirtyDayTimelineState extends State<_ThirtyDayTimeline> {
         Row(
           children: [
             const Expanded(
-              child: _SectionTitle(
-                'Coming up',
-                detail: 'Next 30 days · red items are overdue',
-              ),
+              child: _SectionTitle('Due calendar', detail: 'Next 14 days'),
             ),
             TextButton(
               onPressed: () => Navigator.of(context).push(
@@ -821,25 +1097,7 @@ class _ThirtyDayTimelineState extends State<_ThirtyDayTimeline> {
             ),
           ],
         ),
-        const SizedBox(height: 13),
-        Row(
-          children: [
-            Expanded(
-              child: _WindowCount(
-                count: widget.dueInSevenDays,
-                label: 'Due incl. overdue · 7 days',
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _WindowCount(
-                count: widget.subscriptionsInFourteenDays,
-                label: 'Subscriptions incl. overdue · 14 days',
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
         SizedBox(
           height: 72,
           child: ListView(
@@ -853,7 +1111,7 @@ class _ThirtyDayTimelineState extends State<_ThirtyDayTimeline> {
                   dotColors: [AppTheme.colorsOf(context).pay],
                   onTap: () => setState(() => _showOverdue = true),
                 ),
-              for (var offset = 0; offset < 30; offset++)
+              for (var offset = 0; offset < 14; offset++)
                 Builder(
                   builder: (context) {
                     final day = today.add(Duration(days: offset));
@@ -875,7 +1133,7 @@ class _ThirtyDayTimelineState extends State<_ThirtyDayTimeline> {
                           day.month == _selected.month &&
                           day.day == _selected.day,
                       dotColors: dayItems
-                          .map((item) => _actionColor(context, item))
+                          .map((item) => _typeColor(context, item.entityType))
                           .toSet()
                           .toList(),
                       onTap: () => setState(() {
@@ -891,47 +1149,29 @@ class _ThirtyDayTimelineState extends State<_ThirtyDayTimeline> {
         if (selectedItems.isNotEmpty) ...[
           const SizedBox(height: 10),
           for (final item in selectedItems) _CompactDueRow(item: item),
-        ] else
-          Padding(
-            padding: const EdgeInsets.only(top: 10),
-            child: Text(
-              selectedItems.isEmpty && _selected.isBefore(today)
-                  ? 'No upcoming items on this day.'
-                  : 'Nothing due ${_selected == today ? 'today' : 'on this day'}.',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: AppTheme.colorsOf(context).secondaryText,
-              ),
-            ),
+        ] else if (clearThisWeek && !_showOverdue) ...[
+          const SizedBox(height: 10),
+          Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 4,
+            children: [
+              const Text('All clear this week 🎉'),
+              if (next != null) ...[
+                Text('Next: ${next.title}'),
+                AmountText(
+                  next.amountPaise,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                Text(
+                  'in ${DateTime(next.dueAt.year, next.dueAt.month, next.dueAt.day).difference(today).inDays} days',
+                ),
+              ],
+            ],
           ),
+        ],
       ],
     );
   }
-}
-
-class _WindowCount extends StatelessWidget {
-  const _WindowCount({required this.count, required this.label});
-
-  final int count;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text(
-        '$count',
-        style: Theme.of(
-          context,
-        ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
-      ),
-      Text(
-        label,
-        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-          color: AppTheme.colorsOf(context).secondaryText,
-        ),
-      ),
-    ],
-  );
 }
 
 class _DayPill extends StatelessWidget {
@@ -1029,69 +1269,54 @@ class _EmiProgressSection extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const _SectionTitle('EMI progress'),
-        const SizedBox(height: 8),
-        for (final detail in active)
-          InkWell(
-            borderRadius: BorderRadius.circular(10),
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => EmiDetailScreen(detail.emi.id)),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 10),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
+        const SizedBox(height: 12),
+        SizedBox(
+          height: 112,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: active.length,
+            separatorBuilder: (_, _) => const SizedBox(width: 12),
+            itemBuilder: (context, index) {
+              final detail = active[index];
+              return InkWell(
+                key: ValueKey(detail.emi.id),
+                borderRadius: BorderRadius.circular(12),
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => EmiDetailScreen(detail.emi.id),
+                  ),
+                ),
+                child: SizedBox(
+                  width: 92,
+                  child: Column(
                     children: [
-                      Expanded(
-                        child: Text(
-                          displayName(detail.emi.name),
-                          style: const TextStyle(fontWeight: FontWeight.w700),
+                      RepaintBoundary(
+                        child: MiniProgressRing(
+                          progress:
+                              detail.paidInstallments / detail.emi.tenureMonths,
+                          size: 64,
+                          strokeWidth: 5,
+                          child: Text(
+                            '${detail.paidInstallments}/${detail.emi.tenureMonths}',
+                            style: Theme.of(context).textTheme.labelSmall
+                                ?.copyWith(fontWeight: FontWeight.w700),
+                          ),
                         ),
                       ),
+                      const SizedBox(height: 7),
                       Text(
-                        '${detail.paidInstallments}/${detail.emi.tenureMonths}',
-                        style: Theme.of(context).textTheme.labelMedium
-                            ?.copyWith(
-                              color: AppTheme.colorsOf(context).secondaryText,
-                            ),
+                        displayName(detail.emi.name),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.labelMedium,
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(99),
-                    child: LinearProgressIndicator(
-                      value: detail.paidInstallments / detail.emi.tenureMonths,
-                      minHeight: 7,
-                      color: AppTheme.colorsOf(context).emi,
-                      backgroundColor: AppTheme.colorsOf(context).fieldFill,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          'Next ${formatDate(detail.nextUnpaidInstallment!.dueDate)}',
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(
-                                color: AppTheme.colorsOf(context).secondaryText,
-                              ),
-                        ),
-                      ),
-                      Text(
-                        formatMoney(detail.scheduledInstallmentPaise),
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
+                ),
+              );
+            },
           ),
+        ),
       ],
     );
   }
@@ -1115,7 +1340,7 @@ class _Insights extends StatelessWidget {
       final share =
           (summary.monthlyEmisPaise * 100 / summary.monthlyOutflowPaise)
               .round();
-      insights.add('EMIs are $share% of your 30-day outflow.');
+      insights.add('🎯 EMIs make up $share% of monthly outflow');
     }
     final nextSubscription = actions
         .where(
@@ -1126,7 +1351,7 @@ class _Insights extends StatelessWidget {
         .firstOrNull;
     if (nextSubscription != null) {
       insights.add(
-        '${nextSubscription.title} renews ${nextSubscription.subtitle}.',
+        '🔔 ${nextSubscription.title} renews ${nextSubscription.subtitle}',
       );
     }
     final noDueIncoming = records
@@ -1139,7 +1364,7 @@ class _Insights extends StatelessWidget {
         .firstOrNull;
     if (noDueIncoming != null) {
       insights.add(
-        '${displayName(noDueIncoming.record.personName)} owes you ${formatMoney(noDueIncoming.summary.remainingAmountPaise)} with no due date.',
+        '📅 Set a due date for ${displayName(noDueIncoming.record.personName)}',
       );
     }
     if (insights.isEmpty) return const SizedBox.shrink();
@@ -1148,22 +1373,20 @@ class _Insights extends StatelessWidget {
       children: [
         const _SectionTitle('Smart insights'),
         const SizedBox(height: 8),
-        for (final insight in insights.take(2))
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 5),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(
-                  Icons.auto_awesome,
-                  size: 17,
-                  color: Theme.of(context).colorScheme.primary,
-                ),
-                const SizedBox(width: 9),
-                Expanded(child: Text(insight)),
-              ],
-            ),
-          ),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final insight in insights.take(2))
+              Chip(
+                label: Text(insight, maxLines: 2),
+                backgroundColor: Theme.of(
+                  context,
+                ).colorScheme.surfaceContainerLow,
+                side: BorderSide.none,
+              ),
+          ],
+        ),
       ],
     );
   }
@@ -1188,9 +1411,19 @@ class _NextActions extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const _SectionTitle('Next financial actions'),
+        Row(
+          children: [
+            const Expanded(child: _SectionTitle('Next payments')),
+            TextButton(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const RemindersScreen()),
+              ),
+              child: const Text('See all'),
+            ),
+          ],
+        ),
         const SizedBox(height: 6),
-        for (final item in active.take(6)) _CompactDueRow(item: item),
+        for (final item in active.take(3)) _CompactDueRow(item: item),
       ],
     );
   }
@@ -1259,8 +1492,8 @@ class _CompactDueRow extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 10),
-          Text(
-            formatMoney(item.amountPaise),
+          AmountText(
+            item.amountPaise,
             style: Theme.of(
               context,
             ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w700),
@@ -1269,75 +1502,6 @@ class _CompactDueRow extends StatelessWidget {
       ),
     ),
   );
-}
-
-class _RecentActivity extends StatelessWidget {
-  const _RecentActivity({required this.items});
-
-  final List<ActivityLog> items;
-
-  @override
-  Widget build(BuildContext context) {
-    if (items.isEmpty) return const SizedBox.shrink();
-    return Column(
-      children: [
-        Row(
-          children: [
-            const Expanded(child: _SectionTitle('Recent activity')),
-            TextButton(
-              onPressed: () => Navigator.of(
-                context,
-              ).push(MaterialPageRoute(builder: (_) => const ActivityScreen())),
-              child: const Text('View all'),
-            ),
-          ],
-        ),
-        for (final item in items.take(5))
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Row(
-              children: [
-                Icon(
-                  Icons.history,
-                  size: 19,
-                  color: AppTheme.colorsOf(context).secondaryText,
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        hideMoneyInText(item.title),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontWeight: FontWeight.w600),
-                      ),
-                      Text(
-                        hideMoneyInText(
-                          item.description ?? formatDateTime(item.occurredAt),
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: AppTheme.colorsOf(context).secondaryText,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Text(
-                  formatDate(item.occurredAt),
-                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: AppTheme.colorsOf(context).secondaryText,
-                  ),
-                ),
-              ],
-            ),
-          ),
-      ],
-    );
-  }
 }
 
 class _SectionTitle extends SectionHeader {

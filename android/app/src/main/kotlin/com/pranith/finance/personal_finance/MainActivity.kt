@@ -41,6 +41,27 @@ class MainActivity : FlutterFragmentActivity() {
                     else -> result.notImplemented()
                 }
             }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "finkeep/reminders")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "timeZone" -> result.success(java.util.TimeZone.getDefault().id)
+                    "openNotificationSettings" -> {
+                        val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                            .putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                        startActivity(intent)
+                        result.success(null)
+                    }
+                    "openBatterySettings" -> {
+                        val intent = Intent("android.settings.APP_BATTERY_SETTINGS",
+                            Uri.parse("package:$packageName"))
+                        val fallback = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            Uri.parse("package:$packageName"))
+                        startActivity(if (intent.resolveActivity(packageManager) != null) intent else fallback)
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "finkeep/backup_folder")
             .setMethodCallHandler { call, result ->
                 if (call.method != "pickTree") {

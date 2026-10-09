@@ -23,6 +23,13 @@ import '../../shared/screen_header.dart';
 import '../../shared/finance_bottom_sheet.dart';
 import '../../shared/calculator_sheet.dart';
 
+void openSubscriptionDetailSheet(BuildContext context, Subscription item) {
+  openFinanceSheet(
+    context,
+    _SubscriptionDetailSheet(item: item, hostContext: context),
+  );
+}
+
 final _subscriptionExtrasProvider = StreamProvider<Map<int, SubscriptionExtra>>(
   (ref) {
     final repo = ref.watch(financeRepositoryProvider);

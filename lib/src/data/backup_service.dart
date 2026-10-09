@@ -14,6 +14,7 @@ import 'package:share_plus/share_plus.dart';
 
 import 'backup_codec.dart';
 import 'database.dart';
+import 'repositories.dart';
 import '../domain/enums.dart';
 
 class SavedBackup {
@@ -229,6 +230,11 @@ class LocalBackupService {
       }
     });
     database.markTablesUpdated(database.allTables);
+    try {
+      await FinanceRepository(database).refreshLocalReminders();
+    } catch (_) {
+      // Restored data remains valid even when notification access is unavailable.
+    }
   }
 
   Future<Map<String, Set<String>>> validateDocument(
