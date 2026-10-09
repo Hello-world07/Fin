@@ -1,8 +1,10 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show listEquals;
 
 import '../../core/app_theme.dart';
+import '../../core/formatters.dart';
 import 'assistant_visuals.dart';
 
 class AssistantVisualWidget extends StatelessWidget {
@@ -35,13 +37,13 @@ class AssistantVisualWidget extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              part.bigValue ?? '—',
+              hideMoneyInText(part.bigValue ?? '—'),
               style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                 fontWeight: FontWeight.w800,
                 fontFeatures: const [FontFeature.tabularFigures()],
               ),
             ),
-            if (part.subtitle != null) Text(part.subtitle!),
+            if (part.subtitle != null) Text(hideMoneyInText(part.subtitle!)),
           ],
         );
       case AssistantVisualKind.donut:
@@ -54,28 +56,31 @@ class AssistantVisualWidget extends StatelessWidget {
                 SizedBox(
                   width: 86,
                   height: 86,
-                  child: CustomPaint(
-                    painter: _DonutPainter(
-                      values: part.kind == AssistantVisualKind.scoreRing
-                          ? [part.score ?? 0, 100 - (part.score ?? 0)]
-                          : part.data.map((item) => item.value).toList(),
-                      colors: part.kind == AssistantVisualKind.scoreRing
-                          ? [
-                              Theme.of(context).colorScheme.primary,
-                              Theme.of(
-                                context,
-                              ).colorScheme.surfaceContainerHighest,
-                            ]
-                          : _palette(context),
-                      animation: animation,
-                    ),
-                    child: Center(
-                      child: Text(
-                        part.kind == AssistantVisualKind.scoreRing
-                            ? '${(part.score ?? 0).round()}'
-                            : part.bigValue ?? '',
-                        style: Theme.of(context).textTheme.titleMedium
-                            ?.copyWith(fontWeight: FontWeight.w800),
+                  child: RepaintBoundary(
+                    child: CustomPaint(
+                      painter: _DonutPainter(
+                        values: part.kind == AssistantVisualKind.scoreRing
+                            ? [part.score ?? 0, 100 - (part.score ?? 0)]
+                            : part.data.map((item) => item.value).toList(),
+                        colors: part.kind == AssistantVisualKind.scoreRing
+                            ? [
+                                Theme.of(context).colorScheme.primary,
+                                Theme.of(
+                                  context,
+                                ).colorScheme.surfaceContainerHighest,
+                              ]
+                            : _palette(context),
+                        track: AppTheme.colorsOf(context).outline,
+                        animation: animation,
+                      ),
+                      child: Center(
+                        child: Text(
+                          part.kind == AssistantVisualKind.scoreRing
+                              ? '${(part.score ?? 0).round()}'
+                              : hideMoneyInText(part.bigValue ?? ''),
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(fontWeight: FontWeight.w800),
+                        ),
                       ),
                     ),
                   ),
@@ -87,7 +92,7 @@ class AssistantVisualWidget extends StatelessWidget {
             if (part.subtitle != null) ...[
               const SizedBox(height: 6),
               Text(
-                part.subtitle!,
+                hideMoneyInText(part.subtitle!),
                 style: Theme.of(context).textTheme.labelSmall,
               ),
             ],
@@ -99,11 +104,14 @@ class AssistantVisualWidget extends StatelessWidget {
             SizedBox(
               height: 14,
               width: double.infinity,
-              child: CustomPaint(
-                painter: _StackedBarPainter(
-                  values: part.data.map((item) => item.value).toList(),
-                  colors: _palette(context),
-                  animation: animation,
+              child: RepaintBoundary(
+                child: CustomPaint(
+                  painter: _StackedBarPainter(
+                    values: part.data.map((item) => item.value).toList(),
+                    colors: _palette(context),
+                    track: AppTheme.colorsOf(context).outline,
+                    animation: animation,
+                  ),
                 ),
               ),
             ),
@@ -135,13 +143,15 @@ class AssistantVisualWidget extends StatelessWidget {
         return SizedBox(
           height: 118,
           width: double.infinity,
-          child: CustomPaint(
-            painter: _WeeklyBarsPainter(
-              data: part.data,
-              animation: animation,
-              normal: Theme.of(context).colorScheme.primary,
-              overdue: Theme.of(context).colorScheme.error,
-              label: Theme.of(context).colorScheme.onSurfaceVariant,
+          child: RepaintBoundary(
+            child: CustomPaint(
+              painter: _WeeklyBarsPainter(
+                data: part.data,
+                animation: animation,
+                normal: Theme.of(context).colorScheme.primary,
+                overdue: Theme.of(context).colorScheme.error,
+                label: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
             ),
           ),
         );
@@ -180,7 +190,9 @@ class AssistantVisualWidget extends StatelessWidget {
                         children: [
                           Expanded(child: Text(part.data[index].label)),
                           Text(
-                            part.data[index].displayValue ?? '',
+                            hideMoneyInText(
+                              part.data[index].displayValue ?? '',
+                            ),
                             style: const TextStyle(fontWeight: FontWeight.w700),
                           ),
                         ],
@@ -245,13 +257,13 @@ class _Legend extends StatelessWidget {
                     Text(data[index].label),
                     if (data[index].detail != null)
                       Text(
-                        data[index].detail!,
+                        hideMoneyInText(data[index].detail!),
                         style: Theme.of(context).textTheme.labelSmall,
                       ),
                   ],
                 ),
               ),
-              Text(data[index].displayValue ?? ''),
+              Text(hideMoneyInText(data[index].displayValue ?? '')),
             ],
           ),
         ),
@@ -278,7 +290,7 @@ class _ProgressDatum extends StatelessWidget {
         Row(
           children: [
             Expanded(child: Text(datum.label)),
-            Text(datum.displayValue ?? ''),
+            Text(hideMoneyInText(datum.displayValue ?? '')),
           ],
         ),
         const SizedBox(height: 4),
@@ -292,7 +304,10 @@ class _ProgressDatum extends StatelessWidget {
           borderRadius: BorderRadius.circular(3),
         ),
         if (datum.detail != null)
-          Text(datum.detail!, style: Theme.of(context).textTheme.labelSmall),
+          Text(
+            hideMoneyInText(datum.detail!),
+            style: Theme.of(context).textTheme.labelSmall,
+          ),
       ],
     ),
   );
@@ -300,20 +315,22 @@ class _ProgressDatum extends StatelessWidget {
 
 List<Color> _palette(BuildContext context) => [
   Theme.of(context).colorScheme.primary,
-  AppTheme.emi,
-  AppTheme.subscriptions,
-  AppTheme.pay,
-  AppTheme.receive,
+  AppTheme.colorsOf(context).emi,
+  AppTheme.colorsOf(context).subscriptions,
+  AppTheme.colorsOf(context).pay,
+  AppTheme.colorsOf(context).receive,
 ];
 
 class _DonutPainter extends CustomPainter {
   const _DonutPainter({
     required this.values,
     required this.colors,
+    required this.track,
     required this.animation,
   });
   final List<double> values;
   final List<Color> colors;
+  final Color track;
   final double animation;
 
   @override
@@ -327,11 +344,9 @@ class _DonutPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeWidth = 10
       ..strokeCap = StrokeCap.butt;
-    if (total <= 0) {
-      paint.color = colors.first.withValues(alpha: 0.15);
-      canvas.drawArc(rect.deflate(7), 0, math.pi * 2, false, paint);
-      return;
-    }
+    paint.color = track;
+    canvas.drawArc(rect.deflate(7), 0, math.pi * 2, false, paint);
+    if (total <= 0) return;
     var start = -math.pi / 2;
     for (var index = 0; index < values.length; index++) {
       final sweep = math.pi * 2 * values[index] / total * animation;
@@ -343,17 +358,22 @@ class _DonutPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _DonutPainter oldDelegate) =>
-      oldDelegate.animation != animation || oldDelegate.values != values;
+      oldDelegate.animation != animation ||
+      oldDelegate.track != track ||
+      !listEquals(oldDelegate.values, values) ||
+      !listEquals(oldDelegate.colors, colors);
 }
 
 class _StackedBarPainter extends CustomPainter {
   const _StackedBarPainter({
     required this.values,
     required this.colors,
+    required this.track,
     required this.animation,
   });
   final List<double> values;
   final List<Color> colors;
+  final Color track;
   final double animation;
 
   @override
@@ -362,7 +382,7 @@ class _StackedBarPainter extends CustomPainter {
       0,
       (sum, item) => sum + math.max(0, item),
     );
-    final background = Paint()..color = colors.first.withValues(alpha: 0.12);
+    final background = Paint()..color = track;
     canvas.drawRRect(
       RRect.fromRectAndRadius(Offset.zero & size, const Radius.circular(7)),
       background,
@@ -386,7 +406,10 @@ class _StackedBarPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _StackedBarPainter oldDelegate) =>
-      oldDelegate.animation != animation || oldDelegate.values != values;
+      oldDelegate.animation != animation ||
+      oldDelegate.track != track ||
+      !listEquals(oldDelegate.values, values) ||
+      !listEquals(oldDelegate.colors, colors);
 }
 
 class _WeeklyBarsPainter extends CustomPainter {
@@ -437,5 +460,22 @@ class _WeeklyBarsPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _WeeklyBarsPainter oldDelegate) =>
-      oldDelegate.animation != animation || oldDelegate.data != data;
+      oldDelegate.animation != animation ||
+      oldDelegate.normal != normal ||
+      oldDelegate.overdue != overdue ||
+      oldDelegate.label != label ||
+      !_sameData(oldDelegate.data, data);
+
+  bool _sameData(List<AssistantVisualDatum> a, List<AssistantVisualDatum> b) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    for (var index = 0; index < a.length; index++) {
+      if (a[index].label != b[index].label ||
+          a[index].value != b[index].value ||
+          a[index].isOverdue != b[index].isOverdue) {
+        return false;
+      }
+    }
+    return true;
+  }
 }

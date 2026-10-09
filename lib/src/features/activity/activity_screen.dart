@@ -11,6 +11,7 @@ class ActivityScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    ref.watch(privacyModeProvider);
     return Scaffold(
       appBar: AppBar(title: const Text('Activity History')),
       body: AsyncView(
@@ -34,11 +35,13 @@ class ActivityScreen extends ConsumerWidget {
                 contentPadding: const EdgeInsets.symmetric(vertical: 8),
                 leading: const Icon(Icons.history),
                 title: Text(
-                  event.title,
+                  hideMoneyInText(event.title),
                   style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
                 subtitle: Text(
-                  '${formatDateTime(event.occurredAt)}${event.description == null ? '' : ' • ${displayName(event.description!)}'}',
+                  hideMoneyInText(
+                    '${formatDateTime(event.occurredAt)}${event.description == null ? '' : ' • ${displayName(event.description!)}'}',
+                  ),
                 ),
               );
             },

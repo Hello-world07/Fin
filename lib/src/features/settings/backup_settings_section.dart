@@ -474,6 +474,7 @@ void _refreshAfterRestore(WidgetRef ref) {
   ref.invalidate(remindersProvider);
   ref.invalidate(financialActionsProvider);
   ref.invalidate(activityProvider);
+  ref.invalidate(dashboardActivityProvider);
   ref.invalidate(appThemeModeProvider);
   ref.invalidate(backupStatusProvider);
 }

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:drift/drift.dart';
@@ -9,6 +10,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:share_plus/share_plus.dart';
 
 import '../core/formatters.dart';
+import '../core/notifications.dart';
 import '../domain/due_status.dart';
 import '../domain/emi_math.dart';
 import '../domain/emi_payment_rules.dart' show dateOnly;
@@ -42,6 +44,32 @@ class DashboardSummary {
   final int monthlyEmisPaise;
   final int monthlySubscriptionsPaise;
   final int monthlyMoneyToPayPaise;
+
+  @override
+  bool operator ==(Object other) =>
+      other is DashboardSummary &&
+      other.needToPayPaise == needToPayPaise &&
+      other.comingToMePaise == comingToMePaise &&
+      other.activeEmis == activeEmis &&
+      other.upcomingPayments == upcomingPayments &&
+      other.upcomingSubscriptions == upcomingSubscriptions &&
+      other.monthlyOutflowPaise == monthlyOutflowPaise &&
+      other.monthlyEmisPaise == monthlyEmisPaise &&
+      other.monthlySubscriptionsPaise == monthlySubscriptionsPaise &&
+      other.monthlyMoneyToPayPaise == monthlyMoneyToPayPaise;
+
+  @override
+  int get hashCode => Object.hash(
+    needToPayPaise,
+    comingToMePaise,
+    activeEmis,
+    upcomingPayments,
+    upcomingSubscriptions,
+    monthlyOutflowPaise,
+    monthlyEmisPaise,
+    monthlySubscriptionsPaise,
+    monthlyMoneyToPayPaise,
+  );
 }
 
 class MoneyRecordDetail {
@@ -149,12 +177,211 @@ class ReminderItem {
   final bool isNextInstallment;
 }
 
+class SubscriptionExtra {
+  const SubscriptionExtra({
+    this.trialEndsOn,
+    this.pauseUntil,
+    this.cancelAt,
+    this.cancellationReason,
+    this.essential = false,
+    this.reviewed = false,
+    this.priceHistory = const [],
+  });
+
+  final DateTime? trialEndsOn;
+  final DateTime? pauseUntil;
+  final DateTime? cancelAt;
+  final String? cancellationReason;
+  final bool essential;
+  final bool reviewed;
+  final List<SubscriptionPriceChange> priceHistory;
+
+  SubscriptionExtra copyWith({
+    DateTime? trialEndsOn,
+    DateTime? pauseUntil,
+    DateTime? cancelAt,
+    String? cancellationReason,
+    bool? essential,
+    bool? reviewed,
+    List<SubscriptionPriceChange>? priceHistory,
+    bool clearTrialEndsOn = false,
+    bool clearPauseUntil = false,
+    bool clearCancelAt = false,
+  }) => SubscriptionExtra(
+    trialEndsOn: clearTrialEndsOn ? null : trialEndsOn ?? this.trialEndsOn,
+    pauseUntil: clearPauseUntil ? null : pauseUntil ?? this.pauseUntil,
+    cancelAt: clearCancelAt ? null : cancelAt ?? this.cancelAt,
+    cancellationReason: cancellationReason ?? this.cancellationReason,
+    essential: essential ?? this.essential,
+    reviewed: reviewed ?? this.reviewed,
+    priceHistory: priceHistory ?? this.priceHistory,
+  );
+
+  factory SubscriptionExtra.fromJson(String source) {
+    try {
+      final data = jsonDecode(source) as Map<String, dynamic>;
+      DateTime? date(String key) => DateTime.tryParse('${data[key] ?? ''}');
+      return SubscriptionExtra(
+        trialEndsOn: date('trialEndsOn'),
+        pauseUntil: date('pauseUntil'),
+        cancelAt: date('cancelAt'),
+        cancellationReason: data['cancellationReason'] as String?,
+        essential: data['essential'] == true,
+        reviewed: data['reviewed'] == true,
+        priceHistory: (data['priceHistory'] as List? ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(SubscriptionPriceChange.fromJson)
+            .whereType<SubscriptionPriceChange>()
+            .toList(),
+      );
+    } catch (_) {
+      return const SubscriptionExtra();
+    }
+  }
+
+  String toJson() => jsonEncode({
+    'trialEndsOn': trialEndsOn?.toIso8601String(),
+    'pauseUntil': pauseUntil?.toIso8601String(),
+    'cancelAt': cancelAt?.toIso8601String(),
+    'cancellationReason': cancellationReason,
+    'essential': essential,
+    'reviewed': reviewed,
+    'priceHistory': priceHistory.map((change) => change.toJson()).toList(),
+  });
+}
+
+class SubscriptionPriceChange {
+  const SubscriptionPriceChange({
+    required this.fromPaise,
+    required this.toPaise,
+    required this.at,
+  });
+  final int fromPaise;
+  final int toPaise;
+  final DateTime at;
+
+  static SubscriptionPriceChange? fromJson(Map<String, dynamic> data) {
+    final from = data['from'];
+    final to = data['to'];
+    final at = DateTime.tryParse('${data['at'] ?? ''}');
+    if (from is! int || to is! int || at == null) return null;
+    return SubscriptionPriceChange(fromPaise: from, toPaise: to, at: at);
+  }
+
+  Map<String, dynamic> toJson() => {
+    'from': fromPaise,
+    'to': toPaise,
+    'at': at.toIso8601String(),
+  };
+}
+
 class FinanceRepository {
   FinanceRepository(this.db);
 
   static const _archivedEmiPrefix = 'emi.archived.';
   static const _archivedMoneyPrefix = 'money.archived.';
   static const _archivedSubscriptionPrefix = 'subscription.archived.';
+  static const _subscriptionExtraPrefix = 'subscription.extra.';
+  final LocalReminderService _localReminders = LocalReminderService();
+  Future<void> scheduleAssistantReminder({
+    required int id,
+    required String title,
+    required String body,
+    required DateTime when,
+  }) => _localReminders.scheduleReminder(
+    id: id,
+    title: title,
+    body: body,
+    when: when,
+  );
+
+  Future<void> cancelAssistantReminder(int id) =>
+      _localReminders.cancelReminder(id);
+
+  static const _dailyBriefId = 1999999999;
+
+  Future<({bool enabled, int hour, int minute})> dailyBriefSettings() async {
+    final rows =
+        await (db.select(db.settings)..where(
+              (row) => row.key.isIn([
+                'assistant.dailyBrief.enabled',
+                'assistant.dailyBrief.time',
+              ]),
+            ))
+            .get();
+    final values = {for (final row in rows) row.key: row.value};
+    final parts = (values['assistant.dailyBrief.time'] ?? '08:00').split(':');
+    return (
+      enabled: values['assistant.dailyBrief.enabled'] == 'true',
+      hour: int.tryParse(parts.first) ?? 8,
+      minute: parts.length > 1 ? int.tryParse(parts[1]) ?? 0 : 0,
+    );
+  }
+
+  Future<void> setDailyBrief({
+    required bool enabled,
+    required int hour,
+    required int minute,
+  }) async {
+    await db
+        .into(db.settings)
+        .insertOnConflictUpdate(
+          SettingsCompanion.insert(
+            key: 'assistant.dailyBrief.enabled',
+            value: enabled.toString(),
+          ),
+        );
+    await db
+        .into(db.settings)
+        .insertOnConflictUpdate(
+          SettingsCompanion.insert(
+            key: 'assistant.dailyBrief.time',
+            value:
+                '${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')}',
+          ),
+        );
+    await refreshDailyBrief();
+  }
+
+  Future<void> refreshDailyBrief() async {
+    final setting = await dailyBriefSettings();
+    await _localReminders.cancelReminder(_dailyBriefId);
+    if (!setting.enabled) return;
+    final now = DateTime.now();
+    var next = DateTime(
+      now.year,
+      now.month,
+      now.day,
+      setting.hour,
+      setting.minute,
+    );
+    if (!next.isAfter(now)) next = next.add(const Duration(days: 1));
+    final through = DateTime(now.year, now.month, now.day + 7);
+    final due = (await reminders(attentionOnly: false))
+        .where(
+          (item) =>
+              !dateOnly(item.dueAt).isBefore(dateOnly(now)) &&
+              !dateOnly(item.dueAt).isAfter(through),
+        )
+        .toList();
+    final amount = due.fold<int>(0, (sum, item) => sum + item.amountPaise);
+    final privacy =
+        await (db.select(db.settings)..where(
+              (row) => row.key.isIn(['privacy.mode', 'privacy.hideOnOpen']),
+            ))
+            .get();
+    final hideAmounts = privacy.any((row) => row.value == 'true');
+    await _localReminders.scheduleReminder(
+      id: _dailyBriefId,
+      title: 'FinKeep morning brief',
+      body:
+          '${due.length} payments due this week${hideAmounts ? '' : ', ${formatMoneyUnmasked(amount)}'}.',
+      when: next,
+      repeatDaily: true,
+    );
+  }
+
+  bool _subscriptionRemindersPrimed = false;
   final AppDatabase db;
 
   Stream<List<Emi>> watchEmis() =>
@@ -167,42 +394,62 @@ class FinanceRepository {
   Stream<List<EmiDetail>> watchEmiDetails() {
     late final StreamController<List<EmiDetail>> controller;
     final subscriptions = <StreamSubscription<void>>[];
+    Timer? pending;
+    var generation = 0;
 
     Future<void> emit() async {
       if (controller.isClosed) return;
-      final archivedIds = await _archivedEmiIds();
-      final emis = (await db.select(db.emis).get()).where(
-        (emi) => !archivedIds.contains(emi.id),
-      );
-      final details = <EmiDetail>[];
-      for (final emi in emis) {
-        details.add(await emiDetail(emi.id));
-      }
+      final request = ++generation;
+      final details = await _visibleEmiDetails();
       details.sort((a, b) {
         final aDue = a.nextUnpaidInstallment?.dueDate ?? a.emi.nextDueDate;
         final bDue = b.nextUnpaidInstallment?.dueDate ?? b.emi.nextDueDate;
         return aDue.compareTo(bDue);
       });
-      if (!controller.isClosed) controller.add(details);
+      if (!controller.isClosed && request == generation) {
+        controller.add(details);
+      }
+    }
+
+    void scheduleEmit() {
+      pending?.cancel();
+      pending = Timer(const Duration(milliseconds: 24), emit);
     }
 
     controller = StreamController<List<EmiDetail>>(
       onListen: () {
-        emit();
         for (final stream in [
           db.select(db.emis).watch().map((_) {}),
+          db.select(db.emiPayments).watch().map((_) {}),
           db.select(db.settings).watch().map((_) {}),
         ]) {
-          subscriptions.add(stream.listen((_) => emit()));
+          subscriptions.add(stream.listen((_) => scheduleEmit()));
         }
       },
       onCancel: () {
+        pending?.cancel();
+        generation++;
         for (final subscription in subscriptions) {
           unawaited(subscription.cancel());
         }
       },
     );
     return controller.stream;
+  }
+
+  Future<List<EmiDetail>> _visibleEmiDetails() async {
+    final archivedIds = await _archivedEmiIds();
+    final emis = (await db.select(db.emis).get()).where(
+      (emi) => !archivedIds.contains(emi.id),
+    );
+    final paymentsByEmi = <int, List<EmiPayment>>{};
+    for (final payment in await db.select(db.emiPayments).get()) {
+      paymentsByEmi.putIfAbsent(payment.emiId, () => []).add(payment);
+    }
+    return [
+      for (final emi in emis)
+        EmiDetail(emi: emi, payments: paymentsByEmi[emi.id] ?? const []),
+    ];
   }
 
   Future<Set<int>> _archivedIds(String prefix) async {
@@ -242,37 +489,41 @@ class FinanceRepository {
   Stream<List<MoneyRecordDetail>> watchMoneyRecords() {
     late final StreamController<List<MoneyRecordDetail>> controller;
     final subscriptions = <StreamSubscription<void>>[];
+    Timer? pending;
+    var generation = 0;
 
     Future<void> emit() async {
       if (controller.isClosed) return;
-      final archivedIds = await _archivedMoneyIds();
-      final records = (await db.select(db.moneyRecords).get()).where(
-        (record) => !archivedIds.contains(record.id),
-      );
-      final details = <MoneyRecordDetail>[];
-      for (final record in records) {
-        details.add(await moneyDetail(record.id));
-      }
+      final request = ++generation;
+      final details = await moneyDetails();
       details.sort((a, b) {
         final aDate = a.record.dueDate ?? a.record.recordDate;
         final bDate = b.record.dueDate ?? b.record.recordDate;
         return aDate.compareTo(bDate);
       });
-      if (!controller.isClosed) controller.add(details);
+      if (!controller.isClosed && request == generation) {
+        controller.add(details);
+      }
+    }
+
+    void scheduleEmit() {
+      pending?.cancel();
+      pending = Timer(const Duration(milliseconds: 24), emit);
     }
 
     controller = StreamController<List<MoneyRecordDetail>>(
       onListen: () {
-        emit();
         for (final stream in [
           db.select(db.moneyRecords).watch().map((_) {}),
           db.select(db.moneyRepayments).watch().map((_) {}),
           db.select(db.settings).watch().map((_) {}),
         ]) {
-          subscriptions.add(stream.listen((_) => emit()));
+          subscriptions.add(stream.listen((_) => scheduleEmit()));
         }
       },
       onCancel: () {
+        pending?.cancel();
+        generation++;
         for (final subscription in subscriptions) {
           unawaited(subscription.cancel());
         }
@@ -291,16 +542,228 @@ class FinanceRepository {
 
   Stream<List<Subscription>> watchSubscriptions() =>
       db.select(db.subscriptions).watch().asyncMap((items) async {
+        await refreshSubscriptionTransitions();
+        items = await db.select(db.subscriptions).get();
         final archivedIds = await _archivedSubscriptionIds();
         return items.where((item) => !archivedIds.contains(item.id)).toList()
           ..sort((a, b) => a.nextBillingDate.compareTo(b.nextBillingDate));
       });
+
+  Future<void> primeSubscriptionNotifications() async {
+    if (_subscriptionRemindersPrimed) return;
+    _subscriptionRemindersPrimed = true;
+    try {
+      for (final item in await _visibleSubscriptions()) {
+        unawaited(_syncSubscriptionNotifications(item.id));
+      }
+    } catch (_) {
+      _subscriptionRemindersPrimed = false;
+      rethrow;
+    }
+  }
 
   Future<Subscription?> subscription(int id) async {
     if ((await _archivedSubscriptionIds()).contains(id)) return null;
     return (db.select(
       db.subscriptions,
     )..where((item) => item.id.equals(id))).getSingleOrNull();
+  }
+
+  Future<Map<int, SubscriptionExtra>> subscriptionExtras() async {
+    final rows = await (db.select(
+      db.settings,
+    )..where((row) => row.key.like('$_subscriptionExtraPrefix%'))).get();
+    final extras = <int, SubscriptionExtra>{};
+    for (final row in rows) {
+      final id = int.tryParse(
+        row.key.substring(_subscriptionExtraPrefix.length),
+      );
+      if (id != null) extras[id] = SubscriptionExtra.fromJson(row.value);
+    }
+    return extras;
+  }
+
+  Future<SubscriptionExtra> subscriptionExtra(int id) async =>
+      (await subscriptionExtras())[id] ?? const SubscriptionExtra();
+
+  Future<void> saveSubscriptionExtra(int id, SubscriptionExtra extra) async {
+    await db
+        .into(db.settings)
+        .insertOnConflictUpdate(
+          SettingsCompanion.insert(
+            key: '$_subscriptionExtraPrefix$id',
+            value: extra.toJson(),
+          ),
+        );
+    unawaited(_syncSubscriptionNotifications(id));
+  }
+
+  Future<void> pauseSubscription(int id, {DateTime? until}) async {
+    await setSubscriptionStatus(id, SubscriptionStatus.paused);
+    final extra = await subscriptionExtra(id);
+    await saveSubscriptionExtra(
+      id,
+      extra.copyWith(pauseUntil: until, clearPauseUntil: until == null),
+    );
+  }
+
+  Future<void> resumeSubscription(int id) async {
+    await setSubscriptionStatus(id, SubscriptionStatus.active);
+    final extra = await subscriptionExtra(id);
+    await saveSubscriptionExtra(
+      id,
+      extra.copyWith(clearPauseUntil: true, clearCancelAt: true),
+    );
+  }
+
+  Future<void> cancelSubscription(
+    int id, {
+    required bool atCycleEnd,
+    String? reason,
+  }) async {
+    final item = await subscription(id);
+    if (item == null) return;
+    final extra = await subscriptionExtra(id);
+    if (atCycleEnd) {
+      await saveSubscriptionExtra(
+        id,
+        extra.copyWith(
+          cancelAt: nextSubscriptionBillingDate(
+            item.nextBillingDate,
+            item.frequency,
+            DateTime.now(),
+          ),
+          cancellationReason: reason,
+        ),
+      );
+    } else {
+      await setSubscriptionStatus(id, SubscriptionStatus.cancelled);
+      await saveSubscriptionExtra(
+        id,
+        extra.copyWith(cancellationReason: reason, clearCancelAt: true),
+      );
+    }
+  }
+
+  Future<void> refreshSubscriptionTransitions({DateTime? now}) async {
+    final today = dateOnly(now ?? DateTime.now());
+    final extras = await subscriptionExtras();
+    for (final entry in extras.entries) {
+      final item = await subscription(entry.key);
+      if (item == null) continue;
+      final extra = entry.value;
+      if (extra.cancelAt != null &&
+          !dateOnly(extra.cancelAt!).isAfter(today) &&
+          item.status != SubscriptionStatus.cancelled) {
+        await setSubscriptionStatus(item.id, SubscriptionStatus.cancelled);
+        await saveSubscriptionExtra(
+          item.id,
+          extra.copyWith(clearCancelAt: true),
+        );
+      } else if (extra.pauseUntil != null &&
+          !dateOnly(extra.pauseUntil!).isAfter(today) &&
+          item.status == SubscriptionStatus.paused) {
+        await setSubscriptionStatus(item.id, SubscriptionStatus.active);
+        await saveSubscriptionExtra(
+          item.id,
+          extra.copyWith(clearPauseUntil: true),
+        );
+      }
+    }
+  }
+
+  Future<(bool, bool)> subscriptionReminderDays() async {
+    final rows =
+        await (db.select(db.settings)..where(
+              (row) => row.key.isIn([
+                'subscription.reminder.3',
+                'subscription.reminder.1',
+              ]),
+            ))
+            .get();
+    final values = {for (final row in rows) row.key: row.value};
+    return (
+      values['subscription.reminder.3'] != 'false',
+      values['subscription.reminder.1'] != 'false',
+    );
+  }
+
+  Future<void> setSubscriptionReminderDays({
+    required bool threeDays,
+    required bool oneDay,
+  }) async {
+    for (final entry in {
+      'subscription.reminder.3': threeDays,
+      'subscription.reminder.1': oneDay,
+    }.entries) {
+      await db
+          .into(db.settings)
+          .insertOnConflictUpdate(
+            SettingsCompanion.insert(
+              key: entry.key,
+              value: entry.value.toString(),
+            ),
+          );
+    }
+    for (final item in await _visibleSubscriptions()) {
+      unawaited(_syncSubscriptionNotifications(item.id));
+    }
+  }
+
+  Future<void> _syncSubscriptionNotifications(int id) async {
+    if (!Platform.isAndroid && !Platform.isIOS) return;
+    try {
+      for (var slot = 0; slot < 4; slot++) {
+        await _localReminders.cancelReminder(1000000 + id * 10 + slot);
+      }
+      final item = await subscription(id);
+      if (item == null) return;
+      final extra = await subscriptionExtra(id);
+      final now = DateTime.now();
+      if (item.status == SubscriptionStatus.paused &&
+          extra.pauseUntil != null) {
+        await _localReminders.scheduleReminder(
+          id: 1000000 + id * 10 + 3,
+          title: '${item.name} resumes soon',
+          body: 'FinKeep will resume tracking this subscription.',
+          when: DateTime(
+            extra.pauseUntil!.year,
+            extra.pauseUntil!.month,
+            extra.pauseUntil!.day,
+            9,
+          ),
+        );
+      }
+      if (item.status != SubscriptionStatus.active) return;
+      final due = nextSubscriptionBillingDate(
+        item.nextBillingDate,
+        item.frequency,
+        now,
+      );
+      final (threeDays, oneDay) = await subscriptionReminderDays();
+      for (final (slot, days, enabled) in [(0, 3, threeDays), (1, 1, oneDay)]) {
+        if (!enabled) continue;
+        await _localReminders.scheduleReminder(
+          id: 1000000 + id * 10 + slot,
+          title: '${item.name} renews in $days ${days == 1 ? 'day' : 'days'}',
+          body: 'Open FinKeep to see the amount.',
+          when: DateTime(due.year, due.month, due.day - days, 9),
+        );
+      }
+      if (extra.trialEndsOn != null) {
+        final trial = extra.trialEndsOn!;
+        await _localReminders.scheduleReminder(
+          id: 1000000 + id * 10 + 2,
+          title: '${item.name} trial ends in 2 days',
+          body:
+              'Cancel the trial before ${formatDate(trial)} or you may be charged.',
+          when: DateTime(trial.year, trial.month, trial.day - 2, 9),
+        );
+      }
+    } catch (error, stackTrace) {
+      debugPrint('Subscription reminder scheduling failed: $error');
+      debugPrintStack(stackTrace: stackTrace);
+    }
   }
 
   Stream<List<PaymentMethod>> watchPaymentMethods() => (db.select(
@@ -317,16 +780,23 @@ class FinanceRepository {
   Stream<List<ReminderItem>> watchReminders({bool attentionOnly = true}) {
     late final StreamController<List<ReminderItem>> controller;
     final subscriptions = <StreamSubscription<void>>[];
+    Timer? pending;
+    var generation = 0;
 
     Future<void> emit() async {
-      if (!controller.isClosed) {
-        controller.add(await reminders(attentionOnly: attentionOnly));
-      }
+      if (controller.isClosed) return;
+      final request = ++generation;
+      final items = await reminders(attentionOnly: attentionOnly);
+      if (!controller.isClosed && request == generation) controller.add(items);
+    }
+
+    void scheduleEmit() {
+      pending?.cancel();
+      pending = Timer(const Duration(milliseconds: 24), emit);
     }
 
     controller = StreamController<List<ReminderItem>>(
       onListen: () {
-        emit();
         for (final stream in [
           db.select(db.emis).watch().map((_) {}),
           db.select(db.emiPayments).watch().map((_) {}),
@@ -335,10 +805,12 @@ class FinanceRepository {
           db.select(db.subscriptions).watch().map((_) {}),
           db.select(db.settings).watch().map((_) {}),
         ]) {
-          subscriptions.add(stream.listen((_) => emit()));
+          subscriptions.add(stream.listen((_) => scheduleEmit()));
         }
       },
       onCancel: () async {
+        pending?.cancel();
+        generation++;
         for (final subscription in subscriptions) {
           await subscription.cancel();
         }
@@ -350,14 +822,25 @@ class FinanceRepository {
   Stream<DashboardSummary> watchDashboard() {
     late final StreamController<DashboardSummary> controller;
     final subscriptions = <StreamSubscription<void>>[];
+    Timer? pending;
+    var generation = 0;
 
     Future<void> emit() async {
-      if (!controller.isClosed) controller.add(await _loadDashboard());
+      if (controller.isClosed) return;
+      final request = ++generation;
+      final summary = await _loadDashboard();
+      if (!controller.isClosed && request == generation) {
+        controller.add(summary);
+      }
+    }
+
+    void scheduleEmit() {
+      pending?.cancel();
+      pending = Timer(const Duration(milliseconds: 24), emit);
     }
 
     controller = StreamController<DashboardSummary>(
       onListen: () {
-        emit();
         for (final stream in [
           db.select(db.emis).watch().map((_) {}),
           db.select(db.emiPayments).watch().map((_) {}),
@@ -366,27 +849,22 @@ class FinanceRepository {
           db.select(db.subscriptions).watch().map((_) {}),
           db.select(db.settings).watch().map((_) {}),
         ]) {
-          subscriptions.add(stream.listen((_) => emit()));
+          subscriptions.add(stream.listen((_) => scheduleEmit()));
         }
       },
       onCancel: () async {
+        pending?.cancel();
+        generation++;
         for (final subscription in subscriptions) {
           await subscription.cancel();
         }
       },
     );
-    return controller.stream;
+    return controller.stream.distinct();
   }
 
   Future<DashboardSummary> _loadDashboard() async {
-    final archivedIds = await _archivedEmiIds();
-    final emis = (await db.select(db.emis).get())
-        .where((emi) => !archivedIds.contains(emi.id))
-        .toList();
-    final emiDetails = <EmiDetail>[];
-    for (final emi in emis) {
-      emiDetails.add(await emiDetail(emi.id));
-    }
+    final emiDetails = await _visibleEmiDetails();
     final records = await moneyDetails();
     final subscriptions = await _visibleSubscriptions();
     final today = dateOnly(DateTime.now());
@@ -493,9 +971,40 @@ class FinanceRepository {
     final records = (await db.select(db.moneyRecords).get()).where(
       (record) => !archivedIds.contains(record.id),
     );
+    final repaymentsByRecord = <int, List<MoneyRepayment>>{};
+    for (final repayment in await db.select(db.moneyRepayments).get()) {
+      repaymentsByRecord
+          .putIfAbsent(repayment.moneyRecordId, () => [])
+          .add(repayment);
+    }
     final details = <MoneyRecordDetail>[];
     for (final record in records) {
-      details.add(await moneyDetail(record.id));
+      final repayments =
+          repaymentsByRecord[record.id] ?? const <MoneyRepayment>[];
+      final summary = calculateRepaymentSummary(
+        originalAmountPaise: record.amountPaise,
+        repaymentAmountsPaise: repayments.map((item) => item.amountPaise),
+        activeStatus: record.status == MoneyStatus.settled
+            ? MoneyStatus.active
+            : record.status,
+      );
+      if (summary.status != record.status) {
+        await (db.update(
+          db.moneyRecords,
+        )..where((t) => t.id.equals(record.id))).write(
+          MoneyRecordsCompanion(
+            status: Value(summary.status),
+            updatedAt: Value(DateTime.now()),
+          ),
+        );
+      }
+      details.add(
+        MoneyRecordDetail(
+          record: record,
+          repayments: repayments,
+          summary: summary,
+        ),
+      );
     }
     return details;
   }
@@ -554,7 +1063,7 @@ class FinanceRepository {
       type: isEdit ? ActivityType.emiEdited : ActivityType.emiCreated,
       title: isEdit ? 'EMI Edited' : 'EMI Added',
       description:
-          '${saved.emi.name} · ${formatMoney(saved.scheduledInstallmentPaise)} × ${saved.emi.tenureMonths}',
+          '${saved.emi.name} · ${formatMoneyUnmasked(saved.scheduledInstallmentPaise)} × ${saved.emi.tenureMonths}',
       entityType: 'emi',
       entityId: id,
     );
@@ -843,7 +1352,7 @@ class FinanceRepository {
             : ActivityType.emiPaymentRecorded,
         title: paidEarly ? 'EMI Paid Early' : 'EMI Paid',
         description:
-            '${emi.name} · ${formatMoney(paymentAmount)} · installment $installment',
+            '${emi.name} · ${formatMoneyUnmasked(paymentAmount)} · installment $installment',
         entityType: 'emi',
         entityId: emi.id,
       );
@@ -976,8 +1485,8 @@ class FinanceRepository {
       title: isEdit
           ? 'Updated ${displayName(saved.personName)}\'s record'
           : saved.direction == MoneyDirection.given
-          ? 'You gave ${displayName(saved.personName)} ${formatMoney(saved.amountPaise)}'
-          : 'You borrowed ${formatMoney(saved.amountPaise)} from ${displayName(saved.personName)}',
+          ? 'You gave ${displayName(saved.personName)} ${formatMoneyUnmasked(saved.amountPaise)}'
+          : 'You borrowed ${formatMoneyUnmasked(saved.amountPaise)} from ${displayName(saved.personName)}',
       description: saved.notes,
       entityType: 'money',
       entityId: id,
@@ -1089,8 +1598,8 @@ class FinanceRepository {
       await _logActivity(
         type: ActivityType.moneyRepayment,
         title: record.direction == MoneyDirection.given
-            ? '${displayName(record.personName)} repaid ${formatMoney(amountPaise)}'
-            : 'You repaid ${formatMoney(amountPaise)} to ${displayName(record.personName)}',
+            ? '${displayName(record.personName)} repaid ${formatMoneyUnmasked(amountPaise)}'
+            : 'You repaid ${formatMoneyUnmasked(amountPaise)} to ${displayName(record.personName)}',
         description: notes,
         entityType: 'money',
         entityId: moneyRecordId,
@@ -1120,7 +1629,7 @@ class FinanceRepository {
       await _logActivity(
         type: ActivityType.moneyEdited,
         title: 'Undid repayment for ${displayName(record.personName)}',
-        description: formatMoney(repayment.amountPaise),
+        description: formatMoneyUnmasked(repayment.amountPaise),
         entityType: 'money',
         entityId: recordId,
       );
@@ -1186,7 +1695,7 @@ class FinanceRepository {
               ? 'resumed'
               : status!.label.toLowerCase()}'
         : amount != existing.amountPaise
-        ? '${displayName(name)} price changed to ${formatMoney(amount)}'
+        ? '${displayName(name)} price changed to ${formatMoneyUnmasked(amount)}'
         : due != existing.nextBillingDate
         ? '${displayName(name)} billing date changed to ${formatDate(due!)}'
         : '${displayName(name)} updated';
@@ -1197,10 +1706,28 @@ class FinanceRepository {
       title: title,
       description: saved == null
           ? 'Subscription'
-          : '${displayName(saved.name)} · ${formatMoney(saved.amountPaise)}',
+          : '${displayName(saved.name)} · ${formatMoneyUnmasked(saved.amountPaise)}',
       entityType: 'subscription',
       entityId: id,
     );
+    if (existing != null && existing.amountPaise != amount) {
+      final extra = await subscriptionExtra(id);
+      await saveSubscriptionExtra(
+        id,
+        extra.copyWith(
+          priceHistory: [
+            ...extra.priceHistory,
+            SubscriptionPriceChange(
+              fromPaise: existing.amountPaise,
+              toPaise: amount,
+              at: DateTime.now(),
+            ),
+          ],
+        ),
+      );
+    } else {
+      unawaited(_syncSubscriptionNotifications(id));
+    }
     return id;
   }
 
@@ -1226,11 +1753,12 @@ class FinanceRepository {
         type: ActivityType.subscriptionDeleted,
         title: '${displayName(existing.name)} deleted',
         description:
-            '${displayName(existing.name)} · ${formatMoney(existing.amountPaise)}',
+            '${displayName(existing.name)} · ${formatMoneyUnmasked(existing.amountPaise)}',
         entityType: 'subscription',
         entityId: id,
       );
     });
+    unawaited(_syncSubscriptionNotifications(id));
   }
 
   Future<void> setSubscriptionStatus(int id, SubscriptionStatus status) async {
@@ -1253,11 +1781,12 @@ class FinanceRepository {
                 ? 'resumed'
                 : status.label.toLowerCase()}',
         description:
-            '${displayName(existing.name)} · ${formatMoney(existing.amountPaise)} · ${status.label}',
+            '${displayName(existing.name)} · ${formatMoneyUnmasked(existing.amountPaise)} · ${status.label}',
         entityType: 'subscription',
         entityId: id,
       );
     });
+    unawaited(_syncSubscriptionNotifications(id));
   }
 
   Future<void> restoreSubscription(Subscription item) async {
@@ -1271,7 +1800,7 @@ class FinanceRepository {
       await _logActivity(
         type: ActivityType.subscriptionCreated,
         title: '${displayName(item.name)} restored',
-        description: formatMoney(item.amountPaise),
+        description: formatMoneyUnmasked(item.amountPaise),
         entityType: 'subscription',
         entityId: item.id,
       );
@@ -1311,12 +1840,8 @@ class FinanceRepository {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     final items = <ReminderItem>[];
-    final archivedIds = await _archivedEmiIds();
-    final emis = (await db.select(db.emis).get()).where(
-      (emi) => !archivedIds.contains(emi.id),
-    );
-    for (final emi in emis) {
-      final detail = await emiDetail(emi.id);
+    for (final detail in await _visibleEmiDetails()) {
+      final emi = detail.emi;
       final isPaused = emi.status == EmiStatus.paused;
       final unpaid = detail.installments.where((item) => !item.isPaid);
       for (final installment in unpaid) {
@@ -1664,5 +2189,6 @@ class PdfExportService {
     );
   }
 
-  String _pdfMoney(int paise) => formatMoney(paise).replaceFirst('₹', 'INR ');
+  String _pdfMoney(int paise) =>
+      formatMoneyUnmasked(paise).replaceFirst('₹', 'INR ');
 }

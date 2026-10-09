@@ -20,6 +20,8 @@ import '../../shared/empty_state.dart';
 import '../../shared/forms.dart';
 import '../../shared/finance_form_widgets.dart';
 import '../../shared/finance_display_widgets.dart';
+import '../../shared/notched_navigation_bar.dart';
+import '../../shared/screen_header.dart';
 
 class EmisScreen extends ConsumerStatefulWidget {
   const EmisScreen({super.key});
@@ -34,76 +36,150 @@ class _EmisScreenState extends ConsumerState<EmisScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('EMIs & Loans')),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => openFinanceSheet(context, const EmiFormSheet()),
-        icon: const Icon(Icons.add),
-        label: const Text('Add EMI'),
-      ),
-      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
-      body: AsyncView(
-        value: ref.watch(emiDetailsProvider),
-        builder: (items) {
-          final active =
-              items
-                  .where(
-                    (item) =>
-                        item.emi.status != EmiStatus.completed &&
-                        item.nextUnpaidInstallment != null,
-                  )
-                  .toList()
-                ..sort(
-                  (a, b) => a.nextUnpaidInstallment!.dueDate.compareTo(
-                    b.nextUnpaidInstallment!.dueDate,
-                  ),
-                );
-          final completed = items
-              .where(
-                (item) =>
-                    item.emi.status == EmiStatus.completed ||
-                    item.nextUnpaidInstallment == null,
-              )
-              .toList();
-          final visible = _showCompleted ? completed : active;
-          return ListView(
-            padding: EdgeInsets.fromLTRB(16, 8, 16, _emiListBottomPadding),
-            children: [
-              _EmiHero(items: active),
-              const SizedBox(height: 24),
-              _EmiTabs(
-                activeCount: active.length,
-                completedCount: completed.length,
-                showCompleted: _showCompleted,
-                onChanged: (value) => setState(() => _showCompleted = value),
+      floatingActionButton: MediaQuery.viewInsetsOf(context).bottom > 0
+          ? null
+          : Padding(
+              padding: EdgeInsets.only(
+                bottom: NotchedNavigationMetrics.fabBottomPadding,
               ),
-              const SizedBox(height: 14),
-              if (visible.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 40),
-                  child: EmptyState(
-                    icon: _showCompleted
-                        ? Icons.check_circle_outline
-                        : Icons.account_balance_outlined,
-                    title: _showCompleted
-                        ? 'No completed EMIs yet'
-                        : 'No active EMIs',
-                    message: _showCompleted
-                        ? 'Paid-off loans will appear here.'
-                        : 'Add an EMI to see its installments and progress.',
-                    actionLabel: _showCompleted ? null : 'Add EMI',
-                    onAction: _showCompleted
-                        ? null
-                        : () => openFinanceSheet(context, const EmiFormSheet()),
-                  ),
-                )
-              else
-                for (final item in visible) ...[
-                  _EmiRow(detail: item, completed: _showCompleted),
-                  const Divider(height: 1),
-                ],
-            ],
-          );
-        },
+              child: FloatingActionButton.extended(
+                onPressed: () =>
+                    openFinanceSheet(context, const EmiFormSheet()),
+                icon: const Icon(Icons.add),
+                label: const Text('Add EMI'),
+              ),
+            ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
+      body: Column(
+        children: [
+          const ScreenHeader(title: Text('EMIs & Loans')),
+          Expanded(
+            child: AsyncView(
+              value: ref.watch(emiDetailsProvider),
+              builder: (items) {
+                final active =
+                    items
+                        .where(
+                          (item) =>
+                              item.emi.status != EmiStatus.completed &&
+                              item.nextUnpaidInstallment != null,
+                        )
+                        .toList()
+                      ..sort(
+                        (a, b) => a.nextUnpaidInstallment!.dueDate.compareTo(
+                          b.nextUnpaidInstallment!.dueDate,
+                        ),
+                      );
+                final completed = items
+                    .where(
+                      (item) =>
+                          item.emi.status == EmiStatus.completed ||
+                          item.nextUnpaidInstallment == null,
+                    )
+                    .toList();
+                final visible = _showCompleted ? completed : active;
+                final rows = <(String?, EmiDetail?)>[];
+                if (_showCompleted) {
+                  if (completed.isNotEmpty) rows.add(('Completed', null));
+                  for (final item in completed) {
+                    rows.add((null, item));
+                  }
+                } else {
+                  final grouped = <DueListGroup, List<EmiDetail>>{};
+                  for (final item in active) {
+                    final group = dueListGroup(
+                      item.nextUnpaidInstallment!.dueDate,
+                      DateTime.now(),
+                    );
+                    grouped.putIfAbsent(group, () => []).add(item);
+                  }
+                  for (final group in DueListGroup.values) {
+                    final section = grouped[group];
+                    if (section == null || section.isEmpty) continue;
+                    rows.add((group.label, null));
+                    for (final item in section) {
+                      rows.add((null, item));
+                    }
+                  }
+                }
+                return CustomScrollView(
+                  slivers: [
+                    SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+                      sliver: SliverToBoxAdapter(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _EmiHero(items: active),
+                            const SizedBox(height: 24),
+                            _EmiTabs(
+                              activeCount: active.length,
+                              completedCount: completed.length,
+                              showCompleted: _showCompleted,
+                              onChanged: (value) =>
+                                  setState(() => _showCompleted = value),
+                            ),
+                            if (visible.isEmpty)
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 40,
+                                ),
+                                child: EmptyState(
+                                  icon: _showCompleted
+                                      ? Icons.check_circle_outline
+                                      : Icons.account_balance_outlined,
+                                  title: _showCompleted
+                                      ? 'No completed EMIs yet'
+                                      : 'No active EMIs',
+                                  message: _showCompleted
+                                      ? 'Paid-off loans will appear here.'
+                                      : 'Add an EMI to see its installments and progress.',
+                                  actionLabel: _showCompleted
+                                      ? null
+                                      : 'Add EMI',
+                                  onAction: _showCompleted
+                                      ? null
+                                      : () => openFinanceSheet(
+                                          context,
+                                          const EmiFormSheet(),
+                                        ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    SliverPadding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      sliver: SliverList.builder(
+                        itemCount: rows.length,
+                        itemBuilder: (context, index) {
+                          final row = rows[index];
+                          if (row.$1 != null) return DueListHeader(row.$1!);
+                          return Padding(
+                            key: ValueKey(row.$2!.emi.id),
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: _EmiRow(
+                              detail: row.$2!,
+                              completed: _showCompleted,
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                    SliverToBoxAdapter(
+                      child: SizedBox(
+                        height: NotchedNavigationMetrics.tabContentPadding(
+                          context,
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -131,8 +207,8 @@ class _EmiTabs extends StatelessWidget {
     showSelectedIcon: false,
     onSelectionChanged: (value) => onChanged(value.first),
     style: SegmentedButton.styleFrom(
-      selectedBackgroundColor: AppTheme.selectedFill,
-      selectedForegroundColor: AppTheme.seed,
+      selectedBackgroundColor: AppTheme.colorsOf(context).selectedFill,
+      selectedForegroundColor: Theme.of(context).colorScheme.primary,
       shape: const StadiumBorder(),
     ),
   );
@@ -153,11 +229,6 @@ class _EmiHero extends StatelessWidget {
       0,
       (sum, item) => sum + item.scheduledInstallmentPaise,
     );
-    final total = items.fold<int>(
-      0,
-      (sum, item) => sum + item.totalRepaymentPaise,
-    );
-    final paid = items.fold<int>(0, (sum, item) => sum + item.paidPaise);
     final finalDue = items.isEmpty
         ? null
         : items
@@ -178,14 +249,14 @@ class _EmiHero extends StatelessWidget {
         ? 'Final date passed'
         : 'Debt-free this month';
     return Padding(
-      padding: const EdgeInsets.only(top: 12),
+      padding: EdgeInsets.zero,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             'TOTAL REMAINING',
             style: Theme.of(context).textTheme.labelMedium?.copyWith(
-              color: AppTheme.mutedText,
+              color: AppTheme.colorsOf(context).secondaryText,
               fontWeight: FontWeight.w700,
             ),
           ),
@@ -216,16 +287,9 @@ class _EmiHero extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
             countdown,
-            style: Theme.of(
-              context,
-            ).textTheme.bodySmall?.copyWith(color: AppTheme.mutedText),
-          ),
-          const SizedBox(height: 16),
-          LinearProgressIndicator(
-            value: total == 0 ? 0 : (paid / total).clamp(0, 1),
-            minHeight: 5,
-            borderRadius: BorderRadius.circular(3),
-            backgroundColor: Theme.of(context).colorScheme.outlineVariant,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: AppTheme.colorsOf(context).secondaryText,
+            ),
           ),
         ],
       ),
@@ -244,9 +308,9 @@ class _HeroFigure extends StatelessWidget {
     children: [
       Text(
         label,
-        style: Theme.of(
-          context,
-        ).textTheme.labelSmall?.copyWith(color: AppTheme.mutedText),
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+          color: AppTheme.colorsOf(context).secondaryText,
+        ),
       ),
       const SizedBox(height: 3),
       Text(
@@ -258,8 +322,6 @@ class _HeroFigure extends StatelessWidget {
     ],
   );
 }
-
-const double _emiListBottomPadding = 88;
 
 class _EmiRow extends StatelessWidget {
   const _EmiRow({required this.detail, required this.completed});
@@ -276,130 +338,116 @@ class _EmiRow extends StatelessWidget {
         ? 0
         : dateOnly(due).difference(dateOnly(DateTime.now())).inDays;
     final urgency = days < 0
-        ? AppTheme.pay
+        ? AppTheme.colorsOf(context).pay
         : days <= 7
-        ? AppTheme.emi
-        : AppTheme.receive;
+        ? AppTheme.colorsOf(context).emi
+        : AppTheme.colorsOf(context).receive;
     final lastPayment = detail.payments.isEmpty
         ? null
         : detail.payments
               .map((payment) => payment.paidOn)
               .reduce((a, b) => a.isAfter(b) ? a : b);
     final completedOn = lastPayment ?? emi.updatedAt;
-    return InkWell(
+    return FinanceTonalTile(
       onTap: () => Navigator.of(
         context,
       ).push(MaterialPageRoute(builder: (_) => EmiDetailScreen(emi.id))),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 18),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            CircleAvatar(
-              radius: 22,
-              backgroundColor: completed
-                  ? AppTheme.fieldFill
-                  : AppTheme.selectedFill,
-              child: completed
-                  ? const Icon(Icons.check, color: AppTheme.seed)
-                  : Text(
-                      displayName(
-                        emi.provider?.isNotEmpty == true
-                            ? emi.provider!
-                            : emi.name,
-                      ).characters.first.toUpperCase(),
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        color: AppTheme.seed,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
+      leading: CircleAvatar(
+        radius: 20,
+        backgroundColor: completed
+            ? AppTheme.colorsOf(context).fieldFill
+            : AppTheme.colorsOf(context).selectedFill,
+        child: completed
+            ? Icon(Icons.check, color: Theme.of(context).colorScheme.primary)
+            : Text(
+                displayName(
+                  emi.provider?.isNotEmpty == true ? emi.provider! : emi.name,
+                ).characters.first.toUpperCase(),
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  color: Theme.of(context).colorScheme.primary,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+      ),
+      content: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            displayName(emi.name),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w800,
+              color: completed
+                  ? AppTheme.colorsOf(context).secondaryText
+                  : null,
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          displayName(emi.name),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.titleMedium
-                              ?.copyWith(
-                                fontWeight: FontWeight.w800,
-                                color: completed ? AppTheme.mutedText : null,
-                              ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      AmountText(
-                        completed
-                            ? detail.paidPaise
-                            : detail.amountForInstallment(
-                                nextInstallment!.number,
-                              ),
-                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ],
+          ),
+          const SizedBox(height: 3),
+          Text(
+            completed
+                ? '${emi.tenureMonths} installments · Total paid'
+                : '${emi.provider?.isNotEmpty == true ? emi.provider : emi.type} · ${emi.frequency.label}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: AppTheme.colorsOf(context).secondaryText,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: StatusPill(
+              label: completed
+                  ? 'Completed on ${formatDate(completedOn)}'
+                  : relativeDueText(due!, DateTime.now()),
+              color: completed ? AppTheme.colorsOf(context).receive : urgency,
+            ),
+          ),
+          if (!completed)
+            Padding(
+              padding: const EdgeInsets.only(top: 5),
+              child: Text(
+                'Due ${formatDate(due!)}',
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: AppTheme.colorsOf(context).secondaryText,
+                ),
+              ),
+            ),
+        ],
+      ),
+      trailing: SizedBox(
+        width: 86,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerRight,
+              child: AmountText(
+                completed
+                    ? detail.paidPaise
+                    : detail.amountForInstallment(nextInstallment!.number),
+                style: Theme.of(
+                  context,
+                ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
+              ),
+            ),
+            const SizedBox(height: 7),
+            MiniProgressRing(
+              progress: emi.tenureMonths == 0
+                  ? 0
+                  : detail.paidInstallments / emi.tenureMonths,
+              size: 42,
+              strokeWidth: 3,
+              child: Center(
+                child: Text(
+                  '${detail.paidInstallments}/${emi.tenureMonths}',
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    fontSize: 9,
+                    fontWeight: FontWeight.w800,
                   ),
-                  const SizedBox(height: 3),
-                  Text(
-                    completed
-                        ? '${emi.tenureMonths} installments · Total paid'
-                        : '${emi.provider?.isNotEmpty == true ? emi.provider : emi.type} · per ${emi.frequency.label.toLowerCase()}',
-                    style: Theme.of(
-                      context,
-                    ).textTheme.bodySmall?.copyWith(color: AppTheme.mutedText),
-                  ),
-                  if (completed) ...[
-                    const SizedBox(height: 10),
-                    Text(
-                      'Completed on ${formatDate(completedOn)}',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: AppTheme.mutedText,
-                      ),
-                    ),
-                  ] else ...[
-                    const SizedBox(height: 12),
-                    if (emi.tenureMonths <= 24)
-                      SegmentedProgressStrip(
-                        installments: emi.tenureMonths,
-                        paidInstallments: detail.paidInstallments,
-                      )
-                    else
-                      LinearProgressIndicator(
-                        value: detail.paidInstallments / emi.tenureMonths,
-                        minHeight: 6,
-                        borderRadius: BorderRadius.circular(3),
-                      ),
-                    const SizedBox(height: 10),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            'Due ${formatDate(due!)}',
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                        ),
-                        StatusPill(
-                          label: relativeDueText(due, DateTime.now()),
-                          color: urgency,
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      '${detail.remainingInstallments} left · ${formatMoney(detail.remainingBalancePaise)} remaining',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: AppTheme.mutedText,
-                      ),
-                    ),
-                  ],
-                ],
+                ),
               ),
             ),
           ],
@@ -701,9 +749,9 @@ class _EmiOverview extends StatelessWidget {
         const SizedBox(height: 6),
         Text(
           '${detail.paidInstallments} paid · ${detail.remainingInstallments} left',
-          style: Theme.of(
-            context,
-          ).textTheme.bodyMedium?.copyWith(color: AppTheme.mutedText),
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+            color: AppTheme.colorsOf(context).secondaryText,
+          ),
         ),
         const SizedBox(height: 24),
         Row(
@@ -745,9 +793,9 @@ class _OverviewMetric extends StatelessWidget {
     children: [
       Text(
         label,
-        style: Theme.of(
-          context,
-        ).textTheme.labelSmall?.copyWith(color: AppTheme.mutedText),
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+          color: AppTheme.colorsOf(context).secondaryText,
+        ),
       ),
       const SizedBox(height: 5),
       FittedBox(
@@ -813,29 +861,30 @@ class _HoldToPayButtonState extends State<_HoldToPayButton>
       onTapCancel: () => _controller.reset(),
       child: AnimatedBuilder(
         animation: _controller,
+        child: SizedBox(
+          width: double.infinity,
+          height: 54,
+          child: FilledButton.icon(
+            onPressed: null,
+            style: FilledButton.styleFrom(
+              disabledBackgroundColor: widget.enabled
+                  ? Theme.of(context).colorScheme.primary
+                  : Theme.of(context).colorScheme.outlineVariant,
+              disabledForegroundColor: AppTheme.heroTextOf(context),
+              shape: const StadiumBorder(),
+            ),
+            icon: widget.busy
+                ? const SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.touch_app_outlined),
+            label: Text(widget.busy ? 'Recording...' : widget.label),
+          ),
+        ),
         builder: (context, child) => Stack(
           children: [
-            SizedBox(
-              width: double.infinity,
-              height: 54,
-              child: FilledButton.icon(
-                onPressed: null,
-                style: FilledButton.styleFrom(
-                  disabledBackgroundColor: widget.enabled
-                      ? AppTheme.seed
-                      : Theme.of(context).colorScheme.outlineVariant,
-                  disabledForegroundColor: AppTheme.onHero,
-                  shape: const StadiumBorder(),
-                ),
-                icon: widget.busy
-                    ? const SizedBox.square(
-                        dimension: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.touch_app_outlined),
-                label: Text(widget.busy ? 'Recording...' : widget.label),
-              ),
-            ),
+            child!,
             Positioned.fill(
               child: IgnorePointer(
                 child: Align(
@@ -887,7 +936,7 @@ class _InstallmentTimeline extends StatelessWidget {
                 child: Container(
                   width: 2,
                   color: installment.isPaid && installments[index + 1].isPaid
-                      ? AppTheme.receive
+                      ? AppTheme.colorsOf(context).receive
                       : Theme.of(context).colorScheme.outlineVariant,
                 ),
               ),
@@ -955,7 +1004,11 @@ class _InstallmentTimeline extends StatelessWidget {
                                 child: Text(
                                   'Paid ${formatDateTime(payment.paidOn)}',
                                   style: Theme.of(context).textTheme.bodySmall
-                                      ?.copyWith(color: AppTheme.mutedText),
+                                      ?.copyWith(
+                                        color: AppTheme.colorsOf(
+                                          context,
+                                        ).secondaryText,
+                                      ),
                                 ),
                               ),
                               IconButton(
@@ -1096,9 +1149,9 @@ class _EmiWhatIfState extends State<_EmiWhatIf> {
         ),
         Text(
           '$monthsSooner ${monthsSooner == 1 ? 'month' : 'months'} sooner · Estimated ${formatMoney(saved)} interest saved',
-          style: Theme.of(
-            context,
-          ).textTheme.bodySmall?.copyWith(color: AppTheme.mutedText),
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: AppTheme.colorsOf(context).secondaryText,
+          ),
         ),
       ],
     );
@@ -1139,9 +1192,9 @@ class _EmiCelebration extends StatelessWidget {
                     height: 16,
                     color: [
                       AppTheme.accent,
-                      AppTheme.receive,
-                      AppTheme.emi,
-                      AppTheme.subscriptions,
+                      AppTheme.colorsOf(context).receive,
+                      AppTheme.colorsOf(context).emi,
+                      AppTheme.colorsOf(context).subscriptions,
                     ][index % 4],
                   ),
                 ),

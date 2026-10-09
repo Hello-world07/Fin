@@ -1,6 +1,6 @@
 import 'package:drift/drift.dart';
 
-import '../../core/formatters.dart';
+import '../../core/formatters.dart' hide formatMoney;
 import '../../domain/due_status.dart';
 import '../../data/database.dart';
 import '../../data/repositories.dart';
@@ -13,6 +13,10 @@ import 'assistant_commands.dart';
 import 'assistant_actions.dart';
 import 'assistant_math.dart';
 import 'assistant_visuals.dart';
+import 'assistant_planning.dart';
+import 'assistant_answer_style.dart';
+
+String formatMoney(int paise) => formatMoneyUnmasked(paise);
 
 abstract class AssistantEngine {
   Future<AssistantReply> ask(String question, ConversationContext ctx);
@@ -196,10 +200,10 @@ IntentMatch matchAssistantIntent(
   if (q == 'help' || q.contains('help me')) {
     return const IntentMatch(AssistantIntent.help);
   }
-  if (q.contains('analyze') ||
-      q.contains('analyse') ||
-      q.contains('suggestion') ||
-      q.contains('portfolio')) {
+  if (_score(q, ['analyze', 'analyse', 'analysis', 'portfolio', 'suggestion']) >
+          0 ||
+      q.contains('vishleshan') ||
+      q.contains('analyse chey')) {
     return const IntentMatch(AssistantIntent.analysis);
   }
   for (final name in personNames) {
@@ -378,6 +382,16 @@ AssistantDateRange parseAssistantDateRange(String question, DateTime now) {
       today,
       today.add(Duration(days: DateTime.sunday - today.weekday)),
       'this week',
+    );
+  }
+  if (q.contains('next week')) {
+    final start = today.add(
+      Duration(days: DateTime.monday - today.weekday + 7),
+    );
+    return AssistantDateRange(
+      start,
+      start.add(const Duration(days: 6)),
+      'next week',
     );
   }
   final nextDays = RegExp(r'next (\d{1,3}) days?').firstMatch(q);
@@ -671,8 +685,116 @@ class FinanceFacts {
 
 // Replace this provider's engine with an LLM implementation later; the UI uses only AssistantEngine.
 class LocalAssistantEngine implements AssistantEngine, AssistantActionEngine {
-  const LocalAssistantEngine(this.repository);
+  LocalAssistantEngine(this.repository);
   final FinanceRepository repository;
+  final AssistantAnswerStyle _answerStyle = AssistantAnswerStyle();
+
+  AssistantReply _polish(
+    AssistantIntent intent,
+    String question,
+    FinanceFacts facts,
+    AssistantReply reply,
+  ) {
+    final insights = <String>[];
+    final next = facts.dueItemsThrough(
+      dateOnly(facts.now).add(const Duration(days: 365)),
+    );
+    if (next.isNotEmpty) {
+      insights.add(
+        '${next.first.label} is due ${formatDate(next.first.dueDate)} for ${formatMoney(next.first.amountPaise)}.',
+      );
+    }
+    final biggest = facts.activeEmis.toList()
+      ..sort(
+        (a, b) => b.remainingBalancePaise.compareTo(a.remainingBalancePaise),
+      );
+    if (biggest.isNotEmpty) {
+      insights.add(
+        '${biggest.first.emi.name} has ${formatMoney(biggest.first.remainingBalancePaise)} in scheduled payments left.',
+      );
+    }
+    final owed = facts.given.toList()
+      ..sort(
+        (a, b) => b.summary.remainingAmountPaise.compareTo(
+          a.summary.remainingAmountPaise,
+        ),
+      );
+    if (owed.isNotEmpty) {
+      insights.add(
+        '${owed.first.record.personName} owes you ${formatMoney(owed.first.summary.remainingAmountPaise)}.',
+      );
+    }
+    final renewing = facts.activeSubscriptions.toList()
+      ..sort(
+        (a, b) =>
+            nextSubscriptionBillingDate(
+              a.nextBillingDate,
+              a.frequency,
+              facts.now,
+            ).compareTo(
+              nextSubscriptionBillingDate(
+                b.nextBillingDate,
+                b.frequency,
+                facts.now,
+              ),
+            ),
+      );
+    if (renewing.isNotEmpty) {
+      final first = renewing.first;
+      final date = nextSubscriptionBillingDate(
+        first.nextBillingDate,
+        first.frequency,
+        facts.now,
+      );
+      insights.add(
+        '${first.name} renews ${formatDate(date)} for ${formatMoney(first.amountPaise)}.',
+      );
+    }
+    return _answerStyle.apply(
+      intent,
+      question,
+      reply,
+      facts.now,
+      insights: insights,
+    );
+  }
+
+  List<AssistantVisualPart> _dueVisuals(
+    List<AssistantDueItem> due,
+    DateTime now,
+  ) {
+    if (due.isEmpty) return const [];
+    return [
+      AssistantVisualPart(
+        kind: AssistantVisualKind.timeline,
+        title: 'Due timeline',
+        data: [
+          for (final item in due.take(12))
+            AssistantVisualDatum(
+              label: '${item.label} · ${formatDate(item.dueDate)}',
+              value: item.amountPaise.toDouble(),
+              displayValue: formatMoney(item.amountPaise),
+              date: item.dueDate,
+              isOverdue: dateOnly(item.dueDate).isBefore(dateOnly(now)),
+            ),
+        ],
+      ),
+      AssistantVisualPart(
+        kind: AssistantVisualKind.weeklyBars,
+        title: 'Due by week',
+        data: buildWeeklyChartData(
+          due.map(
+            (item) => AssistantDatedAmount(
+              item.dueDate,
+              item.amountPaise,
+              overdue: dateOnly(item.dueDate).isBefore(dateOnly(now)),
+            ),
+          ),
+          now,
+        ),
+      ),
+    ];
+  }
 
   @override
   Future<AssistantReply> ask(String question, ConversationContext ctx) async {
@@ -757,6 +879,28 @@ class LocalAssistantEngine implements AssistantEngine, AssistantActionEngine {
       subscriptions: await repository.watchSubscriptions().first,
       now: ctx.now,
     );
+    final whatIf = parseWhatIf(question);
+    if (whatIf != null) return _whatIfReply(whatIf, facts);
+    if (normalized == 'today' || normalized == 'daily brief') {
+      final today = dateOnly(ctx.now);
+      final items = facts
+          .dueItemsThrough(today)
+          .where((item) => !dateOnly(item.dueDate).isBefore(today))
+          .toList();
+      final total = items.fold<int>(0, (sum, item) => sum + item.amountPaise);
+      return AssistantReply(
+        items.isEmpty
+            ? 'Nothing due today.'
+            : '${items.length} payment${items.length == 1 ? '' : 's'} due today, ${formatMoney(total)}.',
+        rows: [
+          for (final item in items)
+            AssistantRow(item.label, formatMoney(item.amountPaise)),
+        ],
+        suggestions: const ["What's due this week?", 'My financial status'],
+      );
+    }
+    final reminderReply = _prepareReminder(question, facts, ctx);
+    if (reminderReply != null) return reminderReply;
     var actionCommand = parseAssistantActionCommand(question);
     if (actionCommand != null &&
         const {'it', 'that', 'that one'}.contains(actionCommand.targetText) &&
@@ -828,13 +972,16 @@ class LocalAssistantEngine implements AssistantEngine, AssistantActionEngine {
         ).hasMatch(normalized)) {
       final previous = normalizeQuestion(ctx.previousQuestions.last);
       if (normalized.contains('next month') ||
-          normalized.contains('this month')) {
+          normalized.contains('this month') ||
+          normalized.contains('next week')) {
         if (previous.contains('need to pay')) {
           effectiveQuestion = 'how much do I need to pay $question';
         } else if (previous.contains('emi')) {
           effectiveQuestion = 'emi amount $question';
         } else if (previous.contains('come to me')) {
           effectiveQuestion = 'how much will come to me $question';
+        } else if (previous.contains('due')) {
+          effectiveQuestion = 'what is due $question';
         }
       }
     }
@@ -877,7 +1024,7 @@ class LocalAssistantEngine implements AssistantEngine, AssistantActionEngine {
           ],
         );
       case AssistantIntent.analysis:
-        return _analyzePortfolio(facts);
+        return _polish(match.intent, question, facts, _analyzePortfolio(facts));
       case AssistantIntent.nextEmi:
         final next = facts.nextEmi;
         if (next == null) {
@@ -982,84 +1129,153 @@ class LocalAssistantEngine implements AssistantEngine, AssistantActionEngine {
             .where((item) => item.destination == destination)
             .fold(0, (sum, item) => sum + item.amountPaise);
         final total = due.fold<int>(0, (sum, item) => sum + item.amountPaise);
-        return AssistantReply(
-          '${formatMoney(total)} is scheduled to be paid from ${formatDate(range.start)} to ${formatDate(range.end)}.',
-          rows: [
-            AssistantRow(
-              'EMIs',
-              formatMoney(subtotal(AssistantDestination.emis)),
-            ),
-            AssistantRow(
-              'Subscriptions',
-              formatMoney(subtotal(AssistantDestination.subscriptions)),
-            ),
-            AssistantRow(
-              'Money borrowed',
-              formatMoney(subtotal(AssistantDestination.money)),
-            ),
-            AssistantRow('Total', formatMoney(total)),
-          ],
-          visuals: due.isEmpty
-              ? const [
-                  AssistantVisualPart(
-                    kind: AssistantVisualKind.timeline,
-                    title: 'Due timeline',
-                  ),
-                ]
-              : [
-                  AssistantVisualPart(
-                    kind: AssistantVisualKind.timeline,
-                    title: 'Due timeline',
-                    data: [
-                      for (final item in due.take(12))
-                        AssistantVisualDatum(
-                          label: '${item.label} · ${formatDate(item.dueDate)}',
-                          value: item.amountPaise.toDouble(),
-                          displayValue: formatMoney(item.amountPaise),
-                          date: item.dueDate,
-                          isOverdue: dateOnly(
-                            item.dueDate,
-                          ).isBefore(dateOnly(ctx.now)),
-                        ),
-                    ],
-                  ),
-                ],
-          actions: const [emiAction, moneyAction, subsAction],
+        final nextDue = due.isEmpty
+            ? facts.dueItemsThrough(
+                dateOnly(ctx.now).add(const Duration(days: 365)),
+              )
+            : const <AssistantDueItem>[];
+        return _polish(
+          match.intent,
+          question,
+          facts,
+          AssistantReply(
+            due.isEmpty
+                ? 'Nothing is scheduled from ${formatDate(range.start)} to ${formatDate(range.end)}.${nextDue.isEmpty ? '' : ' Next: ${nextDue.first.label} on ${formatDate(nextDue.first.dueDate)} for ${formatMoney(nextDue.first.amountPaise)}.'}'
+                : '${formatMoney(total)} is scheduled to be paid from ${formatDate(range.start)} to ${formatDate(range.end)}.',
+            rows: [
+              AssistantRow(
+                'EMIs',
+                formatMoney(subtotal(AssistantDestination.emis)),
+              ),
+              AssistantRow(
+                'Subscriptions',
+                formatMoney(subtotal(AssistantDestination.subscriptions)),
+              ),
+              AssistantRow(
+                'Money borrowed',
+                formatMoney(subtotal(AssistantDestination.money)),
+              ),
+              AssistantRow('Total', formatMoney(total)),
+            ],
+            visuals: _dueVisuals(due, ctx.now),
+            actions: const [emiAction, moneyAction, subsAction],
+          ),
         );
       case AssistantIntent.status:
-        return AssistantReply(
-          'Your Money net position is ${formatMoney(facts.netPositionPaise)}. Scheduled EMI debt is shown separately.',
-          rows: [
-            AssistantRow('To receive', formatMoney(facts.toReceivePaise)),
-            AssistantRow(
-              'I owe · Money and EMIs',
-              formatMoney(facts.totalDebtPaise),
-            ),
-            AssistantRow('EMI remaining', formatMoney(facts.emiRemainingPaise)),
-            AssistantRow(
-              'Monthly recurring commitments',
-              formatMoney(
-                facts.monthlyEmiPaise + facts.monthlySubscriptionsPaise,
+        return _polish(
+          match.intent,
+          question,
+          facts,
+          AssistantReply(
+            'Your Money net position is ${formatMoney(facts.netPositionPaise)}. Scheduled EMI debt is shown separately.',
+            rows: [
+              AssistantRow('To receive', formatMoney(facts.toReceivePaise)),
+              AssistantRow(
+                'I owe · Money and EMIs',
+                formatMoney(facts.totalDebtPaise),
               ),
-            ),
-          ],
-          actions: const [moneyAction, emiAction],
+              AssistantRow(
+                'EMI remaining',
+                formatMoney(facts.emiRemainingPaise),
+              ),
+              AssistantRow(
+                'Monthly recurring commitments',
+                formatMoney(
+                  facts.monthlyEmiPaise + facts.monthlySubscriptionsPaise,
+                ),
+              ),
+            ],
+            visuals: facts.toReceivePaise == 0 && facts.totalDebtPaise == 0
+                ? const []
+                : [
+                    AssistantVisualPart(
+                      kind: AssistantVisualKind.donut,
+                      title: 'To receive vs I owe',
+                      bigValue: formatMoney(facts.netPositionPaise),
+                      data: [
+                        AssistantVisualDatum(
+                          label: 'To receive',
+                          value: facts.toReceivePaise.toDouble(),
+                          displayValue: formatMoney(facts.toReceivePaise),
+                        ),
+                        AssistantVisualDatum(
+                          label: 'I owe',
+                          value: facts.totalDebtPaise.toDouble(),
+                          displayValue: formatMoney(facts.totalDebtPaise),
+                        ),
+                      ],
+                    ),
+                  ],
+            actions: const [moneyAction, emiAction],
+          ),
         );
       case AssistantIntent.owe:
       case AssistantIntent.clearDebts:
-        return AssistantReply(
-          'Tracked debt totals ${formatMoney(facts.totalDebtPaise)}. This includes scheduled EMI payments and borrowed Money balances; an early-settlement quote may differ.',
-          rows: [
-            AssistantRow('EMI remaining', formatMoney(facts.emiRemainingPaise)),
-            AssistantRow('Money borrowed', formatMoney(facts.borrowedPaise)),
-          ],
-          actions: const [emiAction, moneyAction],
+        return _polish(
+          match.intent,
+          question,
+          facts,
+          AssistantReply(
+            'Tracked debt totals ${formatMoney(facts.totalDebtPaise)}. This includes scheduled EMI payments and borrowed Money balances; an early-settlement quote may differ.',
+            rows: [
+              AssistantRow(
+                'EMI remaining',
+                formatMoney(facts.emiRemainingPaise),
+              ),
+              AssistantRow('Money borrowed', formatMoney(facts.borrowedPaise)),
+            ],
+            visuals: facts.totalDebtPaise == 0
+                ? const []
+                : [
+                    AssistantVisualPart(
+                      kind: AssistantVisualKind.stackedBar,
+                      title: 'Debt remaining',
+                      bigValue: formatMoney(facts.totalDebtPaise),
+                      data: [
+                        AssistantVisualDatum(
+                          label: 'EMIs',
+                          value: facts.emiRemainingPaise.toDouble(),
+                          displayValue: formatMoney(facts.emiRemainingPaise),
+                        ),
+                        AssistantVisualDatum(
+                          label: 'Money borrowed',
+                          value: facts.borrowedPaise.toDouble(),
+                          displayValue: formatMoney(facts.borrowedPaise),
+                        ),
+                      ],
+                    ),
+                  ],
+            actions: const [emiAction, moneyAction],
+          ),
         );
       case AssistantIntent.owedToMe:
         final count = facts.given.length;
-        return AssistantReply(
-          'People owe you ${formatMoney(facts.toReceivePaise)} across $count open ${count == 1 ? 'record' : 'records'}.',
-          actions: const [moneyAction],
+        return _polish(
+          match.intent,
+          question,
+          facts,
+          AssistantReply(
+            'People owe you ${formatMoney(facts.toReceivePaise)} across $count open ${count == 1 ? 'record' : 'records'}.',
+            visuals: count == 0
+                ? const []
+                : [
+                    AssistantVisualPart(
+                      kind: AssistantVisualKind.horizontalBars,
+                      title: 'Outstanding by person',
+                      data: [
+                        for (final item in facts.given)
+                          AssistantVisualDatum(
+                            label: displayName(item.record.personName),
+                            value: item.summary.remainingAmountPaise.toDouble(),
+                            displayValue: formatMoney(
+                              item.summary.remainingAmountPaise,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ],
+            actions: const [moneyAction],
+          ),
         );
       case AssistantIntent.whoOwesMe:
       case AssistantIntent.whomIOwe:
@@ -1076,50 +1292,79 @@ class LocalAssistantEngine implements AssistantEngine, AssistantActionEngine {
         }
         final rows = grouped.entries.toList()
           ..sort((a, b) => b.value.compareTo(a.value));
-        return AssistantReply(
-          rows.isEmpty
-              ? 'No open balances are recorded.'
-              : match.intent == AssistantIntent.whoOwesMe
-              ? 'These people owe you:'
-              : 'You owe these people:',
-          rows: [
-            for (final row in rows)
-              AssistantRow(displayName(row.key), formatMoney(row.value)),
-          ],
-          visuals: rows.isEmpty
-              ? const []
-              : [
-                  AssistantVisualPart(
-                    kind: AssistantVisualKind.horizontalBars,
-                    title: match.intent == AssistantIntent.whoOwesMe
-                        ? 'Outstanding by person'
-                        : 'Amount owed by person',
-                    data: [
-                      for (final row in rows)
-                        AssistantVisualDatum(
-                          label: displayName(row.key),
-                          value: row.value.toDouble(),
-                          displayValue: formatMoney(row.value),
-                        ),
-                    ],
-                  ),
-                ],
-          actions: const [moneyAction],
+        return _polish(
+          match.intent,
+          question,
+          facts,
+          AssistantReply(
+            rows.isEmpty
+                ? 'No open balances are recorded.'
+                : match.intent == AssistantIntent.whoOwesMe
+                ? 'These people owe you:'
+                : 'You owe these people:',
+            rows: [
+              for (final row in rows)
+                AssistantRow(displayName(row.key), formatMoney(row.value)),
+            ],
+            visuals: rows.isEmpty
+                ? const []
+                : [
+                    AssistantVisualPart(
+                      kind: AssistantVisualKind.horizontalBars,
+                      title: match.intent == AssistantIntent.whoOwesMe
+                          ? 'Outstanding by person'
+                          : 'Amount owed by person',
+                      data: [
+                        for (final row in rows)
+                          AssistantVisualDatum(
+                            label: displayName(row.key),
+                            value: row.value.toDouble(),
+                            displayValue: formatMoney(row.value),
+                          ),
+                      ],
+                    ),
+                  ],
+            actions: const [moneyAction],
+          ),
         );
       case AssistantIntent.emi:
         final count = facts.activeEmis.length;
-        return AssistantReply(
-          count == 0
-              ? 'You have no active EMIs.'
-              : '$count active ${count == 1 ? 'EMI has' : 'EMIs have'} ${formatMoney(facts.emiRemainingPaise)} left in scheduled payments.',
-          rows: [
-            AssistantRow(
-              'Monthly equivalent',
-              formatMoney(facts.monthlyEmiPaise),
-            ),
-            AssistantRow('Remaining', formatMoney(facts.emiRemainingPaise)),
-          ],
-          actions: const [emiAction],
+        return _polish(
+          match.intent,
+          question,
+          facts,
+          AssistantReply(
+            count == 0
+                ? 'You have no active EMIs.'
+                : '$count active ${count == 1 ? 'EMI has' : 'EMIs have'} ${formatMoney(facts.emiRemainingPaise)} left in scheduled payments.',
+            rows: [
+              AssistantRow(
+                'Monthly equivalent',
+                formatMoney(facts.monthlyEmiPaise),
+              ),
+              AssistantRow('Remaining', formatMoney(facts.emiRemainingPaise)),
+            ],
+            visuals: count == 0
+                ? const []
+                : [
+                    AssistantVisualPart(
+                      kind: AssistantVisualKind.progressRows,
+                      title:
+                          'EMI progress${facts.debtFreeDate == null ? '' : ' · debt-free ${formatDate(facts.debtFreeDate!)}'}',
+                      data: [
+                        for (final item in facts.activeEmis)
+                          AssistantVisualDatum(
+                            label: item.emi.name,
+                            value: item.progress,
+                            displayValue: '${(item.progress * 100).round()}%',
+                            detail:
+                                '${formatMoney(item.remainingBalancePaise)} remaining',
+                          ),
+                      ],
+                    ),
+                  ],
+            actions: const [emiAction],
+          ),
         );
       case AssistantIntent.due:
         final range = parseAssistantDateRange(question, ctx.now);
@@ -1141,89 +1386,82 @@ class LocalAssistantEngine implements AssistantEngine, AssistantActionEngine {
           includeOverdue: true,
         );
         final total = due.fold(0, (sum, item) => sum + item.amountPaise);
-        return AssistantReply(
-          due.isEmpty
-              ? 'Nothing tracked is due ${range.label}, including overdue items.'
-              : '${formatMoney(total)} is due ${range.label}, including overdue items.',
-          rows: [
-            for (final item in due.take(12))
-              AssistantRow(
-                '${item.label} · ${formatDate(item.dueDate)}',
-                formatMoney(item.amountPaise),
-              ),
-          ],
-          visuals: due.isEmpty
-              ? const [
-                  AssistantVisualPart(
-                    kind: AssistantVisualKind.timeline,
-                    title: 'Due timeline',
-                  ),
-                ]
-              : [
-                  AssistantVisualPart(
-                    kind: AssistantVisualKind.timeline,
-                    title: 'Due timeline',
-                    data: [
-                      for (final item in due.take(12))
-                        AssistantVisualDatum(
-                          label: '${item.label} · ${formatDate(item.dueDate)}',
-                          value: item.amountPaise.toDouble(),
-                          displayValue: formatMoney(item.amountPaise),
-                          date: item.dueDate,
-                          isOverdue: dateOnly(
-                            item.dueDate,
-                          ).isBefore(dateOnly(ctx.now)),
-                        ),
-                    ],
-                  ),
-                ],
-          actions: const [emiAction, moneyAction, subsAction],
+        final nextDue = due.isEmpty
+            ? facts.dueItemsThrough(
+                dateOnly(ctx.now).add(const Duration(days: 365)),
+              )
+            : const <AssistantDueItem>[];
+        return _polish(
+          match.intent,
+          question,
+          facts,
+          AssistantReply(
+            due.isEmpty
+                ? 'Nothing tracked is due ${range.label}, including overdue items.${nextDue.isEmpty ? '' : ' Next: ${nextDue.first.label} on ${formatDate(nextDue.first.dueDate)} for ${formatMoney(nextDue.first.amountPaise)}.'}'
+                : '${formatMoney(total)} is due ${range.label}, including overdue items.',
+            rows: [
+              for (final item in due.take(12))
+                AssistantRow(
+                  '${item.label} · ${formatDate(item.dueDate)}',
+                  formatMoney(item.amountPaise),
+                ),
+            ],
+            visuals: _dueVisuals(due, ctx.now),
+            actions: const [emiAction, moneyAction, subsAction],
+          ),
         );
       case AssistantIntent.outflow:
-        return AssistantReply(
-          'Your estimated next-30-day outflow is ${formatMoney(facts.monthlyOutflowPaise)}.',
-          rows: [
-            AssistantRow(
-              'EMIs monthly equivalent',
-              formatMoney(facts.monthlyEmiPaise),
-            ),
-            AssistantRow(
-              'Subscriptions monthly equivalent',
-              formatMoney(facts.monthlySubscriptionsPaise),
-            ),
-            AssistantRow(
-              'Dated borrowed Money due',
-              formatMoney(facts.upcomingBorrowedPaise),
-            ),
-          ],
-          visuals: [
-            AssistantVisualPart(
-              kind: AssistantVisualKind.stackedBar,
-              title: 'Monthly outflow split',
-              bigValue: formatMoney(facts.monthlyOutflowPaise),
-              data: [
-                AssistantVisualDatum(
-                  label: 'EMIs',
-                  value: facts.monthlyEmiPaise.toDouble(),
-                  displayValue:
-                      '${formatMoney(facts.monthlyEmiPaise)} · ${facts.monthlyOutflowPaise == 0 ? 0 : (facts.monthlyEmiPaise / facts.monthlyOutflowPaise * 100).round()}%',
-                ),
-                AssistantVisualDatum(
-                  label: 'Subscriptions',
-                  value: facts.monthlySubscriptionsPaise.toDouble(),
-                  displayValue:
-                      '${formatMoney(facts.monthlySubscriptionsPaise)} · ${facts.monthlyOutflowPaise == 0 ? 0 : (facts.monthlySubscriptionsPaise / facts.monthlyOutflowPaise * 100).round()}%',
-                ),
-                AssistantVisualDatum(
-                  label: 'Money due',
-                  value: facts.upcomingBorrowedPaise.toDouble(),
-                  displayValue:
-                      '${formatMoney(facts.upcomingBorrowedPaise)} · ${facts.monthlyOutflowPaise == 0 ? 0 : (facts.upcomingBorrowedPaise / facts.monthlyOutflowPaise * 100).round()}%',
-                ),
-              ],
-            ),
-          ],
-          actions: const [emiAction, subsAction],
+        return _polish(
+          match.intent,
+          question,
+          facts,
+          AssistantReply(
+            'Your estimated next-30-day outflow is ${formatMoney(facts.monthlyOutflowPaise)}.',
+            rows: [
+              AssistantRow(
+                'EMIs monthly equivalent',
+                formatMoney(facts.monthlyEmiPaise),
+              ),
+              AssistantRow(
+                'Subscriptions monthly equivalent',
+                formatMoney(facts.monthlySubscriptionsPaise),
+              ),
+              AssistantRow(
+                'Dated borrowed Money due',
+                formatMoney(facts.upcomingBorrowedPaise),
+              ),
+            ],
+            visuals: facts.monthlyOutflowPaise == 0
+                ? const []
+                : [
+                    AssistantVisualPart(
+                      kind: AssistantVisualKind.stackedBar,
+                      title: 'Monthly outflow split',
+                      bigValue: formatMoney(facts.monthlyOutflowPaise),
+                      data: [
+                        AssistantVisualDatum(
+                          label: 'EMIs',
+                          value: facts.monthlyEmiPaise.toDouble(),
+                          displayValue:
+                              '${formatMoney(facts.monthlyEmiPaise)} · ${facts.monthlyOutflowPaise == 0 ? 0 : (facts.monthlyEmiPaise / facts.monthlyOutflowPaise * 100).round()}%',
+                        ),
+                        AssistantVisualDatum(
+                          label: 'Subscriptions',
+                          value: facts.monthlySubscriptionsPaise.toDouble(),
+                          displayValue:
+                              '${formatMoney(facts.monthlySubscriptionsPaise)} · ${facts.monthlyOutflowPaise == 0 ? 0 : (facts.monthlySubscriptionsPaise / facts.monthlyOutflowPaise * 100).round()}%',
+                        ),
+                        AssistantVisualDatum(
+                          label: 'Money due',
+                          value: facts.upcomingBorrowedPaise.toDouble(),
+                          displayValue:
+                              '${formatMoney(facts.upcomingBorrowedPaise)} · ${facts.monthlyOutflowPaise == 0 ? 0 : (facts.upcomingBorrowedPaise / facts.monthlyOutflowPaise * 100).round()}%',
+                        ),
+                      ],
+                    ),
+                  ],
+            actions: const [emiAction, subsAction],
+          ),
         );
       case AssistantIntent.subscriptions:
         final categories = <String, int>{};
@@ -1239,29 +1477,36 @@ class LocalAssistantEngine implements AssistantEngine, AssistantActionEngine {
                 monthlyEquivalentPaise(item.amountPaise, item.frequency),
           );
         }
-        return AssistantReply(
-          '${facts.activeSubscriptions.length} active ${facts.activeSubscriptions.length == 1 ? 'subscription costs' : 'subscriptions cost'} about ${formatMoney(facts.monthlySubscriptionsPaise)} per month.',
-          rows: [
-            AssistantRow(
-              'Yearly equivalent',
-              formatMoney(facts.yearlySubscriptionsPaise),
-            ),
-          ],
-          visuals: [
-            AssistantVisualPart(
-              kind: AssistantVisualKind.horizontalBars,
-              title: 'Subscriptions by category',
-              data: [
-                for (final entry in categories.entries)
-                  AssistantVisualDatum(
-                    label: entry.key,
-                    value: entry.value.toDouble(),
-                    displayValue: formatMoney(entry.value),
-                  ),
-              ],
-            ),
-          ],
-          actions: const [subsAction],
+        return _polish(
+          match.intent,
+          question,
+          facts,
+          AssistantReply(
+            '${facts.activeSubscriptions.length} active ${facts.activeSubscriptions.length == 1 ? 'subscription costs' : 'subscriptions cost'} about ${formatMoney(facts.monthlySubscriptionsPaise)} per month.',
+            rows: [
+              AssistantRow(
+                'Yearly equivalent',
+                formatMoney(facts.yearlySubscriptionsPaise),
+              ),
+            ],
+            visuals: categories.isEmpty
+                ? const []
+                : [
+                    AssistantVisualPart(
+                      kind: AssistantVisualKind.horizontalBars,
+                      title: 'Subscriptions by category',
+                      data: [
+                        for (final entry in categories.entries)
+                          AssistantVisualDatum(
+                            label: entry.key,
+                            value: entry.value.toDouble(),
+                            displayValue: formatMoney(entry.value),
+                          ),
+                      ],
+                    ),
+                  ],
+            actions: const [subsAction],
+          ),
         );
       case AssistantIntent.biggestExpense:
         final candidates = facts.dueItemsInRange(
@@ -1445,7 +1690,7 @@ class LocalAssistantEngine implements AssistantEngine, AssistantActionEngine {
         );
       case AssistantIntent.unknown:
         return AssistantReply(
-          'I’m not sure which FinKeep question you meant. Did you mean one of these?',
+          'I may have misunderstood that request. Did you mean one of these?',
           suggestions: _closestSuggestions(question, facts),
         );
     }
@@ -1705,9 +1950,291 @@ class LocalAssistantEngine implements AssistantEngine, AssistantActionEngine {
     );
   }
 
+  AssistantReply _whatIfReply(WhatIfRequest request, FinanceFacts facts) {
+    if (request.kind == WhatIfKind.pauseSubscription) {
+      final resolution = resolveAssistantEntity<Subscription>(
+        request.target,
+        facts.activeSubscriptions.map(
+          (item) => AssistantEntityCandidate(item.name, item),
+        ),
+      );
+      if (resolution.match == null) {
+        final choices = resolution.ambiguous.isNotEmpty
+            ? resolution.ambiguous
+            : resolution.suggestions;
+        return AssistantReply(
+          choices.isEmpty
+              ? 'No active subscription matches that name.'
+              : 'Which subscription did you mean?',
+          suggestions: [
+            for (final item in choices.take(6))
+              'What if I pause ${item.name} for ${request.months} months',
+          ],
+        );
+      }
+      final sub = resolution.match!.value;
+      final monthly = monthlyEquivalentPaise(sub.amountPaise, sub.frequency);
+      final saved = monthly * request.months!;
+      final resume = subscriptionPauseEnd(
+        sub.nextBillingDate,
+        sub.frequency,
+        facts.now,
+        request.months!,
+      );
+      return AssistantReply(
+        'If ${sub.name} is paused for ${request.months} months, estimated spending falls by ${formatMoney(saved)}. This is a preview; nothing has changed.',
+        rows: [
+          AssistantRow('Resume around', formatDate(resume)),
+          AssistantRow(
+            'Monthly outflow during pause',
+            '${formatMoney(facts.monthlyOutflowPaise)} to ${formatMoney((facts.monthlyOutflowPaise - monthly).clamp(0, facts.monthlyOutflowPaise))}',
+          ),
+        ],
+        visuals: [
+          AssistantVisualPart(
+            kind: AssistantVisualKind.horizontalBars,
+            title: 'Monthly outflow',
+            data: [
+              AssistantVisualDatum(
+                label: 'Before',
+                value: facts.monthlyOutflowPaise.toDouble(),
+                displayValue: formatMoney(facts.monthlyOutflowPaise),
+              ),
+              AssistantVisualDatum(
+                label: 'During pause',
+                value: (facts.monthlyOutflowPaise - monthly)
+                    .clamp(0, facts.monthlyOutflowPaise)
+                    .toDouble(),
+                displayValue: formatMoney(
+                  (facts.monthlyOutflowPaise - monthly).clamp(
+                    0,
+                    facts.monthlyOutflowPaise,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+        suggestions: [
+          'Pause ${sub.name} for ${request.months} months',
+          'Subscriptions per month',
+        ],
+      );
+    }
+    final resolution = resolveAssistantEntity<EmiDetail>(
+      request.target,
+      facts.activeEmis.map(
+        (item) => AssistantEntityCandidate(item.emi.name, item),
+      ),
+    );
+    if (resolution.match == null) {
+      final choices = resolution.ambiguous.isNotEmpty
+          ? resolution.ambiguous
+          : resolution.suggestions;
+      return AssistantReply(
+        choices.isEmpty
+            ? 'No active EMI matches that name.'
+            : 'Which EMI did you mean?',
+        suggestions: [
+          for (final item in choices.take(6))
+            request.kind == WhatIfKind.closeEmi
+                ? 'What if I close ${item.name} now'
+                : 'What if I pay ${request.amountPaise! ~/ 100} extra on ${item.name}',
+        ],
+      );
+    }
+    final emi = resolution.match!.value;
+    final dates = [
+      for (final item in emi.installments)
+        if (!item.isPaid) item.dueDate,
+    ];
+    final extra = request.kind == WhatIfKind.closeEmi
+        ? emi.remainingBalancePaise
+        : request.amountPaise!;
+    final result = calculateEmiWhatIf(
+      remainingPaise: emi.remainingBalancePaise,
+      installmentPaise: emi.scheduledInstallmentPaise,
+      unpaidDueDates: dates,
+      extraPaise: extra,
+      annualRate: emi.emi.interestRate,
+      today: facts.now,
+    );
+    final before = dates.last;
+    final after = result.newDebtFreeDate;
+    final monthly = monthlyEquivalentPaise(
+      emi.scheduledInstallmentPaise,
+      emi.emi.frequency,
+    );
+    return AssistantReply(
+      'If you ${request.kind == WhatIfKind.closeEmi ? 'close' : 'pay ${formatMoney(extra)} extra on'} ${emi.emi.name}, its estimated final date moves from ${formatDate(before)} to ${formatDate(after)}. This is a preview; nothing has changed.',
+      rows: [
+        AssistantRow('Installments saved', '${result.monthsSaved}'),
+        AssistantRow(
+          'Interest saved',
+          result.interestSavedPaise == null
+              ? 'No rate stored; cannot estimate'
+              : formatMoney(result.interestSavedPaise!),
+        ),
+        AssistantRow(
+          'Monthly outflow now',
+          formatMoney(facts.monthlyOutflowPaise),
+        ),
+        AssistantRow(
+          'After closure',
+          formatMoney(
+            (facts.monthlyOutflowPaise - monthly).clamp(
+              0,
+              facts.monthlyOutflowPaise,
+            ),
+          ),
+        ),
+      ],
+      visuals: [
+        AssistantVisualPart(
+          kind: AssistantVisualKind.horizontalBars,
+          title: 'Time to EMI-free',
+          data: [
+            AssistantVisualDatum(
+              label: 'Before',
+              value: dates.length.toDouble(),
+              displayValue: '${dates.length} periods',
+            ),
+            AssistantVisualDatum(
+              label: 'After',
+              value: (dates.length - result.monthsSaved).toDouble(),
+              displayValue: '${dates.length - result.monthsSaved} periods',
+            ),
+          ],
+        ),
+      ],
+      suggestions: ['When is my next EMI?', 'Total debt left'],
+    );
+  }
+
+  AssistantReply? _prepareReminder(
+    String question,
+    FinanceFacts facts,
+    ConversationContext ctx,
+  ) {
+    final q = question.toLowerCase().trim();
+    if (!q.startsWith('remind me ')) return null;
+    final renewal = RegExp(
+      r'^remind me \d+ days? before (.+?) renews$',
+    ).firstMatch(q);
+    if (renewal != null) {
+      final target = renewal.group(1)!;
+      final matches = facts.activeSubscriptions
+          .where(
+            (item) =>
+                normalizeQuestion(item.name).contains(target) ||
+                target.contains(normalizeQuestion(item.name)),
+          )
+          .toList();
+      if (matches.length != 1) {
+        return AssistantReply(
+          matches.isEmpty
+              ? 'I could not find that active subscription.'
+              : 'Which subscription?',
+          suggestions: [
+            for (final item in matches.take(3))
+              'Remind me 2 days before ${item.name} renews',
+          ],
+        );
+      }
+      final sub = matches.single;
+      final due = nextSubscriptionBillingDate(
+        sub.nextBillingDate,
+        sub.frequency,
+        ctx.now,
+      );
+      final parsed = parseChatReminder(question, ctx.now, renewalDate: due);
+      if (parsed == null) {
+        return const AssistantReply(
+          'That reminder time has passed. Try the next renewal.',
+        );
+      }
+      return AssistantReply(
+        'Please confirm this reminder.',
+        confirmation: AssistantPendingMutation(
+          id: 'reminder:${ctx.now.microsecondsSinceEpoch}',
+          kind: AssistantMutationKind.scheduleReminder,
+          entityType: AssistantEntityType.subscription,
+          entityId: sub.id,
+          entityName: sub.name,
+          confirmationTitle: 'Remind you about ${sub.name}',
+          confirmationEffect:
+              'A local notification on ${formatDate(parsed.when)} at 9:00 AM.',
+          reminderAt: parsed.when,
+        ),
+      );
+    }
+    final parsed = parseChatReminder(question, ctx.now);
+    if (parsed == null) {
+      return const AssistantReply('Try: Remind me to pay Nivas on Friday.');
+    }
+    final matches = facts.money
+        .where(
+          (item) =>
+              normalizeQuestion(
+                item.record.personName,
+              ).contains(parsed.target) ||
+              parsed.target.contains(normalizeQuestion(item.record.personName)),
+        )
+        .toList();
+    if (matches.length != 1) {
+      return AssistantReply(
+        matches.isEmpty
+            ? 'I could not find that money record.'
+            : 'Which record?',
+        suggestions: [
+          for (final item in matches.take(3))
+            'Remind me to pay ${item.record.personName} on Friday',
+        ],
+      );
+    }
+    final item = matches.single;
+    return AssistantReply(
+      'Please confirm this reminder.',
+      confirmation: AssistantPendingMutation(
+        id: 'reminder:${ctx.now.microsecondsSinceEpoch}',
+        kind: AssistantMutationKind.scheduleReminder,
+        entityType: AssistantEntityType.money,
+        entityId: item.record.id,
+        entityName: item.record.personName,
+        confirmationTitle: 'Remind you about ${item.record.personName}',
+        confirmationEffect:
+            'A local notification on ${formatDate(parsed.when)} at 9:00 AM.',
+        reminderAt: parsed.when,
+      ),
+    );
+  }
+
   @override
   Future<AssistantReply> confirm(AssistantPendingMutation mutation) async {
     switch (mutation.kind) {
+      case AssistantMutationKind.scheduleReminder:
+        final reminderId = DateTime.now().microsecondsSinceEpoch.remainder(
+          2000000000,
+        );
+        await repository.scheduleAssistantReminder(
+          id: reminderId,
+          title: 'FinKeep reminder',
+          body: mutation.entityType == AssistantEntityType.subscription
+              ? '${mutation.entityName} renews soon.'
+              : 'Follow up about ${mutation.entityName}.',
+          when: mutation.reminderAt!,
+        );
+        return _successReply(
+          'Reminder set for ${formatDate(mutation.reminderAt!)}.',
+          AssistantUndoMutation(
+            kind: mutation.kind,
+            entityType: mutation.entityType,
+            entityId: mutation.entityId,
+            entityName: mutation.entityName,
+            relatedId: reminderId,
+            expiresAt: DateTime.now().add(const Duration(seconds: 6)),
+          ),
+        );
       case AssistantMutationKind.cancelSubscription:
       case AssistantMutationKind.pauseSubscription:
       case AssistantMutationKind.resumeSubscription:
@@ -1912,6 +2439,9 @@ class LocalAssistantEngine implements AssistantEngine, AssistantActionEngine {
       return const AssistantReply('The 6-second undo window has ended.');
     }
     switch (mutation.kind) {
+      case AssistantMutationKind.scheduleReminder:
+        await repository.cancelAssistantReminder(mutation.relatedId!);
+        return const AssistantReply('Reminder cancelled.');
       case AssistantMutationKind.deleteSubscription:
         await repository.restoreSubscriptionById(mutation.entityId);
       case AssistantMutationKind.deleteEmi:
@@ -1999,6 +2529,7 @@ AssistantDestination _destinationForDraft(AssistantFormKind kind) =>
     };
 
 String _mutationVerb(AssistantMutationKind kind) => switch (kind) {
+  AssistantMutationKind.scheduleReminder => 'remind',
   AssistantMutationKind.cancelSubscription => 'cancel',
   AssistantMutationKind.pauseSubscription => 'pause',
   AssistantMutationKind.resumeSubscription => 'resume',
@@ -2017,6 +2548,7 @@ String _commandSuggestion(
   AssistantActionCommand command,
   String entityName,
 ) => switch (command.kind) {
+  AssistantMutationKind.scheduleReminder => 'Remind me about $entityName',
   AssistantMutationKind.cancelSubscription => 'Cancel subscription $entityName',
   AssistantMutationKind.pauseSubscription =>
     'Pause $entityName${command.pauseMonths == null ? '' : ' for ${command.pauseMonths} months'}',
@@ -2313,88 +2845,93 @@ AssistantReply _analyzePortfolio(FinanceFacts facts) {
         bigValue: formatMoney(facts.netPositionPaise),
         subtitle: 'Money owed to you minus Money you borrowed',
       ),
-      AssistantVisualPart(
-        kind: AssistantVisualKind.donut,
-        title: 'Coming to me vs I need to pay',
-        bigValue: formatMoney(facts.toReceivePaise - facts.totalDebtPaise),
-        data: [
-          AssistantVisualDatum(
-            label: 'Coming to me',
-            value: facts.toReceivePaise.toDouble(),
-            displayValue: formatMoney(facts.toReceivePaise),
-          ),
-          AssistantVisualDatum(
-            label: 'I need to pay',
-            value: facts.totalDebtPaise.toDouble(),
-            displayValue: formatMoney(facts.totalDebtPaise),
-          ),
-        ],
-      ),
-      AssistantVisualPart(
-        kind: AssistantVisualKind.stackedBar,
-        title: 'Monthly outflow',
-        bigValue: formatMoney(outflow),
-        data: [
-          AssistantVisualDatum(
-            label: 'EMIs',
-            value: facts.monthlyEmiPaise.toDouble(),
-            displayValue: '${(emiShare * 100).round()}%',
-          ),
-          AssistantVisualDatum(
-            label: 'Subscriptions',
-            value: facts.monthlySubscriptionsPaise.toDouble(),
-            displayValue: '${(subscriptionsShare * 100).round()}%',
-          ),
-          AssistantVisualDatum(
-            label: 'Money due',
-            value: facts.upcomingBorrowedPaise.toDouble(),
-            displayValue: outflow == 0
-                ? '0%'
-                : '${(facts.upcomingBorrowedPaise / outflow * 100).round()}%',
-          ),
-        ],
-      ),
-      AssistantVisualPart(
-        kind: AssistantVisualKind.weeklyBars,
-        title: 'Next 30 days by week',
-        data: buildWeeklyChartData(
-          nextThirty.map(
-            (item) => AssistantDatedAmount(
-              item.dueDate,
-              item.amountPaise,
-              overdue: dateOnly(item.dueDate).isBefore(dateOnly(facts.now)),
+      if (facts.toReceivePaise > 0 || facts.totalDebtPaise > 0)
+        AssistantVisualPart(
+          kind: AssistantVisualKind.donut,
+          title: 'Coming to me vs I need to pay',
+          bigValue: formatMoney(facts.toReceivePaise - facts.totalDebtPaise),
+          data: [
+            AssistantVisualDatum(
+              label: 'Coming to me',
+              value: facts.toReceivePaise.toDouble(),
+              displayValue: formatMoney(facts.toReceivePaise),
             ),
-          ),
-          facts.now,
+            AssistantVisualDatum(
+              label: 'I need to pay',
+              value: facts.totalDebtPaise.toDouble(),
+              displayValue: formatMoney(facts.totalDebtPaise),
+            ),
+          ],
         ),
-      ),
-      AssistantVisualPart(
-        kind: AssistantVisualKind.progressRows,
-        title: debtDate == null
-            ? 'EMI progress'
-            : 'EMI progress · debt-free ${formatDate(debtDate)}',
-        data: [
-          for (final item in facts.activeEmis)
+      if (outflow > 0)
+        AssistantVisualPart(
+          kind: AssistantVisualKind.stackedBar,
+          title: 'Monthly outflow',
+          bigValue: formatMoney(outflow),
+          data: [
             AssistantVisualDatum(
-              label: displayName(item.emi.name),
-              value: item.progress,
-              displayValue: '${(item.progress * 100).round()}%',
-              detail: '${formatMoney(item.remainingBalancePaise)} remaining',
+              label: 'EMIs',
+              value: facts.monthlyEmiPaise.toDouble(),
+              displayValue: '${(emiShare * 100).round()}%',
             ),
-        ],
-      ),
-      AssistantVisualPart(
-        kind: AssistantVisualKind.horizontalBars,
-        title: 'Subscriptions by category',
-        data: [
-          for (final entry in categories.entries)
             AssistantVisualDatum(
-              label: entry.key,
-              value: entry.value.toDouble(),
-              displayValue: formatMoney(entry.value),
+              label: 'Subscriptions',
+              value: facts.monthlySubscriptionsPaise.toDouble(),
+              displayValue: '${(subscriptionsShare * 100).round()}%',
             ),
-        ],
-      ),
+            AssistantVisualDatum(
+              label: 'Money due',
+              value: facts.upcomingBorrowedPaise.toDouble(),
+              displayValue: outflow == 0
+                  ? '0%'
+                  : '${(facts.upcomingBorrowedPaise / outflow * 100).round()}%',
+            ),
+          ],
+        ),
+      if (nextThirty.isNotEmpty)
+        AssistantVisualPart(
+          kind: AssistantVisualKind.weeklyBars,
+          title: 'Next 30 days by week',
+          data: buildWeeklyChartData(
+            nextThirty.map(
+              (item) => AssistantDatedAmount(
+                item.dueDate,
+                item.amountPaise,
+                overdue: dateOnly(item.dueDate).isBefore(dateOnly(facts.now)),
+              ),
+            ),
+            facts.now,
+          ),
+        ),
+      if (facts.activeEmis.isNotEmpty)
+        AssistantVisualPart(
+          kind: AssistantVisualKind.progressRows,
+          title: debtDate == null
+              ? 'EMI progress'
+              : 'EMI progress · debt-free ${formatDate(debtDate)}',
+          data: [
+            for (final item in facts.activeEmis)
+              AssistantVisualDatum(
+                label: displayName(item.emi.name),
+                value: item.progress,
+                displayValue: '${(item.progress * 100).round()}%',
+                detail: '${formatMoney(item.remainingBalancePaise)} remaining',
+              ),
+          ],
+        ),
+      if (categories.isNotEmpty)
+        AssistantVisualPart(
+          kind: AssistantVisualKind.horizontalBars,
+          title: 'Subscriptions by category',
+          data: [
+            for (final entry in categories.entries)
+              AssistantVisualDatum(
+                label: entry.key,
+                value: entry.value.toDouble(),
+                displayValue: formatMoney(entry.value),
+              ),
+          ],
+        ),
       AssistantVisualPart(
         kind: AssistantVisualKind.scoreRing,
         title: 'Financial health',

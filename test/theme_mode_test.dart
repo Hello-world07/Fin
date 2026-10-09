@@ -25,7 +25,7 @@ void main() {
     expect(container.read(appThemeModeProvider), ThemeMode.light);
   });
 
-  test('manual appearance choice is restored on the next launch', () async {
+  test('appearance choice is restored on the next launch', () async {
     final firstLaunch = makeContainer();
     expect(firstLaunch.read(appThemeModeProvider), ThemeMode.light);
     final controller = firstLaunch.read(appThemeModeProvider.notifier);
@@ -40,5 +40,11 @@ void main() {
     await nextLaunch.read(appThemeModeProvider.notifier).ready;
 
     expect(nextLaunch.read(appThemeModeProvider), ThemeMode.dark);
+    expect(
+      (await database.select(database.settings).get()).where(
+        (row) => row.key == 'appearance.themeMode',
+      ),
+      isNotEmpty,
+    );
   });
 }

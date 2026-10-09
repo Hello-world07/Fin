@@ -10,6 +10,7 @@ import '../data/repositories.dart';
 import '../domain/enums.dart';
 import '../features/assistant/assistant_engine.dart';
 import 'formatters.dart';
+import 'app_lock.dart';
 
 final databaseProvider = Provider<AppDatabase>((ref) {
   final db = AppDatabase();
@@ -79,12 +80,89 @@ final activityProvider = StreamProvider<List<ActivityLog>>((ref) {
   return ref.watch(financeRepositoryProvider).watchActivity();
 });
 
+final dashboardActivityProvider = StreamProvider<List<ActivityLog>>((ref) {
+  return ref.watch(financeRepositoryProvider).watchActivity(limit: 5);
+});
+
 final payingEmisProvider = StateProvider<Set<int>>((ref) => <int>{});
 
 final appThemeModeProvider =
     StateNotifierProvider<AppThemeModeController, ThemeMode>(
       (ref) => AppThemeModeController(ref.watch(databaseProvider)),
     );
+
+final privacyModeProvider =
+    StateNotifierProvider<PrivacyModeController, PrivacySettings>(
+      (ref) => PrivacyModeController(ref.watch(databaseProvider)),
+    );
+
+class PrivacySettings {
+  const PrivacySettings({this.enabled = false, this.hideOnOpen = false});
+
+  final bool enabled;
+  final bool hideOnOpen;
+}
+
+class PrivacyModeController extends StateNotifier<PrivacySettings> {
+  PrivacyModeController(this._database) : super(const PrivacySettings()) {
+    ready = _restore();
+  }
+
+  final AppDatabase _database;
+  late final Future<void> ready;
+  bool _changed = false;
+
+  Future<void> _restore() async {
+    final rows =
+        await (_database.select(_database.settings)..where(
+              (row) => row.key.isIn([
+                'privacy.mode',
+                'privacy.hideOnOpen',
+                'privacy.appLock.secureScreen',
+              ]),
+            ))
+            .get();
+    if (_changed || !mounted) return;
+    final values = {for (final row in rows) row.key: row.value};
+    final hideOnOpen = values['privacy.hideOnOpen'] == 'true';
+    final enabled = values['privacy.mode'] == 'true' || hideOnOpen;
+    privacyAmountsHidden = enabled;
+    state = PrivacySettings(enabled: enabled, hideOnOpen: hideOnOpen);
+    await _setSecure(enabled, values['privacy.appLock.secureScreen'] == 'true');
+  }
+
+  Future<void> setEnabled(bool enabled) async {
+    _changed = true;
+    privacyAmountsHidden = enabled;
+    state = PrivacySettings(enabled: enabled, hideOnOpen: state.hideOnOpen);
+    await _write('privacy.mode', enabled);
+    final secure =
+        await (_database.select(_database.settings)
+              ..where((row) => row.key.equals('privacy.appLock.secureScreen')))
+            .getSingleOrNull();
+    await _setSecure(enabled, secure?.value == 'true');
+  }
+
+  Future<void> setHideOnOpen(bool enabled) async {
+    _changed = true;
+    state = PrivacySettings(enabled: state.enabled, hideOnOpen: enabled);
+    await _write('privacy.hideOnOpen', enabled);
+  }
+
+  Future<void> _write(String key, bool value) => _database
+      .into(_database.settings)
+      .insertOnConflictUpdate(
+        SettingsCompanion.insert(key: key, value: value.toString()),
+      );
+
+  Future<void> _setSecure(bool privacy, bool lockSetting) async {
+    try {
+      await LockDisplayService.setSecure(privacy || lockSetting);
+    } catch (_) {
+      // Privacy text masking remains active if platform window control fails.
+    }
+  }
+}
 
 final numberGroupingProvider =
     StateNotifierProvider<NumberGroupingController, bool>(
@@ -140,10 +218,11 @@ class AppThemeModeController extends StateNotifier<ThemeMode> {
       _database.settings,
     )..where((setting) => setting.key.equals(_settingKey))).getSingleOrNull();
     if (_hasUserSelection) return;
-    state = ThemeMode.values.firstWhere(
-      (mode) => mode.name == saved?.value,
-      orElse: () => ThemeMode.light,
-    );
+    state =
+        ThemeMode.values
+            .where((mode) => mode.name == saved?.value)
+            .firstOrNull ??
+        ThemeMode.light;
   }
 
   void setMode(ThemeMode mode) {

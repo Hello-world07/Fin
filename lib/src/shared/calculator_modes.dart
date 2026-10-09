@@ -97,7 +97,7 @@ class _CalculatorEmiModeState extends State<CalculatorEmiMode> {
           ],
           selected: {years},
           selectedBackground: AppTheme.heroStart,
-          selectedForeground: AppTheme.onHero,
+          selectedForeground: AppTheme.heroTextOf(context),
           filled: true,
           onSelectionChanged: (selection) {
             years = selection.first;
@@ -109,7 +109,7 @@ class _CalculatorEmiModeState extends State<CalculatorEmiMode> {
           Text(
             'MONTHLY EMI',
             style: style.labelMedium?.copyWith(
-              color: AppTheme.mutedText,
+              color: AppTheme.colorsOf(context).secondaryText,
               fontWeight: FontWeight.w700,
             ),
           ),
@@ -127,8 +127,8 @@ class _CalculatorEmiModeState extends State<CalculatorEmiMode> {
               children: [
                 Expanded(
                   flex: (p / total * 1000).round().clamp(1, 999),
-                  child: const ColoredBox(
-                    color: AppTheme.heroEnd,
+                  child: ColoredBox(
+                    color: Theme.of(context).colorScheme.primary,
                     child: SizedBox(height: 7),
                   ),
                 ),
@@ -317,7 +317,7 @@ class _CalculatorToolsModeState extends State<CalculatorToolsMode> {
           Text(
             'RESULT',
             style: style.labelMedium?.copyWith(
-              color: AppTheme.mutedText,
+              color: AppTheme.colorsOf(context).secondaryText,
               fontWeight: FontWeight.w700,
             ),
           ),

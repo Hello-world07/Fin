@@ -119,7 +119,7 @@ void main() {
       await reveal(tester, status);
       await tester.tap(find.text('Paused').last);
       await tester.pumpAndSettle();
-      final date = find.byType(DateTile);
+      final date = find.byType(DateTile).first;
       await reveal(tester, date);
       await tester.tap(
         find.descendant(of: date, matching: find.byType(InkWell)).first,

@@ -60,6 +60,7 @@ class _CalculatorSheetState extends State<CalculatorSheet> {
   final _error = ValueNotifier<String?>(null);
   _CalculatorMode _mode = _CalculatorMode.calc;
   bool _showDestinations = false;
+  bool _revealed = false;
   double? _modeAmount;
 
   @override
@@ -188,7 +189,7 @@ class _CalculatorSheetState extends State<CalculatorSheet> {
               ],
               selected: {_mode},
               selectedBackground: AppTheme.heroStart,
-              selectedForeground: AppTheme.onHero,
+              selectedForeground: AppTheme.heroTextOf(context),
               filled: true,
               onSelectionChanged: (value) => setState(() {
                 _mode = value.first;
@@ -308,9 +309,11 @@ class _CalculatorSheetState extends State<CalculatorSheet> {
                     backgroundColor: AppTheme.heroEnd,
                     side: BorderSide.none,
                     label: Text(
-                      '${entry.expression} = ${_plain(entry.result)}',
+                      privacyAmountsHidden && !_revealed
+                          ? hiddenAmount
+                          : '${entry.expression} = ${_plain(entry.result)}',
                       style: textTheme.labelSmall?.copyWith(
-                        color: AppTheme.onHero,
+                        color: AppTheme.heroTextOf(context),
                       ),
                     ),
                     onPressed: () => _expression.value = _plain(entry.result),
@@ -326,6 +329,8 @@ class _CalculatorSheetState extends State<CalculatorSheet> {
               final value = _result();
               final formatted = value == null
                   ? '—'
+                  : _revealed
+                  ? formatMoneyUnmasked((value * 100).round())
                   : formatMoney((value * 100).round());
               final words = value == null
                   ? ''
@@ -336,16 +341,24 @@ class _CalculatorSheetState extends State<CalculatorSheet> {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Text(
-                    expression.isEmpty ? '0' : expression,
+                    privacyAmountsHidden && !_revealed
+                        ? hiddenAmount
+                        : (expression.isEmpty ? '0' : expression),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: textTheme.bodyMedium?.copyWith(
-                      color: AppTheme.onHeroMuted,
+                      color: AppTheme.heroMutedOf(context),
                     ),
                   ),
                   const SizedBox(height: 6),
                   GestureDetector(
-                    onLongPress: value == null
+                    onLongPressStart: privacyAmountsHidden
+                        ? (_) => setState(() => _revealed = true)
+                        : null,
+                    onLongPressEnd: privacyAmountsHidden
+                        ? (_) => setState(() => _revealed = false)
+                        : null,
+                    onLongPress: privacyAmountsHidden || value == null
                         ? null
                         : () {
                             Clipboard.setData(
@@ -363,7 +376,7 @@ class _CalculatorSheetState extends State<CalculatorSheet> {
                         child: Text(
                           formatted,
                           style: textTheme.displaySmall?.copyWith(
-                            color: AppTheme.onHero,
+                            color: AppTheme.heroTextOf(context),
                             fontWeight: FontWeight.w800,
                           ),
                         ),
@@ -371,12 +384,12 @@ class _CalculatorSheetState extends State<CalculatorSheet> {
                     ),
                   ),
                   Text(
-                    words,
+                    privacyAmountsHidden && !_revealed ? hiddenAmount : words,
                     maxLines: 2,
                     textAlign: TextAlign.right,
                     overflow: TextOverflow.ellipsis,
                     style: textTheme.bodySmall?.copyWith(
-                      color: AppTheme.onHeroMuted,
+                      color: AppTheme.heroMutedOf(context),
                     ),
                   ),
                 ],
@@ -473,7 +486,7 @@ class _CalculatorKeyState extends State<_CalculatorKey> {
                 style: Theme.of(context).textTheme.titleMedium?.copyWith(
                   fontWeight: FontWeight.w700,
                   color: label == '='
-                      ? AppTheme.onHero
+                      ? AppTheme.heroTextOf(context)
                       : Theme.of(context).colorScheme.onSurface,
                 ),
               ),

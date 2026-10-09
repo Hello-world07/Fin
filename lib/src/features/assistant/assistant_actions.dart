@@ -13,6 +13,7 @@ enum AssistantMutationKind {
   addMoneyRepayment,
   extendMoneyDueDate,
   settleMoney,
+  scheduleReminder,
 }
 
 enum AssistantEntityType { subscription, emi, money }
@@ -55,6 +56,7 @@ class AssistantPendingMutation {
     this.expectedDueDate,
     this.expectedInstallmentNumber,
     this.paidEarly = false,
+    this.reminderAt,
   });
 
   final String id;
@@ -71,6 +73,7 @@ class AssistantPendingMutation {
   final DateTime? expectedDueDate;
   final int? expectedInstallmentNumber;
   final bool paidEarly;
+  final DateTime? reminderAt;
 }
 
 class AssistantUndoMutation {
@@ -415,14 +418,28 @@ AssistantEntityResolution<T> resolveAssistantEntity<T>(
   }
   final ranked =
       candidates
+          .map((item) => (item, assistantNameScore(q, item.name)))
+          .toList()
+        ..sort((a, b) => b.$2.compareTo(a.$2));
+  final plausible = ranked.where((item) => item.$2 >= 2).toList();
+  if (plausible.length == 1 && plausible.first.$2 >= 3) {
+    return AssistantEntityResolution(match: plausible.first.$1);
+  }
+  if (plausible.isNotEmpty) {
+    return AssistantEntityResolution(
+      ambiguous: plausible.take(6).map((item) => item.$1).toList(),
+    );
+  }
+  final byDistance =
+      candidates
           .map(
             (item) => (item, _editDistance(q, normalizeActionText(item.name))),
           )
           .toList()
         ..sort((a, b) => a.$2.compareTo(b.$2));
   final threshold = q.length <= 4 ? 1 : (q.length / 3).ceil();
-  final best = ranked.where((item) => item.$2 <= threshold).toList();
-  if (best.length == 1 || (best.length > 1 && best.first.$2 < best[1].$2)) {
+  final best = byDistance.where((item) => item.$2 <= threshold).toList();
+  if (best.length == 1 && best.first.$2 <= 1) {
     return AssistantEntityResolution(match: best.first.$1);
   }
   if (best.length > 1) {
@@ -431,6 +448,51 @@ AssistantEntityResolution<T> resolveAssistantEntity<T>(
     );
   }
   return AssistantEntityResolution(
-    suggestions: ranked.take(3).map((item) => item.$1).toList(),
+    suggestions: byDistance.take(3).map((item) => item.$1).toList(),
   );
+}
+
+int assistantNameScore(String query, String name) {
+  const generic = {
+    'loan',
+    'emi',
+    'app',
+    'my',
+    'me',
+    'by',
+    'the',
+    'given',
+    'borrowed',
+  };
+  final wanted = normalizeActionText(
+    query,
+  ).split(' ').where((s) => s.isNotEmpty);
+  final found = normalizeActionText(
+    name,
+  ).split(' ').where((s) => s.isNotEmpty).toList();
+  var score = 0;
+  for (final token in wanted) {
+    if (generic.contains(token)) continue;
+    if (found.contains(token)) {
+      score += 6;
+    } else if (found.any(
+      (part) =>
+          part.length >= 3 &&
+          token.length >= 3 &&
+          (part.startsWith(token) || token.startsWith(part)),
+    )) {
+      score += 4;
+    } else if (found.any(
+      (part) =>
+          part.length >= 4 &&
+          token.length >= 3 &&
+          _editDistance(part, token) <= 2,
+    )) {
+      score += 3;
+    } else if (token == 'we' && found.any((part) => part.endsWith('vi'))) {
+      // Common dictation of the final syllable in "Navi".
+      score += 2;
+    }
+  }
+  return score;
 }

@@ -11,14 +11,26 @@ final _internationalCurrency = NumberFormat.currency(
   decimalDigits: 0,
 );
 bool useIndianNumberGrouping = true;
+bool privacyAmountsHidden = false;
+const hiddenAmount = '•••••';
 
 final _date = DateFormat('dd MMM yyyy');
 final _dateTime = DateFormat('dd MMM yyyy, hh:mm a');
 
-String formatMoney(int paise) =>
+String formatMoneyUnmasked(int paise) =>
     (useIndianNumberGrouping ? _indianCurrency : _internationalCurrency).format(
       paise / 100,
     );
+
+String formatMoney(int paise) =>
+    privacyAmountsHidden ? hiddenAmount : formatMoneyUnmasked(paise);
+
+final _moneyInText = RegExp(
+  r'(?:₹\s*|INR\s*|Rs\.?\s*)[\d,]+(?:\.\d+)?(?:\s*\([^)]*\))?',
+  caseSensitive: false,
+);
+String hideMoneyInText(String value) =>
+    privacyAmountsHidden ? value.replaceAll(_moneyInText, hiddenAmount) : value;
 
 String formatDate(DateTime date) => _date.format(date);
 

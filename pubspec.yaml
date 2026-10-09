@@ -53,6 +53,7 @@ dependencies:
   cryptography: ^2.9.0
   cryptography_flutter: ^2.3.4
   package_info_plus: ^10.1.0
+  speech_to_text: '>=7.4.0 <7.5.0'
 
 dev_dependencies:
   flutter_test:

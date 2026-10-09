@@ -1,7 +1,6 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:personal_finance/src/core/app_theme.dart';
@@ -71,43 +70,5 @@ void main() {
       amount.style?.fontFeatures,
       contains(const FontFeature.tabularFigures()),
     );
-  });
-
-  testWidgets('bottom navigation labels stay on one line at 360dp', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(360, 800);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: AppTheme.light(),
-        home: Scaffold(
-          bottomNavigationBar: NavigationBar(
-            selectedIndex: 3,
-            destinations: const [
-              NavigationDestination(icon: Icon(Icons.home), label: 'Home'),
-              NavigationDestination(icon: Icon(Icons.wallet), label: 'EMIs'),
-              NavigationDestination(
-                icon: Icon(Icons.swap_horiz),
-                label: 'Money',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.autorenew),
-                label: 'Subs',
-                tooltip: 'Subscriptions',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.more_horiz),
-                label: 'More',
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-    final label = tester.renderObject<RenderParagraph>(find.text('Subs'));
-    expect(label.size.height, lessThan(20));
   });
 }

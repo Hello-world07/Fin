@@ -29,3 +29,23 @@ DateTime nextSubscriptionBillingDate(
   }
   return occurrence;
 }
+
+List<DateTime> subscriptionOccurrences(
+  DateTime billingDate,
+  PaymentFrequency frequency,
+  DateTime from,
+  DateTime through,
+) {
+  final dates = <DateTime>[];
+  var cursor = DateTime(from.year, from.month, from.day);
+  final end = DateTime(through.year, through.month, through.day);
+  while (!cursor.isAfter(end)) {
+    final next = nextSubscriptionBillingDate(billingDate, frequency, cursor);
+    if (next.isBefore(cursor)) break;
+    if (next.isAfter(end)) break;
+    dates.add(next);
+    if (frequency == PaymentFrequency.once) break;
+    cursor = next.add(const Duration(days: 1));
+  }
+  return dates;
+}

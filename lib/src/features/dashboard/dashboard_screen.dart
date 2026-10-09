@@ -14,11 +14,15 @@ import '../../shared/calculator_sheet.dart';
 import '../../shared/empty_state.dart';
 import '../../shared/finance_display_widgets.dart';
 import '../../shared/forms.dart';
+import '../../shared/notched_navigation_bar.dart';
+import '../../shared/screen_header.dart';
 import '../activity/activity_screen.dart';
 import '../assistant/ask_finkeep_sheet.dart';
 import '../emis/emis_screen.dart';
 import '../money/money_screen.dart';
 import '../settings/backup_settings_section.dart';
+import '../settings/settings_screen.dart';
+import '../reminders/reminders_screen.dart';
 import '../subscriptions/subscriptions_screen.dart';
 
 class DashboardScreen extends ConsumerStatefulWidget {
@@ -33,14 +37,22 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.watch(privacyModeProvider);
     final summary = ref.watch(dashboardProvider);
     final emis = ref.watch(emiDetailsProvider);
     final actions = ref.watch(financialActionsProvider);
-    final activity = ref.watch(activityProvider);
+    final activity = ref.watch(dashboardActivityProvider);
     final records = ref.watch(moneyRecordsProvider);
     final subscriptions = ref.watch(subscriptionsProvider);
     return Scaffold(
-      floatingActionButton: _buildAddMenu(context),
+      floatingActionButton: MediaQuery.viewInsetsOf(context).bottom > 0
+          ? null
+          : Padding(
+              padding: EdgeInsets.only(
+                bottom: NotchedNavigationMetrics.fabBottomPadding,
+              ),
+              child: _buildAddMenu(context),
+            ),
       body: Stack(
         children: [
           Positioned.fill(
@@ -59,9 +71,18 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                     (records.valueOrNull?.isEmpty ?? false) &&
                     (subscriptions.valueOrNull?.isEmpty ?? false);
                 return ListView(
-                  padding: EdgeInsets.zero,
+                  padding: EdgeInsets.only(
+                    bottom: NotchedNavigationMetrics.tabContentPadding(context),
+                  ),
                   children: [
-                    _DashboardHeader(onAsk: () => openAskFinKeep(context)),
+                    _DashboardHeader(
+                      onAsk: () => openAskFinKeep(context),
+                      private: ref.watch(privacyModeProvider).enabled,
+                      onPrivacy: () => ref
+                          .read(privacyModeProvider.notifier)
+                          .setEnabled(!ref.read(privacyModeProvider).enabled),
+                      onSettings: () => openSettings(context),
+                    ),
                     BackupReminderBanner(
                       onBackUp: () async {
                         try {
@@ -222,12 +243,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     children: [
       if (_actionsExpanded) ...[
         _AddAction(
-          label: 'Ask FinKeep',
-          icon: Icons.auto_awesome_outlined,
-          onTap: () => _closeMenuThen(() => openAskFinKeep(context)),
-        ),
-        const SizedBox(height: 10),
-        _AddAction(
           label: 'Calculator',
           icon: Icons.calculate_outlined,
           onTap: () => _closeMenuThen(_openCalculator),
@@ -268,9 +283,17 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
 }
 
 class _DashboardHeader extends StatelessWidget {
-  const _DashboardHeader({required this.onAsk});
+  const _DashboardHeader({
+    required this.onAsk,
+    required this.onPrivacy,
+    required this.onSettings,
+    required this.private,
+  });
 
   final VoidCallback onAsk;
+  final VoidCallback onPrivacy;
+  final VoidCallback onSettings;
+  final bool private;
 
   @override
   Widget build(BuildContext context) {
@@ -281,43 +304,51 @@ class _DashboardHeader extends StatelessWidget {
         : hour < 17
         ? 'Good afternoon'
         : 'Good evening';
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(22, 18, 22, 18),
-      child: Column(
+    return ScreenHeader(
+      horizontalPadding: 22,
+      title: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'FinKeep',
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.w800,
-                  color: Theme.of(context).brightness == Brightness.light
-                      ? AppTheme.primaryText
-                      : Theme.of(context).colorScheme.onSurface,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                'Local-first money clarity',
-                style: Theme.of(
-                  context,
-                ).textTheme.bodySmall?.copyWith(color: AppTheme.mutedText),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                '$greeting · ${formatDate(now)}',
-                style: Theme.of(
-                  context,
-                ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
-              ),
-            ],
+          Text(
+            'FinKeep',
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+              fontWeight: FontWeight.w800,
+              color: AppTheme.colorsOf(context).text,
+            ),
           ),
-          const SizedBox(height: 16),
-          _AskSearchStrip(onTap: onAsk),
+          const SizedBox(height: 2),
+          Text(
+            'Local-first money clarity',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: AppTheme.colorsOf(context).secondaryText,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            '$greeting · ${formatDate(now)}',
+            style: Theme.of(
+              context,
+            ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+          ),
         ],
       ),
+      actions: [
+        IconButton(
+          tooltip: private ? 'Show amounts' : 'Hide amounts',
+          constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+          onPressed: onPrivacy,
+          icon: Icon(
+            private ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+          ),
+        ),
+        IconButton(
+          tooltip: 'Settings',
+          constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+          onPressed: onSettings,
+          icon: const Icon(Icons.settings_outlined),
+        ),
+      ],
+      bottom: _AskSearchStrip(onTap: onAsk),
     );
   }
 }
@@ -413,11 +444,14 @@ class _BalanceHero extends StatelessWidget {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(22, 24, 22, 22),
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
           colors: [AppTheme.heroStart, AppTheme.heroEnd],
         ),
-        borderRadius: BorderRadius.vertical(bottom: Radius.circular(28)),
+        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(28)),
+        border: Theme.of(context).brightness == Brightness.dark
+            ? Border.all(color: AppTheme.darkColors.outline, width: 1)
+            : null,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -425,7 +459,7 @@ class _BalanceHero extends StatelessWidget {
           Text(
             'NET POSITION',
             style: Theme.of(context).textTheme.labelMedium?.copyWith(
-              color: AppTheme.onHero.withValues(alpha: 0.76),
+              color: AppTheme.heroTextOf(context).withValues(alpha: 0.76),
               fontWeight: FontWeight.w700,
             ),
           ),
@@ -437,7 +471,7 @@ class _BalanceHero extends StatelessWidget {
             builder: (context, value, _) => Text(
               formatMoney(value),
               style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                color: AppTheme.onHero,
+                color: AppTheme.heroTextOf(context),
                 fontWeight: FontWeight.w800,
               ),
             ),
@@ -448,15 +482,24 @@ class _BalanceHero extends StatelessWidget {
               SizedBox(
                 width: 96,
                 height: 96,
-                child: CustomPaint(
-                  painter: _BalanceRingPainter(
-                    incoming: incoming,
-                    payable: payable,
-                  ),
-                  child: Center(
-                    child: Icon(
-                      Icons.account_balance_wallet_outlined,
-                      color: AppTheme.onHero.withValues(alpha: 0.88),
+                child: RepaintBoundary(
+                  child: CustomPaint(
+                    painter: _BalanceRingPainter(
+                      incoming: incoming,
+                      payable: payable,
+                      receive: AppTheme.colorsOf(context).receive,
+                      pay: AppTheme.colorsOf(context).pay,
+                      track: AppTheme.heroTextOf(
+                        context,
+                      ).withValues(alpha: 0.18),
+                    ),
+                    child: Center(
+                      child: Icon(
+                        Icons.account_balance_wallet_outlined,
+                        color: AppTheme.heroTextOf(
+                          context,
+                        ).withValues(alpha: 0.88),
+                      ),
                     ),
                   ),
                 ),
@@ -466,13 +509,13 @@ class _BalanceHero extends StatelessWidget {
                 child: Column(
                   children: [
                     _HeroLegend(
-                      color: AppTheme.receive,
+                      color: AppTheme.colorsOf(context).receive,
                       label: 'Coming to me',
                       value: incoming,
                     ),
                     const SizedBox(height: 16),
                     _HeroLegend(
-                      color: AppTheme.pay,
+                      color: AppTheme.colorsOf(context).pay,
                       label: 'I need to pay',
                       value: payable,
                     ),
@@ -485,7 +528,7 @@ class _BalanceHero extends StatelessWidget {
           Text(
             'Position reflects outstanding Money records; recurring commitments are shown below.',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: AppTheme.onHero.withValues(alpha: 0.72),
+              color: AppTheme.heroTextOf(context).withValues(alpha: 0.72),
             ),
           ),
         ],
@@ -519,7 +562,7 @@ class _HeroLegend extends StatelessWidget {
           label,
           style: Theme.of(
             context,
-          ).textTheme.bodySmall?.copyWith(color: AppTheme.onHeroMuted),
+          ).textTheme.bodySmall?.copyWith(color: AppTheme.heroMutedOf(context)),
         ),
       ),
       TweenAnimationBuilder<int>(
@@ -529,7 +572,7 @@ class _HeroLegend extends StatelessWidget {
         builder: (context, animated, _) => Text(
           formatMoney(animated),
           style: Theme.of(context).textTheme.titleSmall?.copyWith(
-            color: AppTheme.onHero,
+            color: AppTheme.heroTextOf(context),
             fontWeight: FontWeight.w700,
           ),
         ),
@@ -539,10 +582,17 @@ class _HeroLegend extends StatelessWidget {
 }
 
 class _BalanceRingPainter extends CustomPainter {
-  const _BalanceRingPainter({required this.incoming, required this.payable});
+  const _BalanceRingPainter({
+    required this.incoming,
+    required this.payable,
+    required this.receive,
+    required this.pay,
+    required this.track,
+  });
 
   final int incoming;
   final int payable;
+  final Color receive, pay, track;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -556,7 +606,7 @@ class _BalanceRingPainter extends CustomPainter {
       -math.pi / 2,
       math.pi * 2,
       false,
-      stroke..color = AppTheme.onHero.withValues(alpha: 0.18),
+      stroke..color = track,
     );
     final total = incoming + payable;
     if (total <= 0) return;
@@ -566,20 +616,24 @@ class _BalanceRingPainter extends CustomPainter {
       -math.pi / 2,
       greenSweep,
       false,
-      stroke..color = AppTheme.receive,
+      stroke..color = receive,
     );
     canvas.drawArc(
       rect.deflate(7),
       -math.pi / 2 + greenSweep,
       math.pi * 2 - greenSweep,
       false,
-      stroke..color = AppTheme.pay,
+      stroke..color = pay,
     );
   }
 
   @override
   bool shouldRepaint(covariant _BalanceRingPainter oldDelegate) =>
-      oldDelegate.incoming != incoming || oldDelegate.payable != payable;
+      oldDelegate.incoming != incoming ||
+      oldDelegate.payable != payable ||
+      oldDelegate.receive != receive ||
+      oldDelegate.pay != pay ||
+      oldDelegate.track != track;
 }
 
 class _OutflowSection extends StatelessWidget {
@@ -590,13 +644,17 @@ class _OutflowSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final parts = <(String, int, Color)>[
-      ('EMI', summary.monthlyEmisPaise, AppTheme.emi),
+      ('EMI', summary.monthlyEmisPaise, AppTheme.colorsOf(context).emi),
       (
         'Subscriptions',
         summary.monthlySubscriptionsPaise,
-        AppTheme.subscriptions,
+        AppTheme.colorsOf(context).subscriptions,
       ),
-      ('Money due', summary.monthlyMoneyToPayPaise, AppTheme.pay),
+      (
+        'Money due',
+        summary.monthlyMoneyToPayPaise,
+        AppTheme.colorsOf(context).pay,
+      ),
     ];
     final total = parts.fold<int>(0, (sum, item) => sum + item.$2);
     return Column(
@@ -619,7 +677,7 @@ class _OutflowSection extends StatelessWidget {
           child: SizedBox(
             height: 14,
             child: total == 0
-                ? ColoredBox(color: AppTheme.fieldFill)
+                ? ColoredBox(color: AppTheme.colorsOf(context).fieldFill)
                 : Row(
                     children: [
                       for (final part in parts.where((item) => item.$2 > 0))
@@ -745,9 +803,23 @@ class _ThirtyDayTimelineState extends State<_ThirtyDayTimeline> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _SectionTitle(
-          'Coming up',
-          detail: 'Next 30 days · red items are overdue',
+        Row(
+          children: [
+            const Expanded(
+              child: _SectionTitle(
+                'Coming up',
+                detail: 'Next 30 days · red items are overdue',
+              ),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const RemindersScreen(),
+                ),
+              ),
+              child: const Text('See all'),
+            ),
+          ],
         ),
         const SizedBox(height: 13),
         Row(
@@ -778,7 +850,7 @@ class _ThirtyDayTimelineState extends State<_ThirtyDayTimeline> {
                   label: 'Overdue',
                   count: overdue.length,
                   selected: false,
-                  dotColors: const [AppTheme.pay],
+                  dotColors: [AppTheme.colorsOf(context).pay],
                   onTap: () => setState(() => _showOverdue = true),
                 ),
               for (var offset = 0; offset < 30; offset++)
@@ -802,7 +874,10 @@ class _ThirtyDayTimelineState extends State<_ThirtyDayTimeline> {
                           day.year == _selected.year &&
                           day.month == _selected.month &&
                           day.day == _selected.day,
-                      dotColors: dayItems.map(_actionColor).toSet().toList(),
+                      dotColors: dayItems
+                          .map((item) => _actionColor(context, item))
+                          .toSet()
+                          .toList(),
                       onTap: () => setState(() {
                         _selected = day;
                         _showOverdue = false;
@@ -823,9 +898,9 @@ class _ThirtyDayTimelineState extends State<_ThirtyDayTimeline> {
               selectedItems.isEmpty && _selected.isBefore(today)
                   ? 'No upcoming items on this day.'
                   : 'Nothing due ${_selected == today ? 'today' : 'on this day'}.',
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall?.copyWith(color: AppTheme.mutedText),
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: AppTheme.colorsOf(context).secondaryText,
+              ),
             ),
           ),
       ],
@@ -851,9 +926,9 @@ class _WindowCount extends StatelessWidget {
       ),
       Text(
         label,
-        style: Theme.of(
-          context,
-        ).textTheme.labelSmall?.copyWith(color: AppTheme.mutedText),
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+          color: AppTheme.colorsOf(context).secondaryText,
+        ),
       ),
     ],
   );
@@ -886,7 +961,7 @@ class _DayPill extends StatelessWidget {
         decoration: BoxDecoration(
           color: selected
               ? (Theme.of(context).brightness == Brightness.light
-                    ? AppTheme.selectedFill
+                    ? AppTheme.colorsOf(context).selectedFill
                     : Theme.of(context).colorScheme.primaryContainer)
               : AppTheme.transparent,
           borderRadius: BorderRadius.circular(14),
@@ -977,7 +1052,9 @@ class _EmiProgressSection extends StatelessWidget {
                       Text(
                         '${detail.paidInstallments}/${detail.emi.tenureMonths}',
                         style: Theme.of(context).textTheme.labelMedium
-                            ?.copyWith(color: AppTheme.mutedText),
+                            ?.copyWith(
+                              color: AppTheme.colorsOf(context).secondaryText,
+                            ),
                       ),
                     ],
                   ),
@@ -987,8 +1064,8 @@ class _EmiProgressSection extends StatelessWidget {
                     child: LinearProgressIndicator(
                       value: detail.paidInstallments / detail.emi.tenureMonths,
                       minHeight: 7,
-                      color: AppTheme.emi,
-                      backgroundColor: AppTheme.fieldFill,
+                      color: AppTheme.colorsOf(context).emi,
+                      backgroundColor: AppTheme.colorsOf(context).fieldFill,
                     ),
                   ),
                   const SizedBox(height: 6),
@@ -998,7 +1075,9 @@ class _EmiProgressSection extends StatelessWidget {
                         child: Text(
                           'Next ${formatDate(detail.nextUnpaidInstallment!.dueDate)}',
                           style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(color: AppTheme.mutedText),
+                              ?.copyWith(
+                                color: AppTheme.colorsOf(context).secondaryText,
+                              ),
                         ),
                       ),
                       Text(
@@ -1075,7 +1154,11 @@ class _Insights extends StatelessWidget {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Icon(Icons.auto_awesome, size: 17, color: AppTheme.seed),
+                Icon(
+                  Icons.auto_awesome,
+                  size: 17,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
                 const SizedBox(width: 9),
                 Expanded(child: Text(insight)),
               ],
@@ -1146,8 +1229,8 @@ class _CompactDueRow extends StatelessWidget {
             height: 9,
             decoration: BoxDecoration(
               color: item.status == ReminderStatus.overdue
-                  ? AppTheme.pay
-                  : _actionColor(item),
+                  ? AppTheme.colorsOf(context).pay
+                  : _actionColor(context, item),
               shape: BoxShape.circle,
             ),
           ),
@@ -1168,8 +1251,8 @@ class _CompactDueRow extends StatelessWidget {
                       : item.subtitle,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: item.status == ReminderStatus.overdue
-                        ? AppTheme.pay
-                        : AppTheme.mutedText,
+                        ? AppTheme.colorsOf(context).pay
+                        : AppTheme.colorsOf(context).secondaryText,
                   ),
                 ),
               ],
@@ -1214,24 +1297,30 @@ class _RecentActivity extends StatelessWidget {
             padding: const EdgeInsets.symmetric(vertical: 8),
             child: Row(
               children: [
-                const Icon(Icons.history, size: 19, color: AppTheme.mutedText),
+                Icon(
+                  Icons.history,
+                  size: 19,
+                  color: AppTheme.colorsOf(context).secondaryText,
+                ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        item.title,
+                        hideMoneyInText(item.title),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(fontWeight: FontWeight.w600),
                       ),
                       Text(
-                        item.description ?? formatDateTime(item.occurredAt),
+                        hideMoneyInText(
+                          item.description ?? formatDateTime(item.occurredAt),
+                        ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: AppTheme.mutedText,
+                          color: AppTheme.colorsOf(context).secondaryText,
                         ),
                       ),
                     ],
@@ -1239,9 +1328,9 @@ class _RecentActivity extends StatelessWidget {
                 ),
                 Text(
                   formatDate(item.occurredAt),
-                  style: Theme.of(
-                    context,
-                  ).textTheme.labelSmall?.copyWith(color: AppTheme.mutedText),
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: AppTheme.colorsOf(context).secondaryText,
+                  ),
                 ),
               ],
             ),
@@ -1289,19 +1378,21 @@ class _AddAction extends StatelessWidget {
   );
 }
 
-Color _typeColor(String type) => switch (type) {
-  'emi' => AppTheme.emi,
-  'subscription' => AppTheme.subscriptions,
-  'money' => AppTheme.receive,
-  _ => AppTheme.mutedText,
+Color _typeColor(BuildContext context, String type) => switch (type) {
+  'emi' => AppTheme.colorsOf(context).emi,
+  'subscription' => AppTheme.colorsOf(context).subscriptions,
+  'money' => AppTheme.colorsOf(context).receive,
+  _ => AppTheme.colorsOf(context).secondaryText,
 };
 
-Color _actionColor(ReminderItem item) {
-  if (item.status == ReminderStatus.overdue) return AppTheme.pay;
-  if (item.entityType == 'money' && item.title.startsWith('I owe')) {
-    return AppTheme.pay;
+Color _actionColor(BuildContext context, ReminderItem item) {
+  if (item.status == ReminderStatus.overdue) {
+    return AppTheme.colorsOf(context).pay;
   }
-  return _typeColor(item.entityType);
+  if (item.entityType == 'money' && item.title.startsWith('I owe')) {
+    return AppTheme.colorsOf(context).pay;
+  }
+  return _typeColor(context, item.entityType);
 }
 
 String _kind(String type) => switch (type) {

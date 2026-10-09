@@ -13,12 +13,14 @@ InputDecoration financeFieldDecoration(
   String? suffix,
 }) {
   final colors = Theme.of(context).colorScheme;
+  final tokens = AppTheme.colorsOf(context);
   final shape = OutlineInputBorder(
     borderRadius: BorderRadius.circular(16),
     borderSide: BorderSide.none,
   );
   return InputDecoration(
     hintText: hint,
+    hintStyle: TextStyle(color: tokens.mutedText),
     prefixIcon: icon == null ? null : Icon(icon),
     prefixText: prefix,
     suffixText: suffix,
@@ -41,14 +43,10 @@ InputDecoration financeFieldDecoration(
 }
 
 Color financeFieldFill(BuildContext context) =>
-    Theme.of(context).brightness == Brightness.light
-    ? AppTheme.fieldFill
-    : Theme.of(context).colorScheme.surfaceContainerHighest;
+    AppTheme.colorsOf(context).fieldFill;
 
 Color financeSelectedFill(BuildContext context) =>
-    Theme.of(context).brightness == Brightness.light
-    ? AppTheme.selectedFill
-    : Theme.of(context).colorScheme.primaryContainer;
+    AppTheme.colorsOf(context).selectedFill;
 
 class FinanceFieldLabel extends StatelessWidget {
   const FinanceFieldLabel(this.label, {super.key});
@@ -59,9 +57,7 @@ class FinanceFieldLabel extends StatelessWidget {
   Widget build(BuildContext context) => Text(
     label,
     style: Theme.of(context).textTheme.labelMedium?.copyWith(
-      color: Theme.of(context).brightness == Brightness.light
-          ? AppTheme.mutedText
-          : Theme.of(context).colorScheme.onSurfaceVariant,
+      color: AppTheme.colorsOf(context).secondaryText,
       fontWeight: FontWeight.w700,
     ),
   );

@@ -8,6 +8,7 @@ class LocalReminderService {
   final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
   bool _ready = false;
+  bool? _notificationsAllowed;
 
   Future<void> initialize() async {
     if (_ready) return;
@@ -25,14 +26,23 @@ class LocalReminderService {
     required String title,
     required String body,
     required DateTime when,
+    bool repeatDaily = false,
   }) async {
     await initialize();
+    _notificationsAllowed ??=
+        await _plugin
+            .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin
+            >()
+            ?.requestNotificationsPermission() ??
+        true;
+    if (_notificationsAllowed == false) return;
     if (when.isBefore(DateTime.now())) return;
     await _plugin.zonedSchedule(
       id: id,
       title: title,
       body: body,
-      scheduledDate: tz.TZDateTime.from(when, tz.local),
+      scheduledDate: tz.TZDateTime.from(when.toUtc(), tz.UTC),
       notificationDetails: const NotificationDetails(
         android: AndroidNotificationDetails(
           'finance_due_dates',
@@ -44,6 +54,12 @@ class LocalReminderService {
         iOS: DarwinNotificationDetails(),
       ),
       androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+      matchDateTimeComponents: repeatDaily ? DateTimeComponents.time : null,
     );
+  }
+
+  Future<void> cancelReminder(int id) async {
+    await initialize();
+    await _plugin.cancel(id: id);
   }
 }

@@ -183,7 +183,7 @@ String formatAssistantResult(double value) {
   }
   final paise = (value * 100).round();
   final amount = paise % 100 == 0
-      ? formatMoney(paise)
+      ? formatMoneyUnmasked(paise)
       : '₹${_indianNumber(value.abs().toStringAsFixed(2))}'.replaceFirst(
           '₹',
           value < 0 ? '-₹' : '₹',

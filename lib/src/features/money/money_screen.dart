@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:drift/drift.dart' hide Column;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -16,6 +18,8 @@ import '../../shared/empty_state.dart';
 import '../../shared/forms.dart';
 import '../../shared/finance_form_widgets.dart';
 import '../../shared/finance_display_widgets.dart';
+import '../../shared/notched_navigation_bar.dart';
+import '../../shared/screen_header.dart';
 
 class MoneyScreen extends ConsumerStatefulWidget {
   const MoneyScreen({super.key});
@@ -103,9 +107,12 @@ class _MoneyScreenState extends ConsumerState<MoneyScreen> {
   MoneyDirection _direction = MoneyDirection.given;
   _MoneyFilter _filter = _MoneyFilter.all;
   final _search = TextEditingController();
+  Timer? _searchDebounce;
+  String _query = '';
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
     _search.dispose();
     super.dispose();
   }
@@ -114,174 +121,237 @@ class _MoneyScreenState extends ConsumerState<MoneyScreen> {
   Widget build(BuildContext context) {
     final ref = this.ref;
     return Scaffold(
-      appBar: AppBar(title: const Text('Money')),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => openFinanceSheet(
-          context,
-          MoneyFormSheet(initialDirection: _direction),
-        ),
-        icon: const Icon(Icons.add),
-        label: const Text('New record'),
-      ),
-      body: AsyncView(
-        value: ref.watch(moneyRecordsProvider),
-        builder: (items) {
-          final coming = items
-              .where((item) => item.record.direction == MoneyDirection.given)
-              .toList();
-          final payable = items
-              .where((item) => item.record.direction == MoneyDirection.borrowed)
-              .toList();
-          final selected = _direction == MoneyDirection.given
-              ? coming
-              : payable;
-          final query = _search.text.trim().toLowerCase();
-          final people = _groupMoneyRecords(selected);
-          final visible = people.where((person) {
-            final matchesFilter = switch (_filter) {
-              _MoneyFilter.all => true,
-              _MoneyFilter.unpaid => person.remaining > 0 && person.repaid == 0,
-              _MoneyFilter.partial => person.remaining > 0 && person.repaid > 0,
-              _MoneyFilter.overdue => person.overdue,
-              _MoneyFilter.settled => person.remaining == 0,
-            };
-            return matchesFilter &&
-                (query.isEmpty || person.name.toLowerCase().contains(query));
-          }).toList();
-          final originalTotal = selected.fold<int>(
-            0,
-            (sum, item) => sum + item.record.amountPaise,
-          );
-          final outstanding = selected.fold<int>(
-            0,
-            (sum, item) => sum + item.summary.remainingAmountPaise,
-          );
-          final repaid = originalTotal - outstanding;
-          return ListView(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
-            children: [
-              SegmentedToggle<MoneyDirection>(
-                segments: const [
-                  ButtonSegment(
-                    value: MoneyDirection.given,
-                    label: Text('Money given'),
-                  ),
-                  ButtonSegment(
-                    value: MoneyDirection.borrowed,
-                    label: Text('Money borrowed'),
-                  ),
-                ],
-                selected: {_direction},
-                filled: true,
-                selectedBackground: _direction == MoneyDirection.given
-                    ? financeSelectedFill(context)
-                    : AppTheme.pay.withValues(alpha: 0.12),
-                selectedForeground: _direction == MoneyDirection.given
-                    ? AppTheme.seed
-                    : AppTheme.pay,
-                onSelectionChanged: (value) =>
-                    setState(() => _direction = value.single),
+      floatingActionButton: MediaQuery.viewInsetsOf(context).bottom > 0
+          ? null
+          : Padding(
+              padding: EdgeInsets.only(
+                bottom: NotchedNavigationMetrics.fabBottomPadding,
               ),
-              const SizedBox(height: 20),
-              Text(
-                _direction == MoneyDirection.given ? 'TO RECEIVE' : 'TO PAY',
-                style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ),
-              const SizedBox(height: 3),
-              AmountText(
-                outstanding,
-                style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              const SizedBox(height: 16),
-              _MoneySplitBar(
-                repaid: repaid,
-                outstanding: outstanding,
-                direction: _direction,
-              ),
-              const SizedBox(height: 14),
-              Row(
-                children: [
-                  Expanded(
-                    child: _SummaryValue(
-                      label: _direction == MoneyDirection.given
-                          ? 'Total given'
-                          : 'Total borrowed',
-                      value: originalTotal,
-                    ),
-                  ),
-                  Expanded(
-                    child: _SummaryValue(
-                      label: _direction == MoneyDirection.given
-                          ? 'Received'
-                          : 'Paid',
-                      value: repaid,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 20),
-              TextField(
-                controller: _search,
-                onChanged: (_) => setState(() {}),
-                decoration: financeFieldDecoration(
+              child: FloatingActionButton.extended(
+                onPressed: () => openFinanceSheet(
                   context,
-                  hint: 'Search people',
-                  icon: Icons.search,
+                  MoneyFormSheet(initialDirection: _direction),
                 ),
+                icon: const Icon(Icons.add),
+                label: const Text('New record'),
               ),
-              const SizedBox(height: 10),
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                clipBehavior: Clip.none,
-                child: Row(
-                  children: [
-                    for (final entry in const [
-                      (_MoneyFilter.all, 'All'),
-                      (_MoneyFilter.unpaid, 'Unpaid'),
-                      (_MoneyFilter.partial, 'Partially paid'),
-                      (_MoneyFilter.overdue, 'Overdue'),
-                      (_MoneyFilter.settled, 'Settled'),
-                    ]) ...[
-                      Padding(
-                        padding: const EdgeInsets.only(right: 7),
-                        child: ChoiceChip(
-                          label: Text(entry.$2),
-                          selected: _filter == entry.$1,
-                          onSelected: (_) => setState(() => _filter = entry.$1),
-                          selectedColor: financeSelectedFill(context),
-                          side: BorderSide.none,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              const SizedBox(height: 8),
-              if (visible.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(top: 40),
-                  child: EmptyState(
-                    icon: Icons.swap_horiz,
-                    title: items.isEmpty
-                        ? 'No money records'
-                        : 'No matching records',
-                    message: items.isEmpty
-                        ? 'Track money given and borrowed here.'
-                        : 'Try another filter or search term.',
+            ),
+      body: Column(
+        children: [
+          const ScreenHeader(title: Text('Money')),
+          Expanded(
+            child: AsyncView(
+              value: ref.watch(moneyRecordsProvider),
+              builder: (items) {
+                final coming = items
+                    .where(
+                      (item) => item.record.direction == MoneyDirection.given,
+                    )
+                    .toList();
+                final payable = items
+                    .where(
+                      (item) =>
+                          item.record.direction == MoneyDirection.borrowed,
+                    )
+                    .toList();
+                final selected = _direction == MoneyDirection.given
+                    ? coming
+                    : payable;
+                final query = _query;
+                final people = _groupMoneyRecords(selected);
+                final visible = people.where((person) {
+                  final matchesFilter = switch (_filter) {
+                    _MoneyFilter.all => true,
+                    _MoneyFilter.unpaid =>
+                      person.remaining > 0 && person.repaid == 0,
+                    _MoneyFilter.partial =>
+                      person.remaining > 0 && person.repaid > 0,
+                    _MoneyFilter.overdue => person.overdue,
+                    _MoneyFilter.settled => person.remaining == 0,
+                  };
+                  return matchesFilter &&
+                      (query.isEmpty ||
+                          person.name.toLowerCase().contains(query));
+                }).toList();
+                final originalTotal = selected.fold<int>(
+                  0,
+                  (sum, item) => sum + item.record.amountPaise,
+                );
+                final outstanding = selected.fold<int>(
+                  0,
+                  (sum, item) => sum + item.summary.remainingAmountPaise,
+                );
+                final repaid = originalTotal - outstanding;
+                final grouped = <DueListGroup, List<_PersonBalance>>{};
+                for (final person in visible) {
+                  final group = dueListGroup(
+                    person.remaining == 0 ? null : person.nearestDue,
+                    DateTime.now(),
+                  );
+                  grouped.putIfAbsent(group, () => []).add(person);
+                }
+                final rows = <(String?, _PersonBalance?)>[];
+                for (final group in DueListGroup.values) {
+                  final section = grouped[group];
+                  if (section == null || section.isEmpty) continue;
+                  rows.add((group.label, null));
+                  for (final person in section) {
+                    rows.add((null, person));
+                  }
+                }
+                return ListView.builder(
+                  padding: EdgeInsets.fromLTRB(
+                    16,
+                    0,
+                    16,
+                    NotchedNavigationMetrics.tabContentPadding(context),
                   ),
-                )
-              else
-                for (final person in visible) ...[
-                  _MoneyPersonTile(person: person, direction: _direction),
-                  const Divider(height: 1),
-                ],
-            ],
-          );
-        },
+                  itemCount: rows.length + 1,
+                  itemBuilder: (context, index) {
+                    if (index > 0) {
+                      final row = rows[index - 1];
+                      if (row.$1 != null) return DueListHeader(row.$1!);
+                      return Padding(
+                        key: ValueKey(
+                          '${_direction.name}:${row.$2!.name.toLowerCase()}',
+                        ),
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: _MoneyPersonTile(
+                          person: row.$2!,
+                          direction: _direction,
+                        ),
+                      );
+                    }
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SegmentedToggle<MoneyDirection>(
+                          segments: const [
+                            ButtonSegment(
+                              value: MoneyDirection.given,
+                              label: Text('Money given'),
+                            ),
+                            ButtonSegment(
+                              value: MoneyDirection.borrowed,
+                              label: Text('Money borrowed'),
+                            ),
+                          ],
+                          selected: {_direction},
+                          filled: true,
+                          selectedBackground: _direction == MoneyDirection.given
+                              ? financeSelectedFill(context)
+                              : AppTheme.colorsOf(
+                                  context,
+                                ).pay.withValues(alpha: 0.12),
+                          selectedForeground: _direction == MoneyDirection.given
+                              ? Theme.of(context).colorScheme.primary
+                              : AppTheme.colorsOf(context).pay,
+                          onSelectionChanged: (value) =>
+                              setState(() => _direction = value.single),
+                        ),
+                        const SizedBox(height: 20),
+                        Text(
+                          _direction == MoneyDirection.given
+                              ? 'TO RECEIVE'
+                              : 'TO PAY',
+                          style: Theme.of(context).textTheme.labelLarge
+                              ?.copyWith(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                              ),
+                        ),
+                        const SizedBox(height: 3),
+                        AmountText(
+                          outstanding,
+                          style: Theme.of(context).textTheme.headlineMedium
+                              ?.copyWith(fontWeight: FontWeight.w800),
+                        ),
+                        const SizedBox(height: 16),
+                        _MoneySplitBar(
+                          repaid: repaid,
+                          outstanding: outstanding,
+                          direction: _direction,
+                        ),
+                        const SizedBox(height: 14),
+                        _SummaryValue(
+                          label: _direction == MoneyDirection.given
+                              ? 'Total given'
+                              : 'Total borrowed',
+                          value: originalTotal,
+                        ),
+                        const SizedBox(height: 20),
+                        TextField(
+                          controller: _search,
+                          onChanged: (value) {
+                            _searchDebounce?.cancel();
+                            _searchDebounce = Timer(
+                              const Duration(milliseconds: 180),
+                              () {
+                                if (mounted) {
+                                  setState(
+                                    () => _query = value.trim().toLowerCase(),
+                                  );
+                                }
+                              },
+                            );
+                          },
+                          decoration: financeFieldDecoration(
+                            context,
+                            hint: 'Search people',
+                            icon: Icons.search,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          clipBehavior: Clip.none,
+                          child: Row(
+                            children: [
+                              for (final entry in const [
+                                (_MoneyFilter.all, 'All'),
+                                (_MoneyFilter.unpaid, 'Unpaid'),
+                                (_MoneyFilter.partial, 'Partially paid'),
+                                (_MoneyFilter.overdue, 'Overdue'),
+                                (_MoneyFilter.settled, 'Settled'),
+                              ]) ...[
+                                Padding(
+                                  padding: const EdgeInsets.only(right: 7),
+                                  child: ChoiceChip(
+                                    label: Text(entry.$2),
+                                    selected: _filter == entry.$1,
+                                    onSelected: (_) =>
+                                        setState(() => _filter = entry.$1),
+                                    selectedColor: financeSelectedFill(context),
+                                    side: BorderSide.none,
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        if (visible.isEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 40),
+                            child: EmptyState(
+                              icon: Icons.swap_horiz,
+                              title: items.isEmpty
+                                  ? 'No money records'
+                                  : 'No matching records',
+                              message: items.isEmpty
+                                  ? 'Track money given and borrowed here.'
+                                  : 'Try another filter or search term.',
+                            ),
+                          ),
+                      ],
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -344,15 +414,17 @@ class _MoneySplitBar extends StatelessWidget {
                 if (repaid > 0)
                   Expanded(
                     flex: repaid,
-                    child: const ColoredBox(color: AppTheme.receive),
+                    child: ColoredBox(
+                      color: AppTheme.colorsOf(context).receive,
+                    ),
                   ),
                 if (outstanding > 0)
                   Expanded(
                     flex: outstanding,
                     child: ColoredBox(
                       color: direction == MoneyDirection.given
-                          ? AppTheme.seed
-                          : AppTheme.pay,
+                          ? Theme.of(context).colorScheme.primary
+                          : AppTheme.colorsOf(context).pay,
                     ),
                   ),
               ],
@@ -368,9 +440,9 @@ class _MoneySplitBar extends StatelessWidget {
               '${direction == MoneyDirection.given ? 'Received' : 'Paid'} ${formatMoney(repaid)}',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: Theme.of(
-                context,
-              ).textTheme.labelSmall?.copyWith(color: AppTheme.mutedText),
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: AppTheme.colorsOf(context).secondaryText,
+              ),
             ),
           ),
           const SizedBox(width: 8),
@@ -380,9 +452,9 @@ class _MoneySplitBar extends StatelessWidget {
               textAlign: TextAlign.end,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: Theme.of(
-                context,
-              ).textTheme.labelSmall?.copyWith(color: AppTheme.mutedText),
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: AppTheme.colorsOf(context).secondaryText,
+              ),
             ),
           ),
         ],
@@ -401,15 +473,36 @@ class _MoneyPersonTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final progress = person.total == 0 ? 0.0 : person.repaid / person.total;
     final statusColor = person.remaining == 0
-        ? AppTheme.receive
+        ? AppTheme.colorsOf(context).receive
         : person.overdue
-        ? AppTheme.pay
+        ? AppTheme.colorsOf(context).pay
         : person.repaid > 0
-        ? AppTheme.seed
+        ? Theme.of(context).colorScheme.primary
         : person.nearestDue != null
-        ? AppTheme.emi
-        : AppTheme.seed;
-    return InkWell(
+        ? AppTheme.colorsOf(context).emi
+        : Theme.of(context).colorScheme.primary;
+    final due = person.nearestDue;
+    final days = due == null
+        ? null
+        : DateTime(due.year, due.month, due.day)
+              .difference(
+                DateTime(
+                  DateTime.now().year,
+                  DateTime.now().month,
+                  DateTime.now().day,
+                ),
+              )
+              .inDays;
+    final dueColor = person.remaining == 0
+        ? AppTheme.colorsOf(context).receive
+        : days == null
+        ? AppTheme.colorsOf(context).secondaryText
+        : days < 0
+        ? AppTheme.colorsOf(context).pay
+        : days <= 7
+        ? AppTheme.colorsOf(context).emi
+        : AppTheme.colorsOf(context).receive;
+    return FinanceTonalTile(
       onTap: () => Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) => person.records.length == 1
@@ -417,92 +510,87 @@ class _MoneyPersonTile extends StatelessWidget {
               : MoneyPersonScreen(person.name, direction),
         ),
       ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 16),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
+      leading: CircleAvatar(
+        radius: 20,
+        backgroundColor: financeSelectedFill(context),
+        child: Text(
+          displayName(person.name).characters.first,
+          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+            color: Theme.of(context).colorScheme.primary,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ),
+      content: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            displayName(person.name),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(
+              context,
+            ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            '${person.records.length} ${person.records.length == 1 ? 'record' : 'records'} · ${person.remaining == 0
+                ? 'Settled'
+                : person.repaid > 0
+                ? 'Partially paid'
+                : 'Unpaid'}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: statusColor),
+          ),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: StatusPill(
+              label: person.remaining == 0
+                  ? 'Settled'
+                  : due == null
+                  ? 'No due date'
+                  : relativeDueText(due, DateTime.now()),
+              color: dueColor,
+            ),
+          ),
+        ],
+      ),
+      trailing: SizedBox(
+        width: 86,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            CircleAvatar(
-              radius: 22,
-              backgroundColor: financeSelectedFill(context),
-              child: Text(
-                displayName(person.name).characters.first,
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  color: AppTheme.seed,
-                  fontWeight: FontWeight.w800,
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerRight,
+              child: AmountText(
+                person.remaining,
+                style: Theme.of(
+                  context,
+                ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
+              ),
+            ),
+            if (person.repaid > 0) ...[
+              const SizedBox(height: 7),
+              MiniProgressRing(
+                progress: progress,
+                size: 42,
+                strokeWidth: 3,
+                child: Center(
+                  child: Text(
+                    '${(progress * 100).round()}%',
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      fontSize: 9,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          displayName(person.name),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.titleMedium
-                              ?.copyWith(fontWeight: FontWeight.w800),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Flexible(
-                        child: FittedBox(
-                          fit: BoxFit.scaleDown,
-                          alignment: Alignment.centerRight,
-                          child: AmountText(
-                            person.remaining,
-                            style: Theme.of(context).textTheme.titleMedium
-                                ?.copyWith(fontWeight: FontWeight.w800),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      if (person.records.length > 1) ...[
-                        Text(
-                          '${person.records.length} records',
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(color: AppTheme.mutedText),
-                        ),
-                        const SizedBox(width: 8),
-                      ],
-                      StatusPill(label: person.statusLabel, color: statusColor),
-                    ],
-                  ),
-                  if (person.nearestDue != null &&
-                      person.repaid > 0 &&
-                      !person.overdue) ...[
-                    const SizedBox(height: 4),
-                    Text(
-                      relativeDueText(person.nearestDue!, DateTime.now()),
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: AppTheme.mutedText,
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 10),
-                  LinearProgressIndicator(
-                    value: progress,
-                    minHeight: 5,
-                    borderRadius: BorderRadius.circular(3),
-                    color: direction == MoneyDirection.given
-                        ? AppTheme.receive
-                        : AppTheme.pay,
-                    backgroundColor: Theme.of(
-                      context,
-                    ).colorScheme.outlineVariant,
-                  ),
-                ],
-              ),
-            ),
+            ],
           ],
         ),
       ),
@@ -722,7 +810,7 @@ class MoneyDetailScreen extends ConsumerWidget {
                       Text(
                         'Due ${formatDate(detail.record.dueDate!)}',
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: AppTheme.mutedText,
+                          color: AppTheme.colorsOf(context).secondaryText,
                         ),
                       ),
                     ],
@@ -1033,14 +1121,18 @@ class _MoneyTimelineNode extends StatelessWidget {
           left: 14,
           top: 22,
           bottom: 0,
-          child: Container(width: 2, color: AppTheme.receive),
+          child: Container(width: 2, color: AppTheme.colorsOf(context).receive),
         ),
       Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
             width: 30,
-            child: Icon(icon, size: 22, color: AppTheme.receive),
+            child: Icon(
+              icon,
+              size: 22,
+              color: AppTheme.colorsOf(context).receive,
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -1074,9 +1166,9 @@ class _MoneyTimelineNode extends StatelessWidget {
                   const SizedBox(height: 4),
                   Text(
                     formatDateTime(date),
-                    style: Theme.of(
-                      context,
-                    ).textTheme.bodySmall?.copyWith(color: AppTheme.mutedText),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: AppTheme.colorsOf(context).secondaryText,
+                    ),
                   ),
                   if (note?.isNotEmpty == true) ...[
                     const SizedBox(height: 4),
@@ -1085,9 +1177,9 @@ class _MoneyTimelineNode extends StatelessWidget {
                   const SizedBox(height: 4),
                   Text(
                     '${formatMoney(remaining)} remaining',
-                    style: Theme.of(
-                      context,
-                    ).textTheme.bodySmall?.copyWith(color: AppTheme.mutedText),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: AppTheme.colorsOf(context).secondaryText,
+                    ),
                   ),
                 ],
               ),
@@ -1219,10 +1311,12 @@ class _MoneyFormSheetState extends ConsumerState<MoneyFormSheet> {
                       filled: true,
                       selectedBackground: _direction == MoneyDirection.given
                           ? financeSelectedFill(context)
-                          : AppTheme.pay.withValues(alpha: 0.12),
+                          : AppTheme.colorsOf(
+                              context,
+                            ).pay.withValues(alpha: 0.12),
                       selectedForeground: _direction == MoneyDirection.given
-                          ? AppTheme.seed
-                          : AppTheme.pay,
+                          ? Theme.of(context).colorScheme.primary
+                          : AppTheme.colorsOf(context).pay,
                       onSelectionChanged: widget.record == null
                           ? (value) => setState(() => _direction = value.single)
                           : null,
@@ -1586,7 +1680,11 @@ class _RepaymentSheetState extends ConsumerState<RepaymentSheet> {
                           Text(
                             'Remaining ${formatMoney(widget.remainingPaise)}',
                             style: Theme.of(context).textTheme.bodySmall
-                                ?.copyWith(color: AppTheme.mutedText),
+                                ?.copyWith(
+                                  color: AppTheme.colorsOf(
+                                    context,
+                                  ).secondaryText,
+                                ),
                           ),
                         ],
                       ),

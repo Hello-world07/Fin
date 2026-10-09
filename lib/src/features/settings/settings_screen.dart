@@ -10,9 +10,21 @@ import '../../core/app_theme.dart';
 import '../../core/providers.dart';
 import '../../core/pin_keypad.dart';
 import '../../data/database.dart';
+import '../../data/repositories.dart';
+import '../../app.dart';
 import '../reminders/reminders_screen.dart';
+import '../activity/activity_screen.dart';
 import 'backup_settings_section.dart';
 import 'settings_widgets.dart';
+
+void openSettings(BuildContext context) => Navigator.of(context).push(
+  MaterialPageRoute<void>(
+    builder: (_) => Scaffold(
+      appBar: AppBar(title: const Text('Settings')),
+      body: const SafeArea(child: SettingsScreen(showHeading: false)),
+    ),
+  ),
+);
 
 class _SettingsCounts {
   const _SettingsCounts(
@@ -68,6 +80,31 @@ class SettingsScreen extends ConsumerStatefulWidget {
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   final _pinLock = PinLockService();
   bool _busy = false;
+  late Future<({bool enabled, int hour, int minute})> _dailyBrief;
+
+  @override
+  void initState() {
+    super.initState();
+    _dailyBrief = ref.read(financeRepositoryProvider).dailyBriefSettings();
+  }
+
+  Future<void> _setDailyBrief({bool? enabled, TimeOfDay? time}) async {
+    final current = await _dailyBrief;
+    await ref
+        .read(financeRepositoryProvider)
+        .setDailyBrief(
+          enabled: enabled ?? current.enabled,
+          hour: time?.hour ?? current.hour,
+          minute: time?.minute ?? current.minute,
+        );
+    if (mounted) {
+      setState(
+        () => _dailyBrief = ref
+            .read(financeRepositoryProvider)
+            .dailyBriefSettings(),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -80,11 +117,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         const AppLockSettings();
     final biometricsAvailable =
         ref.watch(_biometricsSupportedProvider).valueOrNull ?? false;
-    final themeMode = ref.watch(appThemeModeProvider);
     final indian = ref.watch(numberGroupingProvider);
+    final privacy = ref.watch(privacyModeProvider);
+    final appearance = ref.watch(appThemeModeProvider);
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(20, 18, 20, 48),
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 48),
       children: [
         if (widget.showHeading)
           Text(
@@ -218,6 +256,25 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
           ),
         ],
+        SettingsRow(
+          icon: Icons.visibility_off_outlined,
+          title: 'Privacy mode',
+          subtitle: 'Hide amounts throughout FinKeep',
+          trailing: Switch.adaptive(
+            value: privacy.enabled,
+            onChanged: (value) =>
+                ref.read(privacyModeProvider.notifier).setEnabled(value),
+          ),
+        ),
+        SettingsRow(
+          icon: Icons.lock_clock_outlined,
+          title: 'Hide amounts when the app opens',
+          trailing: Switch.adaptive(
+            value: privacy.hideOnOpen,
+            onChanged: (value) =>
+                ref.read(privacyModeProvider.notifier).setHideOnOpen(value),
+          ),
+        ),
 
         const SettingsSectionHeader('Backup & data'),
         const BackupSettingsSection(),
@@ -241,21 +298,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
         ),
 
-        const SettingsSectionHeader('Appearance'),
-        Row(
-          children: [
-            for (final mode in ThemeMode.values)
-              Expanded(
-                child: _ThemePreview(
-                  mode: mode,
-                  selected: themeMode == mode,
-                  onTap: () =>
-                      ref.read(appThemeModeProvider.notifier).setMode(mode),
-                ),
-              ),
-          ],
-        ),
-        const SizedBox(height: 10),
         SettingsRow(
           icon: Icons.numbers_outlined,
           title: 'Number format',
@@ -282,6 +324,23 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
         ),
 
+        const SettingsSectionHeader('Appearance'),
+        Row(
+          children: [
+            for (final mode in ThemeMode.values) ...[
+              if (mode != ThemeMode.system) const SizedBox(width: 10),
+              Expanded(
+                child: _AppearanceTile(
+                  mode: mode,
+                  selected: appearance == mode,
+                  onTap: () =>
+                      ref.read(appThemeModeProvider.notifier).setMode(mode),
+                ),
+              ),
+            ],
+          ],
+        ),
+
         const SettingsSectionHeader('Notifications'),
         SettingsRow(
           icon: Icons.notifications_outlined,
@@ -292,13 +351,53 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             MaterialPageRoute<void>(builder: (_) => const RemindersScreen()),
           ),
         ),
+        FutureBuilder<({bool enabled, int hour, int minute})>(
+          future: _dailyBrief,
+          builder: (context, snapshot) {
+            final setting = snapshot.data;
+            return SettingsRow(
+              icon: Icons.wb_sunny_outlined,
+              title: 'Morning brief',
+              subtitle: setting == null
+                  ? 'Loading'
+                  : 'Daily at ${TimeOfDay(hour: setting.hour, minute: setting.minute).format(context)}',
+              trailing: Switch(
+                value: setting?.enabled ?? false,
+                onChanged: setting == null
+                    ? null
+                    : (value) => _setDailyBrief(enabled: value),
+              ),
+              onTap: setting == null
+                  ? null
+                  : () async {
+                      final picked = await showTimePicker(
+                        context: context,
+                        initialTime: TimeOfDay(
+                          hour: setting.hour,
+                          minute: setting.minute,
+                        ),
+                      );
+                      if (picked != null && mounted) {
+                        await _setDailyBrief(time: picked);
+                      }
+                    },
+            );
+          },
+        ),
+        SettingsRow(
+          icon: Icons.history,
+          title: 'Activity history',
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(builder: (_) => const ActivityScreen()),
+          ),
+        ),
 
         const SettingsSectionHeader('Deleted'),
         SettingsRow(
           icon: Icons.delete_outline,
           title: 'Recycle bin',
           subtitle:
-              '${counts?.deleted ?? 0} archived ${counts?.deleted == 1 ? 'EMI' : 'EMIs'}',
+              '${counts?.deleted ?? 0} deleted ${counts?.deleted == 1 ? 'item' : 'items'}',
           onTap: _showDeleted,
         ),
 
@@ -314,7 +413,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         SettingsRow(
           icon: Icons.delete_forever_outlined,
           title: 'Clear all data',
-          subtitle: 'Permanently remove records and deleted EMIs',
+          subtitle: 'Permanently remove records and deleted items',
           destructive: true,
           onTap: _confirmClearAll,
         ),
@@ -326,8 +425,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final scheme = Theme.of(context).colorScheme;
     if (lastAt == null) return scheme.error;
     final age = DateTime.now().difference(lastAt);
-    if (age < const Duration(days: 7)) return AppTheme.receive;
-    if (age < const Duration(days: 30)) return AppTheme.emi;
+    if (age < const Duration(days: 7)) {
+      return AppTheme.colorsOf(context).receive;
+    }
+    if (age < const Duration(days: 30)) return AppTheme.colorsOf(context).emi;
     return scheme.error;
   }
 
@@ -402,7 +503,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   });
 
   Future<void> _toggleSecureScreen(bool enabled) => _run(() async {
-    await LockDisplayService.setSecure(enabled);
+    await LockDisplayService.setSecure(
+      enabled || ref.read(privacyModeProvider).enabled,
+    );
     await _writeSetting(
       ref.read(databaseProvider),
       'privacy.appLock.secureScreen',
@@ -527,7 +630,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   Future<void> _confirmClearAll() async {
-    final typed = TextEditingController();
+    var confirmation = '';
     final choice = await showDialog<String>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
@@ -538,17 +641,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                'This permanently removes EMIs, payments, money records, subscriptions, activity and deleted EMIs.',
+                'This permanently removes EMIs, money records, subscriptions, activity and deleted items.',
               ),
               const SizedBox(height: 16),
               TextField(
-                controller: typed,
                 decoration: const InputDecoration(
                   labelText: 'Type DELETE to confirm',
                   filled: true,
                   border: InputBorder.none,
                 ),
-                onChanged: (_) => setDialogState(() {}),
+                onChanged: (value) =>
+                    setDialogState(() => confirmation = value),
               ),
             ],
           ),
@@ -563,7 +666,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               child: const Text('Cancel'),
             ),
             FilledButton(
-              onPressed: typed.text == 'DELETE'
+              onPressed: confirmation == 'DELETE'
                   ? () => Navigator.pop(dialogContext, 'clear')
                   : null,
               style: FilledButton.styleFrom(
@@ -575,12 +678,24 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ),
       ),
     );
-    typed.dispose();
+    if (!mounted) return;
     if (choice == 'backup' && mounted) {
       await Future<void>.delayed(AppTheme.motionDuration);
       if (mounted) await _backUpNow();
     } else if (choice == 'clear') {
-      await _run(() => ref.read(financeRepositoryProvider).clearAllData());
+      final repository = ref.read(financeRepositoryProvider);
+      final previousRouteClosed = ModalRoute.of(
+        context,
+      )?.completed.then((_) {});
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute<void>(
+          builder: (_) => _ClearingScreen(
+            repository: repository,
+            previousRouteClosed: previousRouteClosed,
+          ),
+        ),
+        (_) => false,
+      );
     }
   }
 
@@ -592,6 +707,113 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
     }
+  }
+}
+
+class _AppearanceTile extends StatelessWidget {
+  const _AppearanceTile({
+    required this.mode,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final ThemeMode mode;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final current = Theme.of(context).colorScheme;
+    final preview = mode == ThemeMode.dark
+        ? AppTheme.darkColors
+        : AppTheme.lightColors;
+    final ring = current.primary;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Padding(
+        padding: const EdgeInsets.all(4),
+        child: Column(
+          children: [
+            Container(
+              height: 82,
+              width: 54,
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: preview.background,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: selected ? ring : current.outlineVariant,
+                  width: selected ? 2 : 1,
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    height: 7,
+                    width: 28,
+                    decoration: BoxDecoration(
+                      color: preview.text,
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                  ),
+                  const SizedBox(height: 7),
+                  Expanded(
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: preview.surface,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                          ),
+                        ),
+                        if (mode == ThemeMode.system) ...[
+                          const SizedBox(width: 2),
+                          Expanded(
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                color: AppTheme.darkColors.surface,
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 5),
+                  Container(
+                    height: 5,
+                    width: 35,
+                    decoration: BoxDecoration(
+                      color: mode == ThemeMode.system
+                          ? AppTheme.darkColors.receive
+                          : preview.receive,
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 7),
+            Text(
+              switch (mode) {
+                ThemeMode.system => 'System',
+                ThemeMode.light => 'Light',
+                ThemeMode.dark => 'Dark',
+              },
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                color: selected ? ring : current.onSurfaceVariant,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -622,87 +844,66 @@ class _CountFigure extends StatelessWidget {
   );
 }
 
-class _ThemePreview extends StatelessWidget {
-  const _ThemePreview({
-    required this.mode,
-    required this.selected,
-    required this.onTap,
+class _ClearingScreen extends ConsumerStatefulWidget {
+  const _ClearingScreen({
+    required this.repository,
+    required this.previousRouteClosed,
   });
-  final ThemeMode mode;
-  final bool selected;
-  final VoidCallback onTap;
+
+  final FinanceRepository repository;
+  final Future<void>? previousRouteClosed;
 
   @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final dark =
-        mode == ThemeMode.dark ||
-        (mode == ThemeMode.system &&
-            MediaQuery.platformBrightnessOf(context) == Brightness.dark);
-    final background = dark ? AppTheme.darkBackground : AppTheme.pageBackground;
-    final ink = dark ? AppTheme.onHero : AppTheme.primaryText;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-        child: Column(
-          children: [
-            Container(
-              height: 116,
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: background,
-                borderRadius: BorderRadius.circular(8),
-                border: selected
-                    ? Border.all(color: scheme.primary, width: 2)
-                    : null,
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    height: 5,
-                    width: 22,
-                    decoration: BoxDecoration(
-                      color: ink,
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Container(
-                    height: 30,
-                    decoration: BoxDecoration(
-                      color: dark ? AppTheme.heroEnd : AppTheme.selectedFill,
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Container(
-                    height: 5,
-                    width: 54,
-                    color: ink.withValues(alpha: 0.45),
-                  ),
-                  const SizedBox(height: 5),
-                  Container(
-                    height: 5,
-                    width: 38,
-                    color: ink.withValues(alpha: 0.25),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              mode.name[0].toUpperCase() + mode.name.substring(1),
-              style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                fontWeight: selected ? FontWeight.w800 : FontWeight.w500,
-                color: selected ? scheme.primary : scheme.onSurface,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+  ConsumerState<_ClearingScreen> createState() => _ClearingScreenState();
+}
+
+class _ClearingScreenState extends ConsumerState<_ClearingScreen> {
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _clear());
   }
+
+  Future<void> _clear() async {
+    try {
+      await widget.previousRouteClosed;
+      if (!mounted) return;
+      await widget.repository.clearAllData();
+      if (!mounted) return;
+      final container = ProviderScope.containerOf(context, listen: false);
+      ref.read(shellIndexProvider.notifier).state = 0;
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute<void>(builder: (_) => const AppShell()),
+        (_) => false,
+      );
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        container.invalidate(dashboardProvider);
+        container.invalidate(emisProvider);
+        container.invalidate(moneyRecordsProvider);
+        container.invalidate(subscriptionsProvider);
+        container.invalidate(activityProvider);
+        container.invalidate(dashboardActivityProvider);
+      });
+    } catch (error) {
+      if (mounted) setState(() => _error = '$error');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    body: Center(
+      child: _error == null
+          ? const Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 16),
+                Text('Clearing...'),
+              ],
+            )
+          : Text('Could not clear data: $_error'),
+    ),
+  );
 }

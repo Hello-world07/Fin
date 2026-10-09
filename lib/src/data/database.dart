@@ -130,12 +130,13 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.test(super.executor);
 
   @override
-  int get schemaVersion => 4;
+  int get schemaVersion => 5;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
     onCreate: (m) async {
       await m.createAll();
+      await _createReadIndexes();
       await batch((batch) {
         batch.insertAll(paymentMethods, [
           PaymentMethodsCompanion.insert(
@@ -184,8 +185,21 @@ class AppDatabase extends _$AppDatabase {
         await m.addColumn(emis, emis.type);
         await m.addColumn(emis, emis.initialPaidInstallments);
       }
+      if (from < 5) await _createReadIndexes();
     },
   );
+
+  Future<void> _createReadIndexes() async {
+    for (final statement in [
+      'CREATE INDEX IF NOT EXISTS emis_status_due_idx ON emis (status, next_due_date)',
+      'CREATE INDEX IF NOT EXISTS money_status_due_idx ON money_records (status, due_date)',
+      'CREATE INDEX IF NOT EXISTS subscriptions_status_due_idx ON subscriptions (status, next_billing_date)',
+      'CREATE INDEX IF NOT EXISTS emi_payments_emi_idx ON emi_payments (emi_id)',
+      'CREATE INDEX IF NOT EXISTS money_repayments_record_idx ON money_repayments (money_record_id)',
+    ]) {
+      await customStatement(statement);
+    }
+  }
 }
 
 LazyDatabase _openConnection() {

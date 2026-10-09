@@ -52,9 +52,15 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    await tester.scrollUntilVisible(
+      find.text('Nivas'),
+      100,
+      scrollable: find.byType(Scrollable).first,
+    );
+
     expect(find.text('Nivas'), findsOneWidget);
     expect(find.text('Asha'), findsOneWidget);
-    expect(find.text('2 records'), findsOneWidget);
+    expect(find.textContaining('2 records'), findsOneWidget);
     expect(
       tester.getTopLeft(find.text('Asha')).dy,
       lessThan(tester.getTopLeft(find.text('Nivas')).dy),
@@ -62,7 +68,7 @@ void main() {
 
     await repo.addRepayment(nivasId, 5000, 'UPI', today);
     await tester.pumpAndSettle();
-    expect(find.text('Partially paid'), findsNWidgets(2));
+    expect(find.text('2 records · Partially paid'), findsOneWidget);
     expect(find.text('₹250'), findsWidgets);
 
     await tester.tap(find.text('Nivas'));

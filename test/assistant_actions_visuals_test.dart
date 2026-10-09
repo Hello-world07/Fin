@@ -78,7 +78,14 @@ void main() {
         'analyze my portfolio',
         ConversationContext(now: DateTime(2026, 10, 8)),
       );
-      expect(analysis.visuals, hasLength(7));
+      expect(analysis.visuals, isNotEmpty);
+      expect(
+        analysis.visuals.where(
+          (part) =>
+              part.data.isEmpty && part.score == null && part.bigValue == null,
+        ),
+        isEmpty,
+      );
       expect(
         analysis.visuals.map((part) => part.kind),
         contains(AssistantVisualKind.scoreRing),

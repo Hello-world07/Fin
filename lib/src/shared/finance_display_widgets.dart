@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../core/app_theme.dart';
 import '../core/formatters.dart';
 
-class AmountText extends StatelessWidget {
+class AmountText extends StatefulWidget {
   const AmountText(this.paise, {super.key, this.style, this.maxLines});
 
   final int paise;
@@ -11,13 +11,78 @@ class AmountText extends StatelessWidget {
   final int? maxLines;
 
   @override
-  Widget build(BuildContext context) => Text(
-    formatMoney(paise),
-    style: (style ?? Theme.of(context).textTheme.bodyMedium)?.copyWith(
-      fontFeatures: const [FontFeature.tabularFigures()],
+  State<AmountText> createState() => _AmountTextState();
+}
+
+class FinanceTonalTile extends StatelessWidget {
+  const FinanceTonalTile({
+    super.key,
+    required this.leading,
+    required this.content,
+    required this.trailing,
+    required this.onTap,
+  });
+
+  final Widget leading;
+  final Widget content;
+  final Widget trailing;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Material(
+    color: Theme.of(context).colorScheme.surfaceContainerLow,
+    borderRadius: BorderRadius.circular(20),
+    child: InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          children: [
+            leading,
+            const SizedBox(width: 12),
+            Expanded(child: content),
+            const SizedBox(width: 8),
+            trailing,
+          ],
+        ),
+      ),
     ),
-    maxLines: maxLines,
-    overflow: maxLines == null ? null : TextOverflow.ellipsis,
+  );
+}
+
+class DueListHeader extends StatelessWidget {
+  const DueListHeader(this.label, {super.key});
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(2, 18, 2, 10),
+    child: Text(
+      label,
+      style: Theme.of(context).textTheme.labelMedium?.copyWith(
+        color: Theme.of(context).colorScheme.onSurfaceVariant,
+        fontWeight: FontWeight.w700,
+      ),
+    ),
+  );
+}
+
+class _AmountTextState extends State<AmountText> {
+  bool _revealed = false;
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+    onLongPressStart: (_) => setState(() => _revealed = true),
+    onLongPressEnd: (_) => setState(() => _revealed = false),
+    child: Text(
+      _revealed ? formatMoneyUnmasked(widget.paise) : formatMoney(widget.paise),
+      style: (widget.style ?? Theme.of(context).textTheme.bodyMedium)?.copyWith(
+        fontFeatures: const [FontFeature.tabularFigures()],
+      ),
+      maxLines: widget.maxLines,
+      overflow: widget.maxLines == null ? null : TextOverflow.ellipsis,
+    ),
   );
 }
 
@@ -71,7 +136,11 @@ class MiniProgressRing extends StatelessWidget {
           child: CircularProgressIndicator(
             value: progress.clamp(0, 1),
             strokeWidth: strokeWidth,
-            backgroundColor: backgroundColor,
+            backgroundColor:
+                backgroundColor ??
+                (Theme.of(context).brightness == Brightness.dark
+                    ? AppTheme.colorsOf(context).outline
+                    : null),
           ),
         ),
         ?child,
@@ -135,9 +204,7 @@ class SectionHeader extends StatelessWidget {
         Text(
           detail!,
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: Theme.of(context).brightness == Brightness.light
-                ? AppTheme.mutedText
-                : Theme.of(context).colorScheme.onSurfaceVariant,
+            color: AppTheme.colorsOf(context).secondaryText,
           ),
         ),
       ],
