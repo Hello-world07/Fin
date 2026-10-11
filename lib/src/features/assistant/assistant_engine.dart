@@ -595,7 +595,7 @@ class FinanceFacts {
             !dateOnly(installment.dueDate).isAfter(lastDay)) {
           result.add(
             AssistantDueItem(
-              emi.emi.name,
+              displayName(emi.emi.name),
               emi.amountForInstallment(installment.number),
               installment.dueDate,
               AssistantDestination.emis,
@@ -710,7 +710,7 @@ class LocalAssistantEngine implements AssistantEngine, AssistantActionEngine {
       );
     if (biggest.isNotEmpty) {
       insights.add(
-        '${biggest.first.emi.name} has ${formatMoney(biggest.first.remainingBalancePaise)} in scheduled payments left.',
+        '${displayName(biggest.first.emi.name)} has ${formatMoney(biggest.first.remainingBalancePaise)} in scheduled payments left.',
       );
     }
     final owed = facts.given.toList()
@@ -1354,7 +1354,7 @@ class LocalAssistantEngine implements AssistantEngine, AssistantActionEngine {
                       data: [
                         for (final item in facts.activeEmis)
                           AssistantVisualDatum(
-                            label: item.emi.name,
+                            label: displayName(item.emi.name),
                             value: item.progress,
                             displayValue: '${(item.progress * 100).round()}%',
                             detail:
@@ -1591,7 +1591,7 @@ class LocalAssistantEngine implements AssistantEngine, AssistantActionEngine {
         if (rated.isNotEmpty) {
           final first = rated.first;
           return AssistantReply(
-            '${first.emi.name} ranks first by the highest recorded interest rate (${first.emi.interestRate}% p.a.). Debts without rates cannot be compared by interest.',
+            '${displayName(first.emi.name)} ranks first by the highest recorded interest rate (${first.emi.interestRate}% p.a.). Debts without rates cannot be compared by interest.',
             rows: [
               AssistantRow(
                 'Scheduled balance',
@@ -2066,7 +2066,7 @@ class LocalAssistantEngine implements AssistantEngine, AssistantActionEngine {
       emi.emi.frequency,
     );
     return AssistantReply(
-      'If you ${request.kind == WhatIfKind.closeEmi ? 'close' : 'pay ${formatMoney(extra)} extra on'} ${emi.emi.name}, its estimated final date moves from ${formatDate(before)} to ${formatDate(after)}. This is a preview; nothing has changed.',
+      'If you ${request.kind == WhatIfKind.closeEmi ? 'close' : 'pay ${formatMoney(extra)} extra on'} ${displayName(emi.emi.name)}, its estimated final date moves from ${formatDate(before)} to ${formatDate(after)}. This is a preview; nothing has changed.',
       rows: [
         AssistantRow('Installments saved', '${result.monthsSaved}'),
         AssistantRow(
@@ -2731,7 +2731,7 @@ AssistantReply _analyzePortfolio(FinanceFacts facts) {
   final suggestions = <String>[];
   if (rated.isNotEmpty) {
     suggestions.add(
-      '1. Consider ${rated.first.emi.name} first: it has the highest recorded rate (${rated.first.emi.interestRate}% p.a.).',
+      '1. Consider ${displayName(rated.first.emi.name)} first: it has the highest recorded rate (${rated.first.emi.interestRate}% p.a.).',
     );
   } else if (balances.isNotEmpty) {
     suggestions.add(

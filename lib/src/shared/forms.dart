@@ -220,6 +220,7 @@ void closeFinanceSheetAndSave(
   Navigator.of(context).pop();
   unawaited(() async {
     if (closed != null) await closed;
+    await WidgetsBinding.instance.endOfFrame;
     try {
       await save();
     } catch (error, stackTrace) {

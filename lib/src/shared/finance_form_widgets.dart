@@ -94,6 +94,9 @@ class HeroAmountInput extends StatelessWidget {
     this.onChanged,
     this.validator,
     this.calculator,
+    this.focusNode,
+    this.onFieldSubmitted,
+    this.textInputAction,
   });
 
   final TextEditingController controller;
@@ -101,6 +104,9 @@ class HeroAmountInput extends StatelessWidget {
   final ValueChanged<String>? onChanged;
   final String? Function(String?)? validator;
   final VoidCallback? calculator;
+  final FocusNode? focusNode;
+  final ValueChanged<String>? onFieldSubmitted;
+  final TextInputAction? textInputAction;
 
   @override
   Widget build(BuildContext context) => Column(
@@ -124,6 +130,9 @@ class HeroAmountInput extends StatelessWidget {
           Expanded(
             child: TextFormField(
               controller: controller,
+              focusNode: focusNode,
+              onFieldSubmitted: onFieldSubmitted,
+              textInputAction: textInputAction,
               keyboardType: const TextInputType.numberWithOptions(
                 decimal: true,
               ),

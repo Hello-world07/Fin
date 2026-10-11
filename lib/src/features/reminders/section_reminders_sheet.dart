@@ -76,6 +76,7 @@ class _SectionReminderSheet extends ConsumerStatefulWidget {
 
 class _SectionReminderSheetState extends ConsumerState<_SectionReminderSheet> {
   ReminderPlanSettings? _settings;
+  bool _keepBalance = true;
   bool _denied = false;
 
   @override
@@ -85,10 +86,22 @@ class _SectionReminderSheetState extends ConsumerState<_SectionReminderSheet> {
   }
 
   Future<void> _load() async {
-    final value = await ref
-        .read(financeRepositoryProvider)
-        .reminderSettingsFor(widget.type);
-    if (mounted) setState(() => _settings = value);
+    final repository = ref.read(financeRepositoryProvider);
+    final value = await repository.reminderSettingsFor(widget.type);
+    final keepBalance = widget.type == FinanceReminderType.emi
+        ? await repository.emiKeepBalanceEnabled()
+        : true;
+    if (mounted) {
+      setState(() {
+        _settings = value;
+        _keepBalance = keepBalance;
+      });
+    }
+  }
+
+  Future<void> _saveKeepBalance(bool value) async {
+    await ref.read(financeRepositoryProvider).saveEmiKeepBalanceEnabled(value);
+    if (mounted) setState(() => _keepBalance = value);
   }
 
   Future<void> _save(ReminderPlanSettings next) async {
@@ -132,6 +145,15 @@ class _SectionReminderSheetState extends ConsumerState<_SectionReminderSheet> {
                 value: settings.enabled,
                 onChanged: (value) => _save(settings.copyWith(enabled: value)),
               ),
+              if (widget.type == FinanceReminderType.emi)
+                SwitchListTile(
+                  title: const Text('Keep-balance reminder'),
+                  subtitle: const Text(
+                    '6 PM the day before an auto-debit, grouped by lender',
+                  ),
+                  value: _keepBalance,
+                  onChanged: settings.enabled ? _saveKeepBalance : null,
+                ),
               if (_denied)
                 ListTile(
                   title: const Text('Notification permission is off'),

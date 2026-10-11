@@ -722,7 +722,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           'subscription' => Icons.autorenew,
                           _ => Icons.account_balance_outlined,
                         },
-                        title: row.read<String>('name'),
+                        title: kind == 'subscription'
+                            ? row.read<String>('name')
+                            : displayName(row.read<String>('name')),
                         subtitle: switch (kind) {
                           'money' => 'Money record',
                           'subscription' => 'Subscription',
@@ -743,7 +745,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                             if (sheetContext.mounted) {
                               Navigator.pop(sheetContext);
                             }
-                            _message('${row.read<String>('name')} restored.');
+                            _message(
+                              '${displayName(row.read<String>('name'))} restored.',
+                            );
                           },
                           child: const Text('Restore'),
                         ),
@@ -771,62 +775,65 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   Future<void> _confirmClearAll() async {
     var confirmation = '';
+    Future<void>? dialogClosed;
     final choice = await showDialog<String>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
-        builder: (dialogContext, setDialogState) => AlertDialog(
-          title: const Text('Clear all data?'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'This permanently removes EMIs, money records, subscriptions, activity and deleted items.',
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                decoration: const InputDecoration(
-                  labelText: 'Type DELETE to confirm',
-                  filled: true,
-                  border: InputBorder.none,
+        builder: (dialogContext, setDialogState) {
+          dialogClosed ??= ModalRoute.of(dialogContext)?.completed;
+          return AlertDialog(
+            title: const Text('Clear all data?'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'This permanently removes EMIs, money records, subscriptions, activity and deleted items.',
                 ),
-                onChanged: (value) =>
-                    setDialogState(() => confirmation = value),
+                const SizedBox(height: 16),
+                TextField(
+                  decoration: const InputDecoration(
+                    labelText: 'Type DELETE to confirm',
+                    filled: true,
+                    border: InputBorder.none,
+                  ),
+                  onChanged: (value) =>
+                      setDialogState(() => confirmation = value),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton.icon(
+                onPressed: () => Navigator.pop(dialogContext, 'backup'),
+                icon: const Icon(Icons.backup_outlined),
+                label: const Text('Back up first'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: confirmation == 'DELETE'
+                    ? () => Navigator.pop(dialogContext, 'clear')
+                    : null,
+                style: FilledButton.styleFrom(
+                  backgroundColor: Theme.of(context).colorScheme.error,
+                ),
+                child: const Text('Clear data'),
               ),
             ],
-          ),
-          actions: [
-            TextButton.icon(
-              onPressed: () => Navigator.pop(dialogContext, 'backup'),
-              icon: const Icon(Icons.backup_outlined),
-              label: const Text('Back up first'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: confirmation == 'DELETE'
-                  ? () => Navigator.pop(dialogContext, 'clear')
-                  : null,
-              style: FilledButton.styleFrom(
-                backgroundColor: Theme.of(context).colorScheme.error,
-              ),
-              child: const Text('Clear data'),
-            ),
-          ],
-        ),
+          );
+        },
       ),
     );
+    if (dialogClosed != null) await dialogClosed;
     if (!mounted) return;
     if (choice == 'backup' && mounted) {
       await Future<void>.delayed(AppTheme.motionDuration);
       if (mounted) await _backUpNow();
     } else if (choice == 'clear') {
       final repository = ref.read(financeRepositoryProvider);
-      final previousRouteClosed = ModalRoute.of(
-        context,
-      )?.completed.then((_) {});
+      final previousRouteClosed = ModalRoute.of(context)?.completed;
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute<void>(
           builder: (_) => _ClearingScreen(
@@ -1014,11 +1021,13 @@ class _ClearingScreenState extends ConsumerState<_ClearingScreen> {
       if (!mounted) return;
       final container = ProviderScope.containerOf(context, listen: false);
       ref.read(shellIndexProvider.notifier).state = 0;
+      final clearingRouteClosed = ModalRoute.of(context)?.completed;
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute<void>(builder: (_) => const AppShell()),
         (_) => false,
       );
-      WidgetsBinding.instance.addPostFrameCallback((_) {
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        if (clearingRouteClosed != null) await clearingRouteClosed;
         container.invalidate(dashboardProvider);
         container.invalidate(emisProvider);
         container.invalidate(moneyRecordsProvider);

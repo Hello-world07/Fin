@@ -406,6 +406,27 @@ class FinanceRepository {
     await refreshLocalReminders();
   }
 
+  Future<bool> emiKeepBalanceEnabled() async {
+    final row =
+        await (db.select(db.settings)..where(
+              (setting) => setting.key.equals('reminders.emi.keepBalance'),
+            ))
+            .getSingleOrNull();
+    return row?.value != 'false';
+  }
+
+  Future<void> saveEmiKeepBalanceEnabled(bool enabled) async {
+    await db
+        .into(db.settings)
+        .insertOnConflictUpdate(
+          SettingsCompanion.insert(
+            key: 'reminders.emi.keepBalance',
+            value: enabled.toString(),
+          ),
+        );
+    await refreshLocalReminders();
+  }
+
   Future<void> refreshLocalReminders() {
     final task = _reminderQueue.then((_) => _rebuildLocalReminders());
     _reminderQueue = task.catchError((Object error, StackTrace stack) {
@@ -430,9 +451,15 @@ class FinanceRepository {
     final settings = await reminderSettings();
     final now = DateTime.now();
     final targets = <ReminderTarget>[];
+    final balanceGuards = <PlannedReminder>[];
     var threeDays = true;
     var oneDay = true;
     if (settings.enabled) {
+      final methods = {
+        for (final method in await db.select(db.paymentMethods).get())
+          method.id: '${method.label} ${method.kind}'.toLowerCase(),
+      };
+      final groupedAutoDebits = <(DateTime, String), List<(EmiDetail, int)>>{};
       for (final detail in await _visibleEmiDetails()) {
         if (detail.emi.status != EmiStatus.active) continue;
         for (final installment in detail.installments) {
@@ -446,6 +473,43 @@ class FinanceRepository {
               amountPaise: detail.amountForInstallment(installment.number),
               installmentNumber: installment.number,
             ),
+          );
+          final method = methods[detail.emi.paymentMethodId] ?? '';
+          final lender = detail.emi.provider?.trim() ?? '';
+          if (lender.isNotEmpty &&
+              (method.contains('auto') || method.contains('bank'))) {
+            final due = DateTime(
+              installment.dueDate.year,
+              installment.dueDate.month,
+              installment.dueDate.day,
+            );
+            groupedAutoDebits.putIfAbsent((due, lender), () => []).add((
+              detail,
+              installment.number,
+            ));
+          }
+        }
+      }
+      if (settings.emis && await emiKeepBalanceEnabled()) {
+        for (final entry in groupedAutoDebits.entries) {
+          final due = entry.key.$1;
+          final when = DateTime(due.year, due.month, due.day - 1, 18);
+          if (!when.isAfter(now) ||
+              when.isAfter(now.add(const Duration(days: 60)))) {
+            continue;
+          }
+          final target = ReminderTarget(
+            type: FinanceReminderType.emi,
+            entityId: entry.value.first.$1.emi.id,
+            name: entry.key.$2,
+            dueDate: due,
+            amountPaise: entry.value.fold<int>(
+              0,
+              (sum, pair) => sum + pair.$1.amountForInstallment(pair.$2),
+            ),
+          );
+          balanceGuards.add(
+            PlannedReminder(target, when, -2, stableReminderId(target, -2)),
           );
         }
       }
@@ -522,6 +586,7 @@ class FinanceRepository {
                       (event.leadDays != 1 || oneDay)),
             )
             .toList();
+    plan.addAll(balanceGuards);
     await _localReminders.replaceManaged(plan.map((event) => event.id));
     for (final event in plan) {
       final target = event.target;
@@ -531,14 +596,19 @@ class FinanceRepository {
         FinanceReminderType.money => 'Money',
         FinanceReminderType.subscription => 'Subscription',
       };
-      final title = target.trial
+      final isBalanceGuard =
+          target.type == FinanceReminderType.emi && event.leadDays == -2;
+      final title = isBalanceGuard
+          ? 'Auto-debit tomorrow'
+          : target.trial
           ? '${target.name} trial ends soon'
           : event.leadDays < 0
           ? '$verb overdue: ${target.name}'
           : '$verb due: ${target.name}';
-      final body =
-          '${target.name} · ${target.trial ? 'Trial ends' : 'Due'} $dueText'
-          '${hideAmounts ? '' : ' · ${formatMoneyUnmasked(target.amountPaise)}'}';
+      final body = isBalanceGuard
+          ? 'Keep ${hideAmounts ? 'enough money' : formatMoneyUnmasked(target.amountPaise)} in ${target.name} for tomorrow\'s EMIs'
+          : '${target.name} · ${target.trial ? 'Trial ends' : 'Due'} $dueText'
+                '${hideAmounts ? '' : ' · ${formatMoneyUnmasked(target.amountPaise)}'}';
       await _localReminders.scheduleReminder(
         id: event.id,
         title: title,

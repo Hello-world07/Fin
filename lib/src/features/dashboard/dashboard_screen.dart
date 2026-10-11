@@ -1711,15 +1711,7 @@ String _shortMonth(DateTime date) => const [
   'Dec',
 ][date.month - 1];
 
-String _displayHomeName(String name) => name
-    .trim()
-    .split(RegExp(r'\s+'))
-    .map(
-      (part) => part.isEmpty
-          ? part
-          : '${part[0].toUpperCase()}${part.substring(1).toLowerCase()}',
-    )
-    .join(' ');
+String _displayHomeName(String name) => displayName(name);
 
 String _collectDueLabel(DateTime date, DateTime today) {
   final day = DateTime(date.year, date.month, date.day);
@@ -1802,3 +1794,4 @@ void _showBreakdown(
     ),
   );
 }
+
