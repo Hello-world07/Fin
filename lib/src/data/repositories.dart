@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:drift/drift.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -333,6 +334,78 @@ class FinanceRepository {
     await refreshLocalReminders();
   }
 
+  Future<ReminderPlanSettings> reminderSettingsFor(
+    FinanceReminderType type,
+  ) async {
+    final global = await reminderSettings();
+    final prefix = 'reminders.${type.name}.';
+    final rows = await (db.select(
+      db.settings,
+    )..where((row) => row.key.like('$prefix%'))).get();
+    final values = {for (final row in rows) row.key: row.value};
+    final time = values['${prefix}time']?.split(':');
+    final leads = values['${prefix}leads']
+        ?.split(',')
+        .map(int.tryParse)
+        .whereType<int>()
+        .toSet();
+    return global.copyWith(
+      enabled: global.enabled && global.allows(type),
+      hour: time == null
+          ? global.hour
+          : int.tryParse(time.first) ?? global.hour,
+      minute: time == null || time.length < 2
+          ? global.minute
+          : int.tryParse(time[1]) ?? global.minute,
+      leadDays: leads ?? global.leadDays,
+      overdueNudge: values['${prefix}overdue'] == null
+          ? global.overdueNudge
+          : values['${prefix}overdue'] == 'true',
+    );
+  }
+
+  Future<void> saveReminderSettingsFor(
+    FinanceReminderType type,
+    ReminderPlanSettings next,
+  ) async {
+    final global = await reminderSettings();
+    final firstEnable = next.enabled && !global.enabled;
+    final prefix = 'reminders.${type.name}.';
+    final values = <String, String>{
+      if (next.enabled) 'reminders.enabled': 'true',
+      'reminders.${type == FinanceReminderType.emi
+          ? 'emis'
+          : type.name == 'subscription'
+          ? 'subscriptions'
+          : 'money'}': next.enabled
+          .toString(),
+      if (firstEnable) ...{
+        for (final other in FinanceReminderType.values)
+          if (other != type)
+            'reminders.${other == FinanceReminderType.emi
+                    ? 'emis'
+                    : other.name == 'subscription'
+                    ? 'subscriptions'
+                    : 'money'}':
+                'false',
+      },
+      '${prefix}time':
+          '${next.hour.toString().padLeft(2, '0')}:${next.minute.toString().padLeft(2, '0')}',
+      '${prefix}leads': (next.leadDays.toList()..sort()).join(','),
+      '${prefix}overdue': next.overdueNudge.toString(),
+    };
+    await db.transaction(() async {
+      for (final entry in values.entries) {
+        await db
+            .into(db.settings)
+            .insertOnConflictUpdate(
+              SettingsCompanion.insert(key: entry.key, value: entry.value),
+            );
+      }
+    });
+    await refreshLocalReminders();
+  }
+
   Future<void> refreshLocalReminders() {
     final task = _reminderQueue.then((_) => _rebuildLocalReminders());
     _reminderQueue = task.catchError((Object error, StackTrace stack) {
@@ -432,15 +505,23 @@ class FinanceRepository {
             ))
             .get();
     final hideAmounts = privacy.any((row) => row.value == 'true');
-    final plan = buildReminderPlan(targets, settings, now)
-        .where(
-          (event) =>
-              event.target.type != FinanceReminderType.subscription ||
-              event.target.trial ||
-              ((event.leadDays == 3 && threeDays) ||
-                  (event.leadDays == 1 && oneDay)),
-        )
-        .toList();
+    final plan =
+        <PlannedReminder>[
+              for (final type in FinanceReminderType.values)
+                ...buildReminderPlan(
+                  targets.where((target) => target.type == type),
+                  await reminderSettingsFor(type),
+                  now,
+                ),
+            ]
+            .where(
+              (event) =>
+                  event.target.type != FinanceReminderType.subscription ||
+                  event.target.trial ||
+                  ((event.leadDays != 3 || threeDays) &&
+                      (event.leadDays != 1 || oneDay)),
+            )
+            .toList();
     await _localReminders.replaceManaged(plan.map((event) => event.id));
     for (final event in plan) {
       final target = event.target;
@@ -914,6 +995,57 @@ class FinanceRepository {
       ..orderBy([(t) => OrderingTerm.desc(t.occurredAt)]);
     if (limit != null) query.limit(limit);
     return query.watch();
+  }
+
+  Future<List<ActivityLog>> activityPage({
+    int offset = 0,
+    int limit = 40,
+    String search = '',
+    List<ActivityType>? types,
+    DateTime? from,
+    DateTime? until,
+  }) {
+    final query = db.select(db.activityLogs)
+      ..where((row) {
+        Expression<bool> predicate = const Constant(true);
+        if (search.trim().isNotEmpty) {
+          final pattern = '%${search.trim()}%';
+          predicate =
+              predicate &
+              (row.title.like(pattern) | row.description.like(pattern));
+        }
+        if (types != null) predicate = predicate & row.type.isInValues(types);
+        if (from != null) {
+          predicate = predicate & row.occurredAt.isBiggerOrEqualValue(from);
+        }
+        if (until != null) {
+          predicate = predicate & row.occurredAt.isSmallerThanValue(until);
+        }
+        return predicate;
+      })
+      ..orderBy([
+        (row) => OrderingTerm.desc(row.occurredAt),
+        (row) => OrderingTerm.desc(row.id),
+      ])
+      ..limit(limit, offset: offset);
+    return query.get();
+  }
+
+  Future<Set<int>> activityDaysInMonth(DateTime month) async {
+    final start = DateTime(month.year, month.month);
+    final end = DateTime(month.year, month.month + 1);
+    final rows = await db
+        .customSelect(
+          "SELECT DISTINCT CAST(strftime('%d', occurred_at, 'unixepoch', 'localtime') AS INTEGER) AS day "
+          'FROM activity_logs WHERE occurred_at >= ? AND occurred_at < ?',
+          variables: [Variable.withDateTime(start), Variable.withDateTime(end)],
+          readsFrom: {db.activityLogs},
+        )
+        .get();
+    return {
+      for (final row in rows)
+        if (row.read<int?>('day') != null) row.read<int>('day'),
+    };
   }
 
   Stream<List<ReminderItem>> watchReminders({bool attentionOnly = true}) {
@@ -2162,7 +2294,13 @@ class PdfExportService {
               ..limit(20))
             .get();
 
-    final document = pw.Document(title: 'FinKeep export');
+    final font = pw.Font.ttf(
+      await rootBundle.load('assets/fonts/PlusJakartaSans-400.ttf'),
+    );
+    final document = pw.Document(
+      title: 'FinKeep export',
+      theme: pw.ThemeData.withFont(base: font),
+    );
     document.addPage(
       pw.MultiPage(
         pageTheme: const pw.PageTheme(margin: pw.EdgeInsets.all(28)),
@@ -2343,6 +2481,5 @@ class PdfExportService {
     );
   }
 
-  String _pdfMoney(int paise) =>
-      formatMoneyUnmasked(paise).replaceFirst('₹', 'INR ');
+  String _pdfMoney(int paise) => formatMoneyUnmasked(paise);
 }

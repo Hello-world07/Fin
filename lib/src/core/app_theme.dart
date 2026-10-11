@@ -105,6 +105,7 @@ class AppTheme {
   static const emi = Color(0xFFF59E0B);
   static const subscriptions = Color(0xFF7C3AED);
   static const pageBackground = Color(0xFFF6F8F7);
+  static const homeCardOutline = Color(0xFFE6ECE9);
   static const primaryText = Color(0xFF0F172A);
   static const mutedText = Color(0xFF64748B);
   static const fieldFill = Color(0xFFF0F4F9);
@@ -130,7 +131,7 @@ class AppTheme {
     emi: emi,
     subscriptions: subscriptions,
     lime: accent,
-    navInactive: Color(0xFF94A3B8),
+    navInactive: mutedText,
     navShadow: Color(0x09000000),
   );
   static const darkColors = AppColors(

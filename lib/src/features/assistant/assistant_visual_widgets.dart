@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show listEquals;
 
 import '../../core/app_theme.dart';
 import '../../core/formatters.dart';
+import '../../shared/finance_display_widgets.dart';
 import 'assistant_visuals.dart';
 
 class AssistantVisualWidget extends StatelessWidget {
@@ -23,7 +24,7 @@ class AssistantVisualWidget extends StatelessWidget {
     }
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0, end: 1),
-      duration: const Duration(milliseconds: 420),
+      duration: const Duration(milliseconds: 400),
       curve: Curves.easeOutCubic,
       builder: (context, animation, _) =>
           _VisualFrame(title: part.title, child: _content(context, animation)),
@@ -99,24 +100,29 @@ class AssistantVisualWidget extends StatelessWidget {
           ],
         );
       case AssistantVisualKind.stackedBar:
-        return Column(
+        return Row(
           children: [
-            SizedBox(
-              height: 14,
-              width: double.infinity,
-              child: RepaintBoundary(
-                child: CustomPaint(
-                  painter: _StackedBarPainter(
-                    values: part.data.map((item) => item.value).toList(),
-                    colors: _palette(context),
-                    track: AppTheme.colorsOf(context).outline,
-                    animation: animation,
+            SegmentedRing(
+              size: 96,
+              proportional: true,
+              segments: [
+                for (var i = 0; i < part.data.length; i++)
+                  RingSegment(
+                    label:
+                        '${part.data[i].label}: ${hideMoneyInText(part.data[i].displayValue ?? '')}',
+                    paid: part.data[i].value.round(),
+                    total: part.data[i].value.round(),
+                    color: _palette(context)[i % _palette(context).length],
                   ),
-                ),
+              ],
+              center: Text(
+                hideMoneyInText(part.bigValue ?? 'Outflow'),
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.labelSmall,
               ),
             ),
-            const SizedBox(height: 9),
-            _Legend(data: part.data),
+            const SizedBox(width: 12),
+            Expanded(child: _Legend(data: part.data)),
           ],
         );
       case AssistantVisualKind.horizontalBars:
@@ -223,7 +229,7 @@ class _VisualFrame extends StatelessWidget {
         ).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w800),
       ),
       const SizedBox(height: 9),
-      child,
+      Tooltip(message: title, child: child),
     ],
   );
 }
@@ -294,14 +300,14 @@ class _ProgressDatum extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 4),
-        LinearProgressIndicator(
-          value: progress.clamp(0, 1),
-          minHeight: 6,
-          color: color,
-          backgroundColor: Theme.of(
-            context,
-          ).colorScheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(3),
+        Tooltip(
+          message:
+              '${datum.label}: ${hideMoneyInText(datum.displayValue ?? '')}',
+          child: MiniProgressRing(
+            progress: progress.clamp(0, 1),
+            size: 36,
+            strokeWidth: 4,
+          ),
         ),
         if (datum.detail != null)
           Text(
@@ -358,54 +364,6 @@ class _DonutPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _DonutPainter oldDelegate) =>
-      oldDelegate.animation != animation ||
-      oldDelegate.track != track ||
-      !listEquals(oldDelegate.values, values) ||
-      !listEquals(oldDelegate.colors, colors);
-}
-
-class _StackedBarPainter extends CustomPainter {
-  const _StackedBarPainter({
-    required this.values,
-    required this.colors,
-    required this.track,
-    required this.animation,
-  });
-  final List<double> values;
-  final List<Color> colors;
-  final Color track;
-  final double animation;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final total = values.fold<double>(
-      0,
-      (sum, item) => sum + math.max(0, item),
-    );
-    final background = Paint()..color = track;
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(Offset.zero & size, const Radius.circular(7)),
-      background,
-    );
-    if (total <= 0) return;
-    var left = 0.0;
-    canvas.save();
-    canvas.clipRRect(
-      RRect.fromRectAndRadius(Offset.zero & size, const Radius.circular(7)),
-    );
-    for (var index = 0; index < values.length; index++) {
-      final width = size.width * values[index] / total * animation;
-      canvas.drawRect(
-        Rect.fromLTWH(left, 0, width, size.height),
-        Paint()..color = colors[index % colors.length],
-      );
-      left += width;
-    }
-    canvas.restore();
-  }
-
-  @override
-  bool shouldRepaint(covariant _StackedBarPainter oldDelegate) =>
       oldDelegate.animation != animation ||
       oldDelegate.track != track ||
       !listEquals(oldDelegate.values, values) ||

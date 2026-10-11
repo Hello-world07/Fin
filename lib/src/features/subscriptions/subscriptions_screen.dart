@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:drift/drift.dart' hide Column;
 import 'package:flutter/material.dart';
@@ -13,6 +12,8 @@ import '../../data/repositories.dart';
 import '../../domain/due_status.dart';
 import '../../domain/enums.dart';
 import '../../domain/money_math.dart';
+import '../../domain/reminder_schedule.dart';
+import '../reminders/section_reminders_sheet.dart';
 import '../../domain/subscription_schedule.dart';
 import '../../shared/async_view.dart';
 import '../../shared/empty_state.dart';
@@ -21,7 +22,6 @@ import '../../shared/finance_form_widgets.dart';
 import '../../shared/finance_display_widgets.dart';
 import '../../shared/notched_navigation_bar.dart';
 import '../../shared/screen_header.dart';
-import '../../shared/finance_bottom_sheet.dart';
 import '../../shared/calculator_sheet.dart';
 
 void openSubscriptionDetailSheet(BuildContext context, Subscription item) {
@@ -74,12 +74,8 @@ class _SubscriptionsScreenState extends ConsumerState<SubscriptionsScreen> {
         children: [
           ScreenHeader(
             title: const Text('Subscriptions'),
-            actions: [
-              IconButton(
-                tooltip: 'Renewal reminders',
-                icon: const Icon(Icons.notifications_active_outlined),
-                onPressed: () => _showReminderSettings(context, repo),
-              ),
+            actions: const [
+              SectionReminderButton(type: FinanceReminderType.subscription),
             ],
           ),
           Expanded(
@@ -320,52 +316,6 @@ class _SubscriptionsScreenState extends ConsumerState<SubscriptionsScreen> {
       ),
     );
   }
-}
-
-Future<void> _showReminderSettings(
-  BuildContext context,
-  FinanceRepository repo,
-) async {
-  var (threeDays, oneDay) = await repo.subscriptionReminderDays();
-  if (!context.mounted) return;
-  await showFinanceBottomSheet<void>(
-    context,
-    builder: (sheet) => StatefulBuilder(
-      builder: (context, update) => Padding(
-        padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              'Renewal reminders',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            SwitchListTile.adaptive(
-              title: const Text('3 days before'),
-              value: threeDays,
-              onChanged: (value) => update(() => threeDays = value),
-            ),
-            SwitchListTile.adaptive(
-              title: const Text('1 day before'),
-              value: oneDay,
-              onChanged: (value) => update(() => oneDay = value),
-            ),
-            FilledButton(
-              onPressed: () async {
-                await repo.setSubscriptionReminderDays(
-                  threeDays: threeDays,
-                  oneDay: oneDay,
-                );
-                if (sheet.mounted) Navigator.pop(sheet);
-              },
-              child: const Text('Save reminders'),
-            ),
-          ],
-        ),
-      ),
-    ),
-  );
 }
 
 class _ListHeading extends StatelessWidget {
@@ -1328,67 +1278,55 @@ class _CategoryBreakdown extends StatelessWidget {
         const SizedBox(height: 12),
         Row(
           children: [
-            SizedBox.square(
-              dimension: 112,
-              child: RepaintBoundary(
-                child: CustomPaint(
-                  painter: _CategoryDonutPainter(
-                    segments: [
-                      for (final entry in totals.entries)
-                        (
-                          entry.value / total,
-                          _categoryColor(context, entry.key),
-                        ),
-                    ],
-                    track: AppTheme.colorsOf(context).fieldFill,
+            SegmentedRing(
+              size: 112,
+              proportional: true,
+              segments: [
+                for (final entry in totals.entries)
+                  RingSegment(
+                    label:
+                        '${entry.key}: ${formatMoney(entry.value)} per month',
+                    paid: entry.value,
+                    total: entry.value,
+                    color: _categoryColor(context, entry.key),
                   ),
-                  child: Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        AmountText(
-                          total,
-                          style: Theme.of(context).textTheme.labelMedium
-                              ?.copyWith(fontWeight: FontWeight.w800),
-                        ),
-                        Text(
-                          '/ month',
-                          style: Theme.of(context).textTheme.labelSmall,
-                        ),
-                      ],
+              ],
+              center: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: AmountText(
+                      total,
+                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                   ),
-                ),
+                  Text(
+                    '/ month',
+                    style: Theme.of(context).textTheme.labelSmall,
+                  ),
+                ],
               ),
             ),
             const SizedBox(width: 16),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              child: Wrap(
+                spacing: 5,
+                runSpacing: 4,
                 children: [
                   for (final entry in totals.entries)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 5),
-                      child: Row(
-                        children: [
-                          CircleAvatar(
-                            radius: 4,
-                            backgroundColor: _categoryColor(context, entry.key),
-                          ),
-                          const SizedBox(width: 7),
-                          Expanded(
-                            child: Text(
-                              entry.key,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context).textTheme.labelMedium,
-                            ),
-                          ),
-                          AmountText(
-                            entry.value,
-                            style: Theme.of(context).textTheme.labelSmall,
-                          ),
-                        ],
+                    Tooltip(
+                      message:
+                          '${entry.key}: ${formatMoney(entry.value)} per month',
+                      child: Chip(
+                        avatar: CircleAvatar(
+                          radius: 4,
+                          backgroundColor: _categoryColor(context, entry.key),
+                        ),
+                        label: Text(entry.key),
+                        side: BorderSide.none,
                       ),
                     ),
                 ],
@@ -1399,49 +1337,6 @@ class _CategoryBreakdown extends StatelessWidget {
       ],
     );
   }
-}
-
-class _CategoryDonutPainter extends CustomPainter {
-  const _CategoryDonutPainter({required this.segments, required this.track});
-  final List<(double, Color)> segments;
-  final Color track;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final rect = Offset.zero & size;
-    final paint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 12;
-    canvas.drawArc(
-      rect.deflate(9),
-      0,
-      2 * math.pi,
-      false,
-      paint..color = track,
-    );
-    var start = -math.pi / 2;
-    for (final (fraction, color) in segments) {
-      final sweep = 2 * math.pi * fraction;
-      canvas.drawArc(
-        rect.deflate(9),
-        start,
-        sweep,
-        false,
-        paint..color = color,
-      );
-      start += sweep;
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _CategoryDonutPainter old) =>
-      old.track != track ||
-      old.segments.length != segments.length ||
-      Iterable<int>.generate(segments.length).any(
-        (i) =>
-            old.segments[i].$1 != segments[i].$1 ||
-            old.segments[i].$2 != segments[i].$2,
-      );
 }
 
 class SubscriptionFormSheet extends ConsumerStatefulWidget {

@@ -97,16 +97,20 @@ final privacyModeProvider =
       (ref) => PrivacyModeController(ref.watch(databaseProvider)),
     );
 
+enum PrivacyGateRule { revealOnly, hideAndReveal }
+
 class PrivacySettings {
   const PrivacySettings({
     this.enabled = false,
     this.hideOnOpen = false,
     this.requireUnlock = false,
+    this.gateRule = PrivacyGateRule.revealOnly,
   });
 
   final bool enabled;
   final bool hideOnOpen;
   final bool requireUnlock;
+  final PrivacyGateRule gateRule;
 }
 
 class PrivacyModeController extends StateNotifier<PrivacySettings> {
@@ -125,6 +129,8 @@ class PrivacyModeController extends StateNotifier<PrivacySettings> {
                 'privacy.mode',
                 'privacy.hideOnOpen',
                 'privacy.requireUnlock',
+                'privacy.gateRule',
+                'privacy.appLock.enabled',
                 'privacy.appLock.secureScreen',
               ]),
             ))
@@ -133,21 +139,27 @@ class PrivacyModeController extends StateNotifier<PrivacySettings> {
     final values = {for (final row in rows) row.key: row.value};
     final hideOnOpen = values['privacy.hideOnOpen'] == 'true';
     final enabled = values['privacy.mode'] == 'true' || hideOnOpen;
-    final requireUnlock = values['privacy.requireUnlock'] == 'true';
+    final requireUnlock = values['privacy.requireUnlock'] == null
+        ? values['privacy.appLock.enabled'] == 'true'
+        : values['privacy.requireUnlock'] == 'true';
+    final gateRule = values['privacy.gateRule'] == 'hideAndReveal'
+        ? PrivacyGateRule.hideAndReveal
+        : PrivacyGateRule.revealOnly;
     PrivacyRevealGate.instance.requiresUnlock = requireUnlock;
     privacyAmountsHidden = enabled;
     state = PrivacySettings(
       enabled: enabled,
       hideOnOpen: hideOnOpen,
       requireUnlock: requireUnlock,
+      gateRule: gateRule,
     );
     await _setSecure(enabled, values['privacy.appLock.secureScreen'] == 'true');
   }
 
   Future<void> setEnabled(bool enabled, {required BuildContext context}) async {
-    if (!enabled &&
-        state.enabled &&
+    if (enabled != state.enabled &&
         state.requireUnlock &&
+        (!enabled || state.gateRule == PrivacyGateRule.hideAndReveal) &&
         !await PrivacyRevealGate.instance.authorize(context)) {
       return;
     }
@@ -158,6 +170,7 @@ class PrivacyModeController extends StateNotifier<PrivacySettings> {
       enabled: enabled,
       hideOnOpen: state.hideOnOpen,
       requireUnlock: state.requireUnlock,
+      gateRule: state.gateRule,
     );
     await _write('privacy.mode', enabled);
     final secure =
@@ -178,6 +191,7 @@ class PrivacyModeController extends StateNotifier<PrivacySettings> {
       enabled: state.enabled,
       hideOnOpen: enabled,
       requireUnlock: state.requireUnlock,
+      gateRule: state.gateRule,
     );
     await _write('privacy.hideOnOpen', enabled);
     unawaited(
@@ -197,8 +211,39 @@ class PrivacyModeController extends StateNotifier<PrivacySettings> {
       enabled: state.enabled,
       hideOnOpen: state.hideOnOpen,
       requireUnlock: enabled,
+      gateRule: state.gateRule,
     );
     await _write('privacy.requireUnlock', enabled);
+  }
+
+  Future<void> setGateRule(PrivacyGateRule rule) async {
+    _changed = true;
+    state = PrivacySettings(
+      enabled: state.enabled,
+      hideOnOpen: state.hideOnOpen,
+      requireUnlock: state.requireUnlock,
+      gateRule: rule,
+    );
+    await _database
+        .into(_database.settings)
+        .insertOnConflictUpdate(
+          SettingsCompanion.insert(key: 'privacy.gateRule', value: rule.name),
+        );
+  }
+
+  Future<void> syncDefaultForAppLock(bool enabled) async {
+    final explicit =
+        await (_database.select(_database.settings)
+              ..where((row) => row.key.equals('privacy.requireUnlock')))
+            .getSingleOrNull();
+    if (explicit != null || !mounted) return;
+    PrivacyRevealGate.instance.requiresUnlock = enabled;
+    state = PrivacySettings(
+      enabled: state.enabled,
+      hideOnOpen: state.hideOnOpen,
+      requireUnlock: enabled,
+      gateRule: state.gateRule,
+    );
   }
 
   Future<void> _write(String key, bool value) => _database
@@ -216,13 +261,13 @@ class PrivacyModeController extends StateNotifier<PrivacySettings> {
   }
 }
 
-final numberGroupingProvider =
-    StateNotifierProvider<NumberGroupingController, bool>(
-      (ref) => NumberGroupingController(ref.watch(databaseProvider)),
+final amountFormatProvider =
+    StateNotifierProvider<AmountFormatController, AmountFormatter>(
+      (ref) => AmountFormatController(ref.watch(databaseProvider)),
     );
 
-class NumberGroupingController extends StateNotifier<bool> {
-  NumberGroupingController(this._database) : super(true) {
+class AmountFormatController extends StateNotifier<AmountFormatter> {
+  AmountFormatController(this._database) : super(const AmountFormatter()) {
     unawaited(_restore());
   }
 
@@ -230,29 +275,51 @@ class NumberGroupingController extends StateNotifier<bool> {
   bool _hasUserSelection = false;
 
   Future<void> _restore() async {
-    final row =
-        await (_database.select(_database.settings)
-              ..where((item) => item.key.equals('appearance.indianGrouping')))
-            .getSingleOrNull();
+    final rows =
+        await (_database.select(_database.settings)..where(
+              (item) => item.key.isIn([
+                'appearance.amountRegion',
+                'appearance.currencySymbol',
+                'appearance.indianGrouping',
+              ]),
+            ))
+            .get();
     if (!_hasUserSelection) {
-      state = row?.value != 'false';
-      useIndianNumberGrouping = state;
+      final values = {for (final row in rows) row.key: row.value};
+      final region =
+          AmountRegion.values
+              .where(
+                (region) => region.name == values['appearance.amountRegion'],
+              )
+              .firstOrNull ??
+          (values['appearance.indianGrouping'] == 'false'
+              ? AmountRegion.unitedStates
+              : AmountRegion.india);
+      state = AmountFormatter(
+        region: region,
+        symbol: values['appearance.currencySymbol'] ?? '₹',
+      );
+      activeAmountFormatter.value = state;
     }
   }
 
-  Future<void> setIndian(bool value) async {
+  Future<void> setRegion(AmountRegion region) async {
     _hasUserSelection = true;
-    state = value;
-    useIndianNumberGrouping = value;
-    await _database
-        .into(_database.settings)
-        .insertOnConflictUpdate(
-          SettingsCompanion.insert(
-            key: 'appearance.indianGrouping',
-            value: value.toString(),
-          ),
-        );
+    state = AmountFormatter(region: region, symbol: state.symbol);
+    activeAmountFormatter.value = state;
+    await _write('appearance.amountRegion', region.name);
   }
+
+  Future<void> setSymbol(String symbol) async {
+    _hasUserSelection = true;
+    state = AmountFormatter(region: state.region, symbol: symbol);
+    activeAmountFormatter.value = state;
+    await _write('appearance.currencySymbol', symbol);
+  }
+
+  Future<void> _write(String key, String value) => _database
+      .into(_database.settings)
+      .insertOnConflictUpdate(SettingsCompanion.insert(key: key, value: value));
 }
 
 class AppThemeModeController extends StateNotifier<ThemeMode> {

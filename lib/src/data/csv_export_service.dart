@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'database.dart';
+import '../core/formatters.dart';
 
 class CsvExportService {
   CsvExportService(this.database);
@@ -26,12 +27,31 @@ class CsvExportService {
           .customSelect('PRAGMA table_info(${entry.value})')
           .get();
       final names = columns.map((row) => row.data['name'] as String).toList();
+      final amountColumns = names
+          .where((name) => name.endsWith('_paise'))
+          .toList();
       final rows = await database
           .customSelect('SELECT * FROM ${entry.value}')
           .get();
-      final csv = StringBuffer()..writeln(names.map(_escape).join(','));
+      final csv = StringBuffer()
+        ..writeln(
+          [
+            ...names,
+            for (final name in amountColumns) '${name}_display',
+          ].map(_escape).join(','),
+        );
       for (final row in rows) {
-        csv.writeln(names.map((name) => _escape(row.data[name])).join(','));
+        csv.writeln(
+          [
+            for (final name in names) _escape(row.data[name]),
+            for (final name in amountColumns)
+              _escape(
+                row.data[name] is int
+                    ? formatMoneyUnmasked(row.data[name] as int)
+                    : null,
+              ),
+          ].join(','),
+        );
       }
       final file = File(
         p.join(directory.path, 'FinKeep-${entry.key}-$stamp.csv'),

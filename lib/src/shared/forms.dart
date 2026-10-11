@@ -151,7 +151,14 @@ class AmountField extends StatelessWidget {
       decoration: InputDecoration(
         labelText: labelAbove ? null : label,
         hintText: labelAbove ? '499' : null,
-        prefixIcon: labelAbove ? const Center(child: Text('₹')) : null,
+        prefixIcon: labelAbove
+            ? Center(
+                child: ValueListenableBuilder<AmountFormatter>(
+                  valueListenable: activeAmountFormatter,
+                  builder: (context, formatter, _) => Text(formatter.symbol),
+                ),
+              )
+            : null,
         prefixIconConstraints: labelAbove
             ? const BoxConstraints.tightFor(width: 40, height: 48)
             : null,

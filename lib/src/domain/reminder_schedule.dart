@@ -95,11 +95,7 @@ List<PlannedReminder> buildReminderPlan(
   final result = <PlannedReminder>[];
   for (final target in targets) {
     if (!settings.allows(target.type)) continue;
-    final leads = target.trial
-        ? const <int>{2}
-        : target.type == FinanceReminderType.subscription
-        ? settings.leadDays.intersection(const {3, 1})
-        : settings.leadDays;
+    final leads = target.trial ? const <int>{2} : settings.leadDays;
     for (final lead in leads) {
       final when = DateTime(
         target.dueDate.year,

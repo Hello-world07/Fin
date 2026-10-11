@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import '../core/formatters.dart';
 import 'enums.dart';
 
 class EmiInstallment {
@@ -238,12 +239,7 @@ String emiValidationMessage({
       'Expected EMI: ${_money(expectedInstallmentPaise)}.';
 }
 
-String _money(int paise) {
-  final rupees = paise / 100;
-  final whole = rupees.roundToDouble() == rupees;
-  final text = whole ? rupees.toInt().toString() : rupees.toStringAsFixed(2);
-  return '₹$text';
-}
+String _money(int paise) => formatMoneyUnmasked(paise);
 
 String _trimRate(double value) {
   if (value.roundToDouble() == value) return value.toInt().toString();

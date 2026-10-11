@@ -7,12 +7,13 @@ import 'package:package_info_plus/package_info_plus.dart';
 import '../../core/app_lock.dart';
 import '../../core/app_lock_policy.dart';
 import '../../core/app_theme.dart';
+import '../../core/formatters.dart';
 import '../../core/providers.dart';
+import '../../shared/finance_bottom_sheet.dart';
 import '../../core/pin_keypad.dart';
 import '../../data/database.dart';
 import '../../data/repositories.dart';
 import '../../app.dart';
-import '../reminders/reminders_screen.dart';
 import '../activity/activity_screen.dart';
 import '../onboarding/intro_screen.dart';
 import 'backup_settings_section.dart';
@@ -72,8 +73,17 @@ final _biometricsSupportedProvider = FutureProvider<bool>((ref) async {
 });
 
 class SettingsScreen extends ConsumerStatefulWidget {
-  const SettingsScreen({super.key, this.showHeading = true});
+  const SettingsScreen({
+    super.key,
+    this.showHeading = true,
+    this.openDeleted = false,
+    this.deletedKind,
+    this.deletedId,
+  });
   final bool showHeading;
+  final bool openDeleted;
+  final String? deletedKind;
+  final int? deletedId;
 
   @override
   ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
@@ -88,6 +98,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   void initState() {
     super.initState();
     _dailyBrief = ref.read(financeRepositoryProvider).dailyBriefSettings();
+    if (widget.openDeleted) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _showDeleted();
+      });
+    }
   }
 
   Future<void> _setDailyBrief({bool? enabled, TimeOfDay? time}) async {
@@ -119,7 +134,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         const AppLockSettings();
     final biometricsAvailable =
         ref.watch(_biometricsSupportedProvider).valueOrNull ?? false;
-    final indian = ref.watch(numberGroupingProvider);
+    final amountFormat = ref.watch(amountFormatProvider);
     final privacy = ref.watch(privacyModeProvider);
     final appearance = ref.watch(appThemeModeProvider);
 
@@ -280,7 +295,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ),
         SettingsRow(
           icon: Icons.verified_user_outlined,
-          title: 'Require unlock to reveal amounts',
+          title: 'Ask for PIN/fingerprint',
           subtitle: 'PIN or fingerprint / face · 30-second grace',
           trailing: Switch.adaptive(
             value: privacy.requireUnlock,
@@ -289,6 +304,30 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 .setRequireUnlock(value, context),
           ),
         ),
+        if (privacy.requireUnlock)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+            child: SizedBox(
+              width: double.infinity,
+              child: SegmentedButton<PrivacyGateRule>(
+                segments: const [
+                  ButtonSegment(
+                    value: PrivacyGateRule.revealOnly,
+                    label: Text('Reveal only'),
+                  ),
+                  ButtonSegment(
+                    value: PrivacyGateRule.hideAndReveal,
+                    label: Text('Hide and reveal'),
+                  ),
+                ],
+                selected: {privacy.gateRule},
+                showSelectedIcon: false,
+                onSelectionChanged: (value) => ref
+                    .read(privacyModeProvider.notifier)
+                    .setGateRule(value.single),
+              ),
+            ),
+          ),
 
         const SettingsSectionHeader('Backup & data'),
         const BackupSettingsSection(),
@@ -315,25 +354,89 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         SettingsRow(
           icon: Icons.numbers_outlined,
           title: 'Number format',
-          subtitle: indian
-              ? 'Indian grouping · ₹1,00,000'
-              : 'International grouping · ₹100,000',
-          trailing: PopupMenuButton<bool>(
-            tooltip: 'Number format',
-            initialValue: indian,
-            onSelected: (value) => _run(
-              () => ref.read(numberGroupingProvider.notifier).setIndian(value),
-            ),
-            itemBuilder: (_) => const [
-              PopupMenuItem(value: true, child: Text('Indian · ₹1,00,000')),
-              PopupMenuItem(
-                value: false,
-                child: Text('International · ₹100,000'),
+          subtitle: '${amountFormat.region.label} · ${amountFormat.preview}',
+          onTap: () => showFinanceBottomSheet<void>(
+            context,
+            builder: (sheet) => FractionallySizedBox(
+              heightFactor: 0.78,
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+                children: [
+                  Text(
+                    'Number format',
+                    style: Theme.of(sheet).textTheme.titleLarge,
+                  ),
+                  const SizedBox(height: 12),
+                  for (final region in AmountRegion.values)
+                    ListTile(
+                      title: Text(region.label),
+                      subtitle: Text(
+                        AmountFormatter(
+                          region: region,
+                          symbol: amountFormat.symbol,
+                        ).preview,
+                      ),
+                      trailing: region == amountFormat.region
+                          ? const Icon(Icons.check)
+                          : null,
+                      onTap: () {
+                        ref
+                            .read(amountFormatProvider.notifier)
+                            .setRegion(region);
+                        Navigator.pop(sheet);
+                      },
+                    ),
+                ],
               ),
-            ],
-            child: const Padding(
-              padding: EdgeInsets.all(8),
-              child: Icon(Icons.arrow_drop_down),
+            ),
+          ),
+        ),
+        SettingsRow(
+          icon: Icons.currency_exchange_outlined,
+          title: 'Currency symbol',
+          subtitle:
+              '${amountFormat.symbol} · Symbol only. Amounts are not converted.',
+          onTap: () => showFinanceBottomSheet<void>(
+            context,
+            builder: (sheet) => SafeArea(
+              top: false,
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Currency symbol',
+                      style: Theme.of(sheet).textTheme.titleLarge,
+                    ),
+                    const SizedBox(height: 4),
+                    const Text('Symbol only. Amounts are not converted.'),
+                    const SizedBox(height: 12),
+                    for (final symbol in const [
+                      '₹',
+                      r'$',
+                      '€',
+                      '£',
+                      'AED',
+                      r'S$',
+                      '¥',
+                      r'R$',
+                    ])
+                      ListTile(
+                        title: Text(symbol),
+                        trailing: symbol == amountFormat.symbol
+                            ? const Icon(Icons.check)
+                            : null,
+                        onTap: () {
+                          ref
+                              .read(amountFormatProvider.notifier)
+                              .setSymbol(symbol);
+                          Navigator.pop(sheet);
+                        },
+                      ),
+                  ],
+                ),
+              ),
             ),
           ),
         ),
@@ -356,15 +459,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ),
 
         const SettingsSectionHeader('Notifications'),
-        SettingsRow(
-          icon: Icons.notifications_outlined,
-          title: 'Reminders',
-          subtitle: 'Upcoming payments and renewals',
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute<void>(builder: (_) => const RemindersScreen()),
-          ),
-        ),
         FutureBuilder<({bool enabled, int hour, int minute})>(
           future: _dailyBrief,
           builder: (context, snapshot) {
@@ -504,6 +598,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       await _writeSetting(db, 'privacy.appLock.biometric', 'false');
       await _pinLock.clearPin();
     }
+    await ref.read(privacyModeProvider.notifier).syncDefaultForAppLock(enabled);
     ref.invalidate(appLockSettingsProvider);
   });
 
@@ -570,6 +665,21 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           "UNION ALL SELECT 'subscription', subscriptions.id, subscriptions.name, subscriptions.updated_at FROM subscriptions JOIN settings ON settings.key = 'subscription.archived.' || subscriptions.id WHERE settings.value = 'true' ORDER BY changed_at DESC",
         )
         .get();
+    if (widget.deletedKind != null && widget.deletedId != null) {
+      rows.sort((a, b) {
+        final aFocused =
+            a.read<String>('kind') == widget.deletedKind &&
+            a.read<int>('id') == widget.deletedId;
+        final bFocused =
+            b.read<String>('kind') == widget.deletedKind &&
+            b.read<int>('id') == widget.deletedId;
+        return aFocused == bFocused
+            ? 0
+            : aFocused
+            ? -1
+            : 1;
+      });
+    }
     if (!mounted) return;
     await showModalBottomSheet<void>(
       context: context,

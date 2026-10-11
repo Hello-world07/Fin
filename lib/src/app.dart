@@ -23,7 +23,7 @@ class FinKeepApp extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    ref.watch(numberGroupingProvider);
+    ref.watch(amountFormatProvider);
     final themeMode = ref.watch(appThemeModeProvider);
     final privacy = ref.watch(privacyModeProvider);
     return MaterialApp(

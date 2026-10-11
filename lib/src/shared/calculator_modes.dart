@@ -78,7 +78,7 @@ class _CalculatorEmiModeState extends State<CalculatorEmiMode> {
           label: 'Principal',
           controller: principal,
           onChanged: update,
-          prefix: '₹',
+          prefix: activeAmountFormatter.value.symbol,
         ),
         const SizedBox(height: 12),
         _ModeField(
@@ -254,7 +254,7 @@ class _CalculatorToolsModeState extends State<CalculatorToolsMode> {
           label: tool == CalculatorTool.change ? 'Starting value' : 'Amount',
           controller: amount,
           onChanged: update,
-          prefix: '₹',
+          prefix: activeAmountFormatter.value.symbol,
         ),
         const SizedBox(height: 12),
         if (tool == CalculatorTool.gst) ...[

@@ -1319,10 +1319,12 @@ class _ReplyContent extends StatelessWidget {
                         ),
                       )
                     else
-                      LinearProgressIndicator(
-                        value: reply.chart!.fraction,
-                        minHeight: 6,
-                        borderRadius: BorderRadius.circular(3),
+                      Tooltip(
+                        message: reply.chart!.label,
+                        child: MiniProgressRing(
+                          progress: reply.chart!.fraction,
+                          size: 54,
+                        ),
                       ),
                     const SizedBox(height: 4),
                     Text(

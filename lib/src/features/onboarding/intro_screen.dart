@@ -1,10 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/app_lock.dart';
-import '../../core/notifications.dart';
 import '../../core/providers.dart';
-import '../../core/pin_keypad.dart';
 import '../../data/database.dart';
 
 final introSeenProvider = FutureProvider<bool>((ref) async {
@@ -48,10 +45,7 @@ class IntroScreen extends ConsumerStatefulWidget {
 class _IntroScreenState extends ConsumerState<IntroScreen> {
   final _pages = PageController();
   int _page = 0;
-  bool _reminders = false;
-  bool _lock = false;
   bool _finishing = false;
-  String? _pin;
 
   @override
   void dispose() {
@@ -59,74 +53,11 @@ class _IntroScreenState extends ConsumerState<IntroScreen> {
     super.dispose();
   }
 
-  Future<void> _toggleReminders(bool enabled) async {
-    if (enabled && !await LocalReminderService().requestPermission()) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Allow notifications to use reminders.'),
-          ),
-        );
-      }
-      return;
-    }
-    if (mounted) setState(() => _reminders = enabled);
-  }
-
-  Future<void> _toggleLock(bool enabled) async {
-    if (!enabled) {
-      setState(() {
-        _lock = false;
-        _pin = null;
-      });
-      return;
-    }
-    final pin = await Navigator.of(
-      context,
-    ).push<String>(MaterialPageRoute(builder: (_) => const PinSetupScreen()));
-    if (mounted && pin != null) {
-      setState(() {
-        _pin = pin;
-        _lock = true;
-      });
-    }
-  }
-
   Future<void> _finish() async {
     if (_finishing) return;
     setState(() => _finishing = true);
     try {
       final db = ref.read(databaseProvider);
-      if (_reminders) {
-        final repo = ref.read(financeRepositoryProvider);
-        try {
-          await repo.saveReminderSettings(
-            (await repo.reminderSettings()).copyWith(enabled: true),
-          );
-        } catch (_) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text(
-                  'Reminders could not start. Try again in Settings.',
-                ),
-              ),
-            );
-          }
-        }
-      }
-      if (_lock && _pin != null) {
-        await PinLockService().setPin(_pin!);
-        await db
-            .into(db.settings)
-            .insertOnConflictUpdate(
-              SettingsCompanion.insert(
-                key: 'privacy.appLock.enabled',
-                value: 'true',
-              ),
-            );
-        if (mounted) ref.invalidate(appLockSettingsProvider);
-      }
       await db
           .into(db.settings)
           .insertOnConflictUpdate(
@@ -154,21 +85,42 @@ class _IntroScreenState extends ConsumerState<IntroScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final pages = <(IconData, String, String)>[
+    final pages = <(IconData, String, List<String>)>[
       (
         Icons.account_balance_wallet_outlined,
-        'All your EMIs, money and subscriptions in one place',
-        'See what is due and what is left at a glance.',
+        'Everything you owe and are owed',
+        [
+          'EMIs with debt-free dates and installments',
+          'Money given or borrowed with repayments',
+          'Subscriptions with renewals',
+        ],
       ),
       (
-        Icons.shield_outlined,
-        'Private by design: everything stays on this phone, no account',
-        'Your records are stored in private app storage.',
+        Icons.auto_awesome_outlined,
+        'Ask FinKeep',
+        [
+          'Ask about your money',
+          'Do quick maths',
+          'Cancel, pause or delete by chat with confirmation and voice input',
+        ],
       ),
       (
         Icons.notifications_active_outlined,
-        'Never miss a payment, and ask FinKeep anything',
-        'Local reminders and the offline assistant are here when you need them.',
+        'Never miss a payment',
+        [
+          'Reminders for each section',
+          'Privacy mode hides amounts',
+          'App lock with PIN or fingerprint',
+        ],
+      ),
+      (
+        Icons.shield_outlined,
+        'Private by design',
+        [
+          'Everything stays on this phone',
+          'One-tap backup to your own folder',
+          'Recycle bin for deleted items',
+        ],
       ),
     ];
     return Scaffold(
@@ -187,7 +139,7 @@ class _IntroScreenState extends ConsumerState<IntroScreen> {
               Expanded(
                 child: PageView.builder(
                   controller: _pages,
-                  itemCount: 3,
+                  itemCount: pages.length,
                   onPageChanged: (index) => setState(() => _page = index),
                   itemBuilder: (context, index) => LayoutBuilder(
                     builder: (context, constraints) => SingleChildScrollView(
@@ -212,23 +164,13 @@ class _IntroScreenState extends ConsumerState<IntroScreen> {
                               ),
                             ),
                             const SizedBox(height: 12),
-                            Text(
-                              pages[index].$3,
-                              textAlign: TextAlign.center,
-                              style: theme.textTheme.bodyMedium,
-                            ),
-                            if (index == 2) ...[
-                              const SizedBox(height: 22),
-                              SwitchListTile(
-                                title: const Text('Turn on reminders'),
-                                value: _reminders,
-                                onChanged: _finishing ? null : _toggleReminders,
+                            for (final line in pages[index].$3) ...[
+                              Text(
+                                line,
+                                textAlign: TextAlign.center,
+                                style: theme.textTheme.bodyMedium,
                               ),
-                              SwitchListTile(
-                                title: const Text('Set app lock'),
-                                value: _lock,
-                                onChanged: _finishing ? null : _toggleLock,
-                              ),
+                              const SizedBox(height: 10),
                             ],
                           ],
                         ),
@@ -240,7 +182,7 @@ class _IntroScreenState extends ConsumerState<IntroScreen> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  for (var index = 0; index < 3; index++)
+                  for (var index = 0; index < pages.length; index++)
                     Container(
                       width: index == _page ? 18 : 7,
                       height: 7,
@@ -260,13 +202,15 @@ class _IntroScreenState extends ConsumerState<IntroScreen> {
                 child: FilledButton(
                   onPressed: _finishing
                       ? null
-                      : _page == 2
+                      : _page == pages.length - 1
                       ? _finish
                       : () => _pages.nextPage(
                           duration: const Duration(milliseconds: 250),
                           curve: Curves.easeOut,
                         ),
-                  child: Text(_page == 2 ? 'Get started' : 'Next'),
+                  child: Text(
+                    _page == pages.length - 1 ? 'Get started' : 'Next',
+                  ),
                 ),
               ),
             ],

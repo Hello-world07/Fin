@@ -182,26 +182,10 @@ String formatAssistantResult(double value) {
     throw const FormatException('That result is too large.');
   }
   final paise = (value * 100).round();
-  final amount = paise % 100 == 0
-      ? formatMoneyUnmasked(paise)
-      : '₹${_indianNumber(value.abs().toStringAsFixed(2))}'.replaceFirst(
-          '₹',
-          value < 0 ? '-₹' : '₹',
-        );
+  final amount = formatMoneyUnmasked(paise);
   final whole = value.abs().floor();
   final words = _numberWords(whole);
   return '$amount (${value < 0 ? 'Minus ' : ''}$words${paise.abs() % 100 == 0 ? '' : ' and ${_numberWords(paise.abs() % 100)} paise'})';
-}
-
-String _indianNumber(String value) {
-  final parts = value.split('.');
-  var integer = parts.first;
-  if (integer.length > 3) {
-    final tail = integer.substring(integer.length - 3);
-    integer =
-        '${integer.substring(0, integer.length - 3).replaceAllMapped(RegExp(r'\B(?=(\d{2})+(?!\d))'), (match) => ',')},$tail';
-  }
-  return '$integer.${parts.last}';
 }
 
 String _numberWords(int value) {

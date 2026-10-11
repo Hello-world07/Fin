@@ -110,11 +110,14 @@ class HeroAmountInput extends StatelessWidget {
       const SizedBox(height: 4),
       Row(
         children: [
-          Text(
-            '₹',
-            style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-              color: Theme.of(context).colorScheme.primary,
-              fontWeight: FontWeight.w700,
+          ValueListenableBuilder<AmountFormatter>(
+            valueListenable: activeAmountFormatter,
+            builder: (context, formatter, _) => Text(
+              formatter.symbol,
+              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                color: Theme.of(context).colorScheme.primary,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
           const SizedBox(width: 8),
