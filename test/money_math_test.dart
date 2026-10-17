@@ -231,18 +231,100 @@ void main() {
         status: MoneyStatus.active,
       ),
     );
-    final seen = <int>[];
-    final subscription = repo.watchMoneyRecords().listen((records) {
-      if (records.isNotEmpty) {
-        seen.add(records.single.summary.remainingAmountPaise);
-      }
-    });
-    await Future<void>.delayed(Duration.zero);
+    final updated = repo
+        .watchMoneyRecords()
+        .firstWhere(
+          (records) =>
+              records.isNotEmpty &&
+              records.single.summary.remainingAmountPaise == 60000,
+        )
+        .timeout(const Duration(seconds: 2));
     await repo.addRepayment(id, 40000, null, DateTime(2026, 10, 5));
-    await Future<void>.delayed(const Duration(milliseconds: 20));
-    await subscription.cancel();
+    expect((await updated).single.summary.remainingAmountPaise, 60000);
+  });
 
-    expect(seen, contains(60000));
+  test(
+    'given and borrowed totals use repayments without double counting settled records',
+    () async {
+      final db = AppDatabase.test(NativeDatabase.memory());
+      addTearDown(db.close);
+      final repo = FinanceRepository(db);
+      final ids = <MoneyDirection, int>{};
+      for (final direction in MoneyDirection.values) {
+        ids[direction] = await repo.saveMoneyRecord(
+          MoneyRecordsCompanion.insert(
+            personName: direction == MoneyDirection.given ? 'Asha' : 'Ravi',
+            direction: direction,
+            amountPaise: 1695000,
+            recordDate: DateTime(2026, 10, 1),
+            status: MoneyStatus.active,
+          ),
+        );
+        await repo.addRepayment(
+          ids[direction]!,
+          625000,
+          null,
+          DateTime(2026, 10, 2),
+        );
+        final detail = await repo.moneyDetail(ids[direction]!);
+        expect(detail.summary.remainingAmountPaise, 1070000);
+        expect(detail.summary.repaidAmountPaise, 625000);
+        expect(
+          (100 * detail.summary.repaidAmountPaise / detail.record.amountPaise)
+              .round(),
+          37,
+        );
+      }
+      final settledId = await repo.saveMoneyRecord(
+        MoneyRecordsCompanion.insert(
+          personName: 'Asha',
+          direction: MoneyDirection.given,
+          amountPaise: 200000,
+          recordDate: DateTime(2026, 10, 1),
+          status: MoneyStatus.active,
+        ),
+      );
+      await repo.addRepayment(settledId, 200000, null, DateTime(2026, 10, 3));
+      final given = (await repo.moneyDetails())
+          .where((item) => item.record.direction == MoneyDirection.given)
+          .toList();
+      expect(
+        given.fold<int>(
+          0,
+          (sum, item) => sum + item.summary.remainingAmountPaise,
+        ),
+        1070000,
+      );
+      expect(
+        given.fold<int>(0, (sum, item) => sum + item.summary.repaidAmountPaise),
+        825000,
+      );
+    },
+  );
+
+  test('concurrent repayments cannot charge the same record twice', () async {
+    final db = AppDatabase.test(NativeDatabase.memory());
+    addTearDown(db.close);
+    final repo = FinanceRepository(db);
+    final id = await repo.saveMoneyRecord(
+      MoneyRecordsCompanion.insert(
+        personName: 'Asha',
+        direction: MoneyDirection.given,
+        amountPaise: 100000,
+        recordDate: DateTime(2026, 10, 1),
+        status: MoneyStatus.active,
+      ),
+    );
+    final first = repo.addRepayment(id, 60000, null, DateTime(2026, 10, 2));
+    await expectLater(
+      repo.addRepayment(id, 60000, null, DateTime(2026, 10, 2)),
+      throwsA(isA<StateError>()),
+    );
+    await first;
+    final detail = await repo.moneyDetail(id);
+    expect(detail.repayments, hasLength(1));
+    expect(detail.summary.remainingAmountPaise, 40000);
+    expect(detail.record.status, MoneyStatus.active);
   });
 
   test('editing cannot change direction or undercut repayments', () async {

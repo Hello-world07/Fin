@@ -287,6 +287,7 @@ class FinanceRepository {
   final LocalReminderService _localReminders = LocalReminderService();
   Future<void> _reminderQueue = Future<void>.value();
   bool _legacyRemindersCleared = false;
+  final Set<int> _repaymentsInFlight = <int>{};
 
   Future<ReminderPlanSettings> reminderSettings() async {
     final rows = await (db.select(
@@ -1921,46 +1922,70 @@ class FinanceRepository {
     if (amountPaise <= 0) {
       throw const FormatException('Enter an amount greater than zero');
     }
-    final repaymentId = await db.transaction(() async {
-      final record = await (db.select(
-        db.moneyRecords,
-      )..where((item) => item.id.equals(moneyRecordId))).getSingleOrNull();
-      if (record == null) throw StateError('Money record no longer exists');
-      final existing = await (db.select(
-        db.moneyRepayments,
-      )..where((item) => item.moneyRecordId.equals(moneyRecordId))).get();
-      final outstanding =
-          record.amountPaise -
-          existing.fold<int>(0, (sum, item) => sum + item.amountPaise);
-      if (amountPaise > outstanding) {
-        throw FormatException(
-          'Repayment cannot exceed the remaining ${formatMoney(outstanding)}',
-        );
-      }
-      final id = await db
-          .into(db.moneyRepayments)
-          .insert(
-            MoneyRepaymentsCompanion.insert(
-              moneyRecordId: moneyRecordId,
-              amountPaise: amountPaise,
-              paidOn: paidOn ?? DateTime.now(),
-              notes: Value(notes),
+    if (!_repaymentsInFlight.add(moneyRecordId)) {
+      throw StateError('A repayment is already being saved for this record');
+    }
+    try {
+      final repaymentId = await db.transaction(() async {
+        final record = await (db.select(
+          db.moneyRecords,
+        )..where((item) => item.id.equals(moneyRecordId))).getSingleOrNull();
+        if (record == null) throw StateError('Money record no longer exists');
+        if ((await _archivedMoneyIds()).contains(moneyRecordId)) {
+          throw StateError('Money record was deleted');
+        }
+        final existing = await (db.select(
+          db.moneyRepayments,
+        )..where((item) => item.moneyRecordId.equals(moneyRecordId))).get();
+        final outstanding =
+            record.amountPaise -
+            existing.fold<int>(0, (sum, item) => sum + item.amountPaise);
+        if (amountPaise > outstanding) {
+          throw FormatException(
+            'Repayment cannot exceed the remaining ${formatMoney(outstanding)}',
+          );
+        }
+        final id = await db
+            .into(db.moneyRepayments)
+            .insert(
+              MoneyRepaymentsCompanion.insert(
+                moneyRecordId: moneyRecordId,
+                amountPaise: amountPaise,
+                paidOn: paidOn ?? DateTime.now(),
+                notes: Value(notes),
+              ),
+            );
+        final nextStatus = amountPaise == outstanding
+            ? MoneyStatus.settled
+            : record.status == MoneyStatus.settled
+            ? MoneyStatus.active
+            : record.status;
+        if (nextStatus != record.status) {
+          await (db.update(
+            db.moneyRecords,
+          )..where((item) => item.id.equals(moneyRecordId))).write(
+            MoneyRecordsCompanion(
+              status: Value(nextStatus),
+              updatedAt: Value(DateTime.now()),
             ),
           );
-      await _logActivity(
-        type: ActivityType.moneyRepayment,
-        title: record.direction == MoneyDirection.given
-            ? '${displayName(record.personName)} repaid ${formatMoneyUnmasked(amountPaise)}'
-            : 'You repaid ${formatMoneyUnmasked(amountPaise)} to ${displayName(record.personName)}',
-        description: notes,
-        entityType: 'money',
-        entityId: moneyRecordId,
-      );
-      return id;
-    });
-    await moneyDetail(moneyRecordId);
-    _queueReminderRefresh();
-    return repaymentId;
+        }
+        await _logActivity(
+          type: ActivityType.moneyRepayment,
+          title: record.direction == MoneyDirection.given
+              ? '${displayName(record.personName)} repaid ${formatMoneyUnmasked(amountPaise)}'
+              : 'You repaid ${formatMoneyUnmasked(amountPaise)} to ${displayName(record.personName)}',
+          description: notes,
+          entityType: 'money',
+          entityId: moneyRecordId,
+        );
+        return id;
+      });
+      _queueReminderRefresh();
+      return repaymentId;
+    } finally {
+      _repaymentsInFlight.remove(moneyRecordId);
+    }
   }
 
   Future<bool> revertMoneyRepayment(int recordId, int repaymentId) async {

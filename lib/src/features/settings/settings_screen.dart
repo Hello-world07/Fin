@@ -29,6 +29,20 @@ void openSettings(BuildContext context) => Navigator.of(context).push(
   ),
 );
 
+class _LazySettingsList extends StatelessWidget {
+  const _LazySettingsList({required this.padding, required this.children});
+
+  final EdgeInsets padding;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) => ListView.builder(
+    padding: padding,
+    itemCount: children.length,
+    itemBuilder: (context, index) => children[index],
+  );
+}
+
 class _SettingsCounts {
   const _SettingsCounts(
     this.emis,
@@ -138,7 +152,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final privacy = ref.watch(privacyModeProvider);
     final appearance = ref.watch(appThemeModeProvider);
 
-    return ListView(
+    return _LazySettingsList(
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 48),
       children: [
         if (widget.showHeading)

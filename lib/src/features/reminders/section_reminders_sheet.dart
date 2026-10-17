@@ -7,9 +7,16 @@ import '../../domain/reminder_schedule.dart';
 import '../../shared/finance_bottom_sheet.dart';
 
 class SectionReminderButton extends ConsumerStatefulWidget {
-  const SectionReminderButton({super.key, required this.type});
+  const SectionReminderButton({
+    super.key,
+    required this.type,
+    this.dotColor,
+    this.dotBorderColor,
+  });
 
   final FinanceReminderType type;
+  final Color? dotColor;
+  final Color? dotBorderColor;
 
   @override
   ConsumerState<SectionReminderButton> createState() =>
@@ -47,9 +54,18 @@ class _SectionReminderButtonState extends ConsumerState<SectionReminderButton> {
               Positioned(
                 top: 0,
                 right: 0,
-                child: CircleAvatar(
-                  radius: 3,
-                  backgroundColor: Theme.of(context).colorScheme.primary,
+                child: Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color:
+                        widget.dotColor ??
+                        Theme.of(context).colorScheme.primary,
+                    border: widget.dotBorderColor == null
+                        ? null
+                        : Border.all(color: widget.dotBorderColor!, width: 2),
+                  ),
                 ),
               ),
           ],

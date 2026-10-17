@@ -249,7 +249,9 @@ class _NotchedNavigationBarState extends State<NotchedNavigationBar>
     final active = Theme.of(context).brightness == Brightness.dark
         ? Theme.of(context).colorScheme.primary
         : AppTheme.heroEnd;
-    final inactive = AppTheme.colorsOf(context).navInactive;
+    final inactive = Theme.of(context).brightness == Brightness.dark
+        ? AppTheme.colorsOf(context).secondaryText
+        : AppTheme.colorsOf(context).navInactive;
     return Expanded(
       child: Semantics(
         button: true,

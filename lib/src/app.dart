@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
 import 'core/app_theme.dart';
@@ -99,13 +98,18 @@ class _AppShellState extends ConsumerState<AppShell> {
           if (mounted && link != null) _openReminder(link);
         }),
       );
-      SchedulerBinding.instance.scheduleTask(() {
-        if (!mounted) return;
-        ref.read(assistantChatControllerProvider);
-        unawaited(_primeNotifications());
-        unawaited(_runAutoBackup());
-      }, Priority.idle);
+      unawaited(_runDeferredStartup());
     });
+  }
+
+  Future<void> _runDeferredStartup() async {
+    await Future<void>.delayed(const Duration(milliseconds: 150));
+    if (!mounted) return;
+    await _runAutoBackup();
+    if (!mounted) return;
+    await _primeNotifications();
+    if (!mounted) return;
+    ref.read(assistantChatControllerProvider);
   }
 
   void _openReminder(ReminderDeepLink link) {

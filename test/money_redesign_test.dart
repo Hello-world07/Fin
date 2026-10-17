@@ -9,6 +9,7 @@ import 'package:personal_finance/src/data/repositories.dart';
 import 'package:personal_finance/src/domain/enums.dart';
 import 'package:personal_finance/src/features/money/money_screen.dart';
 import 'package:personal_finance/src/shared/forms.dart';
+import 'package:personal_finance/src/shared/notched_navigation_bar.dart';
 
 void main() {
   late AppDatabase db;
@@ -52,29 +53,31 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    final nivasRow = find.byKey(const ValueKey('given:nivas'));
+    final ashaRow = find.byKey(const ValueKey('given:asha'));
     await tester.scrollUntilVisible(
-      find.text('Nivas'),
+      nivasRow,
       100,
-      scrollable: find.byType(Scrollable).first,
+      scrollable: find.byType(Scrollable).at(1),
     );
 
-    expect(find.text('Nivas'), findsOneWidget);
-    expect(find.text('Asha'), findsOneWidget);
-    expect(find.textContaining('2 records'), findsOneWidget);
+    expect(nivasRow, findsOneWidget);
+    expect(ashaRow, findsOneWidget);
+    expect(find.textContaining('2 records'), findsWidgets);
     expect(
-      tester.getTopLeft(find.text('Asha')).dy,
-      lessThan(tester.getTopLeft(find.text('Nivas')).dy),
+      tester.getTopLeft(ashaRow).dy,
+      lessThan(tester.getTopLeft(nivasRow).dy),
     );
 
     await repo.addRepayment(nivasId, 5000, 'UPI', today);
     await tester.pumpAndSettle();
-    expect(find.text('2 records · Partially paid'), findsOneWidget);
+    expect(find.text('Partly paid'), findsWidgets);
     expect(find.text('₹250'), findsWidgets);
 
-    await tester.tap(find.text('Nivas'));
+    await tester.tap(nivasRow);
     await tester.pumpAndSettle();
     expect(find.text('₹250'), findsOneWidget);
-    expect(find.byType(ListTile), findsNWidgets(2));
+    expect(find.byType(ListTile), findsAtLeastNWidgets(2));
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(milliseconds: 1));
@@ -112,6 +115,156 @@ void main() {
 
     final events = await db.select(db.activityLogs).get();
     expect(events.any((event) => event.title == 'Nivas repaid ₹50'), isTrue);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 1));
+  });
+
+  testWidgets('filters separate overdue, partial, and settled people', (
+    tester,
+  ) async {
+    final today = DateTime.now();
+    final partialId = await create(
+      'Partial',
+      10000,
+      today.add(const Duration(days: 5)),
+    );
+    await repo.addRepayment(partialId, 4000, null, today);
+    await create('Late', 8000, today.subtract(const Duration(days: 1)));
+    final settledId = await create(
+      'Settled',
+      5000,
+      today.add(const Duration(days: 8)),
+    );
+    await repo.addRepayment(settledId, 5000, null, today);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [financeRepositoryProvider.overrideWithValue(repo)],
+        child: const MaterialApp(home: MoneyScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Overdue').first);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('given:late')), findsOneWidget);
+    expect(find.byKey(const ValueKey('given:partial')), findsNothing);
+
+    await tester.tap(find.text('Partially paid').first);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('given:partial')), findsOneWidget);
+    expect(find.byKey(const ValueKey('given:late')), findsNothing);
+
+    await tester.tap(find.text('Settled').first);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('given:settled')), findsOneWidget);
+    expect(find.byKey(const ValueKey('given:partial')), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 1));
+  });
+
+  testWidgets(
+    'Money header aligns and footer clears one navigation bar on a small screen',
+    (tester) async {
+      tester.view.physicalSize = const Size(360, 640);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final today = DateTime.now();
+      for (var index = 0; index < 5; index++) {
+        await create(
+          'Given $index',
+          10000,
+          today.add(Duration(days: index + 1)),
+        );
+        await repo.saveMoneyRecord(
+          MoneyRecordsCompanion.insert(
+            personName: 'Borrowed $index',
+            direction: MoneyDirection.borrowed,
+            amountPaise: 10000,
+            recordDate: today,
+            dueDate: Value(today.add(Duration(days: index + 1))),
+            status: MoneyStatus.active,
+          ),
+        );
+      }
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [financeRepositoryProvider.overrideWithValue(repo)],
+          child: MaterialApp(
+            home: Scaffold(
+              extendBody: true,
+              body: const MoneyScreen(),
+              bottomNavigationBar: NotchedNavigationBar(
+                selectedIndex: 2,
+                onSelected: (_) {},
+                onAsk: () {},
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.getTopLeft(find.byKey(const ValueKey('title'))).dx, 16);
+      expect(tester.getBottomRight(find.byTooltip('Money reminders')).dx, 344);
+      await tester.drag(
+        find.byType(CustomScrollView).first,
+        const Offset(0, -1000),
+      );
+      await tester.pumpAndSettle();
+      final footer = tester
+          .widgetList<SliverToBoxAdapter>(find.byType(SliverToBoxAdapter))
+          .map((sliver) => sliver.child)
+          .whereType<SizedBox>()
+          .where((box) => box.height == 148)
+          .toList();
+      expect(footer, isNotEmpty);
+      expect(tester.getTopLeft(find.byKey(const ValueKey('total'))).dx, 16);
+      await tester.tap(find.text('Money borrowed'));
+      await tester.pumpAndSettle();
+      expect(tester.getTopLeft(find.byKey(const ValueKey('title'))).dx, 16);
+      await tester.drag(
+        find.byType(CustomScrollView).last,
+        const Offset(0, -300),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.getTopLeft(find.byKey(const ValueKey('total'))).dx, 16);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(milliseconds: 1));
+    },
+  );
+
+  testWidgets('borrowed Settled section remains accessible in dark theme', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(360, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final id = await repo.saveMoneyRecord(
+      MoneyRecordsCompanion.insert(
+        personName: 'Ravi',
+        direction: MoneyDirection.borrowed,
+        amountPaise: 10000,
+        recordDate: DateTime.now(),
+        status: MoneyStatus.active,
+      ),
+    );
+    await repo.addRepayment(id, 10000, null, DateTime.now());
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [financeRepositoryProvider.overrideWithValue(repo)],
+        child: MaterialApp(theme: ThemeData.dark(), home: const MoneyScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Money borrowed'));
+    await tester.pumpAndSettle();
+    expect(tester.getTopLeft(find.byKey(const ValueKey('title'))).dx, 16);
+    expect(find.text('Settled'), findsWidgets);
+    await tester.tap(find.text('Settled').last);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('borrowed:ravi')), findsOneWidget);
+    expect(tester.takeException(), equals(null));
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(milliseconds: 1));
   });

@@ -166,6 +166,7 @@ class MiniProgressRing extends StatelessWidget {
     this.size = 40,
     this.strokeWidth = 4,
     this.backgroundColor,
+    this.color,
     this.child,
   });
 
@@ -173,6 +174,7 @@ class MiniProgressRing extends StatelessWidget {
   final double size;
   final double strokeWidth;
   final Color? backgroundColor;
+  final Color? color;
   final Widget? child;
 
   @override
@@ -197,6 +199,7 @@ class MiniProgressRing extends StatelessWidget {
                 value: value,
                 strokeWidth: strokeWidth,
                 strokeCap: StrokeCap.round,
+                color: color,
                 backgroundColor:
                     backgroundColor ?? AppTheme.colorsOf(context).outline,
               ),

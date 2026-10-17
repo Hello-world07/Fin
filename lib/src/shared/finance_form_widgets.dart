@@ -97,6 +97,7 @@ class HeroAmountInput extends StatelessWidget {
     this.focusNode,
     this.onFieldSubmitted,
     this.textInputAction,
+    this.obscureAmount = false,
   });
 
   final TextEditingController controller;
@@ -107,6 +108,7 @@ class HeroAmountInput extends StatelessWidget {
   final FocusNode? focusNode;
   final ValueChanged<String>? onFieldSubmitted;
   final TextInputAction? textInputAction;
+  final bool obscureAmount;
 
   @override
   Widget build(BuildContext context) => Column(
@@ -130,6 +132,7 @@ class HeroAmountInput extends StatelessWidget {
           Expanded(
             child: TextFormField(
               controller: controller,
+              obscureText: obscureAmount,
               focusNode: focusNode,
               onFieldSubmitted: onFieldSubmitted,
               textInputAction: textInputAction,
