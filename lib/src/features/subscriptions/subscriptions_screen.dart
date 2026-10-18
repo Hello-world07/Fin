@@ -57,19 +57,6 @@ class _SubscriptionsScreenState extends ConsumerState<SubscriptionsScreen> {
     final repo = ref.watch(financeRepositoryProvider);
     final extras = ref.watch(_subscriptionExtrasProvider).valueOrNull ?? {};
     return Scaffold(
-      floatingActionButton: MediaQuery.viewInsetsOf(context).bottom > 0
-          ? null
-          : Padding(
-              padding: EdgeInsets.only(
-                bottom: NotchedNavigationMetrics.fabBottomPadding,
-              ),
-              child: FloatingActionButton.extended(
-                onPressed: () =>
-                    openFinanceSheet(context, const SubscriptionFormSheet()),
-                icon: const Icon(Icons.add),
-                label: const Text('Add Subscription'),
-              ),
-            ),
       body: Column(
         children: [
           ScreenHeader(
@@ -85,7 +72,7 @@ class _SubscriptionsScreenState extends ConsumerState<SubscriptionsScreen> {
                 if (items.isEmpty) {
                   return ListView(
                     padding: EdgeInsets.only(
-                      bottom: NotchedNavigationMetrics.tabContentPadding(
+                      bottom: NotchedNavigationMetrics.contentPadding(
                         context,
                       ),
                     ),
@@ -304,7 +291,7 @@ class _SubscriptionsScreenState extends ConsumerState<SubscriptionsScreen> {
                     20,
                     0,
                     20,
-                    NotchedNavigationMetrics.tabContentPadding(context),
+                    NotchedNavigationMetrics.contentPadding(context),
                   ),
                   itemCount: builders.length,
                   itemBuilder: (context, index) => builders[index](context),

@@ -58,9 +58,8 @@ String formatCompactMoneyUnmasked(int paise) {
   if (paise.abs() < 100000) return formatMoneyUnmasked(paise);
   final formatter = activeAmountFormatter.value;
   final scaled = paise.abs() / 100000;
-  final digits = scaled.abs() >= 100 ? 0 : 1;
   final symbol = formatter.symbol == 'AED' ? 'AED ' : formatter.symbol;
-  return '${paise < 0 ? '-' : ''}$symbol${formatter.formatNumber(scaled, decimalDigits: digits)}K';
+  return '${paise < 0 ? '-' : ''}$symbol${formatter.formatNumber(scaled, decimalDigits: 1)}K';
 }
 
 String formatMoney(int paise) =>
@@ -77,6 +76,53 @@ String hideMoneyInText(String value) => privacyAmountsHidden
     : value;
 
 String formatDate(DateTime date) => _date.format(date);
+
+String formatShortDate(DateTime date, {DateTime? today}) {
+  final now = today ?? DateTime.now();
+  return '${date.day} ${DateFormat.MMM().format(date)}${date.year == now.year ? '' : ' ${date.year}'}';
+}
+
+String formatWeekdayShortDate(DateTime date, {DateTime? today}) =>
+    '${DateFormat.E().format(date)} ${formatShortDate(date, today: today)}';
+
+String formatMonthYear(DateTime date) => DateFormat('MMM yyyy').format(date);
+
+String formatDayDistance(DateTime date, DateTime today, {bool alwaysDays = false}) {
+  final days = DateTime(date.year, date.month, date.day)
+      .difference(DateTime(today.year, today.month, today.day))
+      .inDays;
+  if (days < 0) return 'Overdue ${plural(-days, 'day')}';
+  if (days == 0) return 'Today';
+  if (days == 1) return 'Tomorrow';
+  if (days <= 99 || alwaysDays) return 'in ${plural(days, 'day')}';
+  return 'in ${plural((days / 30).round(), 'month')}';
+}
+
+String formatDatedDistance(DateTime date, DateTime today) {
+  final short = formatShortDate(date, today: today);
+  final distance = formatDayDistance(date, today);
+  return short == distance ? short : '$short · $distance';
+}
+
+String formatWeekRange(DateTime start, {DateTime? today}) {
+  final end = start.add(const Duration(days: 6));
+  if (start.month == end.month && start.year == end.year) {
+    return '${start.day}–${formatShortDate(end, today: today)}';
+  }
+  return '${formatShortDate(start, today: today)}–${formatShortDate(end, today: today)}';
+}
+
+String plural(int count, String singular, {String? many}) =>
+    '$count ${count == 1 ? singular : (many ?? '${singular}s')}';
+
+String remindedAgo(DateTime date, DateTime today) {
+  final days = DateTime(today.year, today.month, today.day)
+      .difference(DateTime(date.year, date.month, date.day))
+      .inDays;
+  if (days <= 0) return 'Reminded today';
+  if (days == 1) return 'Reminded yesterday';
+  return 'Reminded ${plural(days, 'day')} ago';
+}
 
 String formatDateTime(DateTime date) => _dateTime.format(date);
 

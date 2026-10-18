@@ -1,13 +1,27 @@
+import 'dart:math' as math;
+import 'dart:ui' show ImageFilter;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/app_theme.dart';
+import '../core/providers.dart';
+import '../data/database.dart';
+import '../data/repositories.dart';
+import '../domain/enums.dart';
+import '../features/assistant/ask_finkeep_sheet.dart';
+import '../features/emis/emis_screen.dart';
+import '../features/money/money_screen.dart';
+import '../features/subscriptions/subscriptions_screen.dart';
+import 'calculator_sheet.dart';
+import 'forms.dart';
 
 class NotchedNavigationMetrics {
   static const height = 64.0;
-  static const centerLift = 22.0;
+  static const centerLift = 0.0;
   static const bottomMargin = 12.0;
-  static const contentGap = 24.0;
+  static const contentGap = 16.0;
   static const fabHeight = 56.0;
   static const fabGap = 16.0;
 
@@ -32,344 +46,696 @@ class NotchedNavigationMetrics {
   }
 }
 
-class NotchedNavigationBar extends StatefulWidget {
+enum _MenuAction {
+  moneyLent,
+  moneyBorrowed,
+  emi,
+  subscription,
+  calculator,
+  markEmiPaid,
+  editEmi,
+  deleteEmi,
+  repayment,
+  editMoney,
+  deleteMoney,
+  pauseSubscription,
+  editSubscription,
+  deleteSubscription,
+}
+
+typedef _MenuItem = ({_MenuAction action, String label, IconData icon});
+
+List<_MenuItem> _menuFor(int tab) => switch (tab) {
+  1 => [
+    (action: _MenuAction.emi, label: 'Add EMI', icon: Icons.add_circle_outline),
+    (
+      action: _MenuAction.markEmiPaid,
+      label: 'Mark installment paid',
+      icon: Icons.check_circle_outline,
+    ),
+    (
+      action: _MenuAction.calculator,
+      label: 'Calculator',
+      icon: Icons.calculate_outlined,
+    ),
+    (action: _MenuAction.editEmi, label: 'Edit EMI', icon: Icons.edit_outlined),
+    (
+      action: _MenuAction.deleteEmi,
+      label: 'Delete EMI',
+      icon: Icons.delete_outline,
+    ),
+  ],
+  2 => [
+    (
+      action: _MenuAction.moneyLent,
+      label: 'Lend money',
+      icon: Icons.call_made_outlined,
+    ),
+    (
+      action: _MenuAction.moneyBorrowed,
+      label: 'Borrow money',
+      icon: Icons.call_received_outlined,
+    ),
+    (
+      action: _MenuAction.repayment,
+      label: 'Record repayment',
+      icon: Icons.payments_outlined,
+    ),
+    (
+      action: _MenuAction.calculator,
+      label: 'Calculator',
+      icon: Icons.calculate_outlined,
+    ),
+    (
+      action: _MenuAction.editMoney,
+      label: 'Edit record',
+      icon: Icons.edit_outlined,
+    ),
+    (
+      action: _MenuAction.deleteMoney,
+      label: 'Delete record',
+      icon: Icons.delete_outline,
+    ),
+  ],
+  3 => [
+    (
+      action: _MenuAction.subscription,
+      label: 'Add subscription',
+      icon: Icons.add_circle_outline,
+    ),
+    (
+      action: _MenuAction.pauseSubscription,
+      label: 'Pause or resume',
+      icon: Icons.pause_circle_outline,
+    ),
+    (
+      action: _MenuAction.calculator,
+      label: 'Calculator',
+      icon: Icons.calculate_outlined,
+    ),
+    (
+      action: _MenuAction.editSubscription,
+      label: 'Edit subscription',
+      icon: Icons.edit_outlined,
+    ),
+    (
+      action: _MenuAction.deleteSubscription,
+      label: 'Delete subscription',
+      icon: Icons.delete_outline,
+    ),
+  ],
+  _ => [
+    (
+      action: _MenuAction.moneyLent,
+      label: 'Money lent',
+      icon: Icons.call_made_outlined,
+    ),
+    (
+      action: _MenuAction.moneyBorrowed,
+      label: 'Money borrowed',
+      icon: Icons.call_received_outlined,
+    ),
+    (
+      action: _MenuAction.emi,
+      label: 'Add EMI',
+      icon: Icons.account_balance_outlined,
+    ),
+    (
+      action: _MenuAction.subscription,
+      label: 'Add subscription',
+      icon: Icons.autorenew_outlined,
+    ),
+    (
+      action: _MenuAction.calculator,
+      label: 'EMI calculator',
+      icon: Icons.calculate_outlined,
+    ),
+  ],
+};
+
+Future<void> showAddMenu(BuildContext context, {int tabIndex = 0}) async {
+  final items = _menuFor(tabIndex);
+  final choice = await showModalBottomSheet<_MenuAction>(
+    context: context,
+    showDragHandle: true,
+    isScrollControlled: true,
+    builder: (sheetContext) => SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(switch (tabIndex) {
+              1 => 'EMIs & Loans',
+              2 => 'Money',
+              3 => 'Subscriptions',
+              _ => 'Add to FinKeep',
+            }, style: Theme.of(sheetContext).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            for (final item in items) ...[
+              if (item.action == _MenuAction.editEmi ||
+                  item.action == _MenuAction.editMoney ||
+                  item.action == _MenuAction.editSubscription) ...[
+                const Divider(height: 20),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Text(
+                      'Manage',
+                      style: Theme.of(sheetContext).textTheme.labelMedium,
+                    ),
+                  ),
+                ),
+              ],
+              ListTile(
+                leading: Icon(item.icon),
+                title: Text(item.label),
+                onTap: () => Navigator.pop(sheetContext, item.action),
+              ),
+            ],
+          ],
+        ),
+      ),
+    ),
+  );
+  if (choice == null || !context.mounted) return;
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    if (context.mounted) _runMenuAction(context, choice);
+  });
+}
+
+Future<T?> _pickRecord<T>(
+  BuildContext context,
+  String title,
+  List<T> items,
+  String Function(T) name,
+  String Function(T) detail,
+) {
+  if (items.isEmpty) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Nothing to choose yet.')));
+    return Future.value(null);
+  }
+  return showModalBottomSheet<T>(
+    context: context,
+    showDragHandle: true,
+    isScrollControlled: true,
+    builder: (sheet) => SafeArea(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(sheet).height * .75,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(title, style: Theme.of(sheet).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            Flexible(
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: items.length,
+                itemBuilder: (_, index) => ListTile(
+                  title: Text(name(items[index])),
+                  subtitle: Text(detail(items[index])),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.pop(sheet, items[index]),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+Future<bool> _confirmDelete(BuildContext context, String name) async =>
+    await showDialog<bool>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        title: Text('Delete $name?'),
+        content: const Text(
+          'This item will move to Deleted and can be restored.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialog, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialog, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    ) ??
+    false;
+
+void _showUndo(BuildContext context, Future<void> Function() restore) {
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      duration: const Duration(seconds: 6),
+      content: const Text('Moved to Deleted'),
+      action: SnackBarAction(
+        label: 'Undo',
+        onPressed: () {
+          restore();
+        },
+      ),
+    ),
+  );
+}
+
+Future<void> _runMenuAction(BuildContext context, _MenuAction action) async {
+  final container = ProviderScope.containerOf(context, listen: false);
+  try {
+    switch (action) {
+      case _MenuAction.moneyLent:
+        openFinanceSheet(
+          context,
+          const MoneyFormSheet(initialDirection: MoneyDirection.given),
+        );
+      case _MenuAction.moneyBorrowed:
+        openFinanceSheet(
+          context,
+          const MoneyFormSheet(initialDirection: MoneyDirection.borrowed),
+        );
+      case _MenuAction.emi:
+        openFinanceSheet(context, const EmiFormSheet());
+      case _MenuAction.subscription:
+        openFinanceSheet(context, const SubscriptionFormSheet());
+      case _MenuAction.calculator:
+        _openMenuCalculator(context);
+      case _MenuAction.markEmiPaid ||
+          _MenuAction.editEmi ||
+          _MenuAction.deleteEmi:
+        final details = await container.read(emiDetailsProvider.future);
+        if (!context.mounted) return;
+        final selected = await _pickRecord<EmiDetail>(
+          context,
+          action == _MenuAction.markEmiPaid
+              ? 'Choose an EMI to pay'
+              : 'Choose an EMI',
+          details
+              .where(
+                (item) =>
+                    action != _MenuAction.markEmiPaid ||
+                    item.nextUnpaidInstallment != null,
+              )
+              .toList(),
+          (item) => item.emi.name,
+          (item) => item.emi.provider ?? 'EMI',
+        );
+        if (selected == null || !context.mounted) return;
+        if (action == _MenuAction.editEmi) {
+          openFinanceSheet(context, EmiFormSheet(emi: selected.emi));
+        } else if (action == _MenuAction.markEmiPaid) {
+          Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => EmiDetailScreen(selected.emi.id),
+            ),
+          );
+        } else if (await _confirmDelete(context, selected.emi.name)) {
+          final repo = container.read(financeRepositoryProvider);
+          await repo.deleteEmi(selected.emi.id);
+          if (context.mounted) {
+            _showUndo(context, () => repo.restoreEmi(selected.emi.id));
+          }
+        }
+      case _MenuAction.repayment ||
+          _MenuAction.editMoney ||
+          _MenuAction.deleteMoney:
+        final details = await container.read(moneyRecordsProvider.future);
+        if (!context.mounted) return;
+        final selected = await _pickRecord<MoneyRecordDetail>(
+          context,
+          action == _MenuAction.repayment
+              ? 'Choose a record to repay'
+              : 'Choose a money record',
+          details
+              .where(
+                (item) =>
+                    action != _MenuAction.repayment ||
+                    item.summary.remainingAmountPaise > 0,
+              )
+              .toList(),
+          (item) => item.record.personName,
+          (item) => 'Record #${item.record.id}',
+        );
+        if (selected == null || !context.mounted) return;
+        if (action == _MenuAction.editMoney) {
+          openFinanceSheet(context, MoneyFormSheet(record: selected.record));
+        } else if (action == _MenuAction.repayment) {
+          openFinanceSheet(
+            context,
+            RepaymentSheet(
+              recordId: selected.record.id,
+              remainingPaise: selected.summary.remainingAmountPaise,
+            ),
+          );
+        } else if (await _confirmDelete(context, selected.record.personName)) {
+          final repo = container.read(financeRepositoryProvider);
+          await repo.deleteMoneyRecord(selected.record.id);
+          if (context.mounted) {
+            _showUndo(
+              context,
+              () => repo.restoreMoneyRecord(selected.record.id),
+            );
+          }
+        }
+      case _MenuAction.pauseSubscription ||
+          _MenuAction.editSubscription ||
+          _MenuAction.deleteSubscription:
+        final items = await container.read(subscriptionsProvider.future);
+        if (!context.mounted) return;
+        final selected = await _pickRecord<Subscription>(
+          context,
+          'Choose a subscription',
+          items,
+          (item) => item.name,
+          (item) => item.status.name,
+        );
+        if (selected == null || !context.mounted) return;
+        if (action == _MenuAction.editSubscription) {
+          openFinanceSheet(
+            context,
+            SubscriptionFormSheet(subscription: selected),
+          );
+        } else if (action == _MenuAction.pauseSubscription) {
+          openSubscriptionDetailSheet(context, selected);
+        } else if (await _confirmDelete(context, selected.name)) {
+          final repo = container.read(financeRepositoryProvider);
+          await repo.deleteSubscription(selected.id);
+          if (context.mounted) {
+            _showUndo(context, () => repo.restoreSubscription(selected));
+          }
+        }
+    }
+  } catch (error, stackTrace) {
+    debugPrint('Add menu action failed: $error\n$stackTrace');
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not complete that action.')),
+      );
+    }
+  }
+}
+
+void _openMenuCalculator(BuildContext context) {
+  openCalculator(
+    context,
+    onDestination: (destination, amount) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!context.mounted) return;
+        switch (destination) {
+          case CalculatorDestination.emi:
+            openFinanceSheet(context, EmiFormSheet(initialEmiAmount: amount));
+          case CalculatorDestination.moneyGiven:
+            openFinanceSheet(
+              context,
+              MoneyFormSheet(
+                initialAmount: amount,
+                initialDirection: MoneyDirection.given,
+              ),
+            );
+          case CalculatorDestination.moneyBorrowed:
+            openFinanceSheet(
+              context,
+              MoneyFormSheet(
+                initialAmount: amount,
+                initialDirection: MoneyDirection.borrowed,
+              ),
+            );
+          case CalculatorDestination.subscription:
+            openFinanceSheet(
+              context,
+              SubscriptionFormSheet(initialAmount: amount),
+            );
+        }
+      });
+    },
+    onEmiDraft: (draft) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!context.mounted) return;
+        openFinanceSheet(
+          context,
+          EmiFormSheet(
+            initialEmiAmount: draft.monthlyEmi.toStringAsFixed(2),
+            initialPrincipal: draft.principal.toStringAsFixed(2),
+            initialInterestRate: draft.annualRate.toString(),
+            initialTenureMonths: draft.months,
+          ),
+        );
+      });
+    },
+  );
+}
+
+class NotchedNavigationBar extends StatelessWidget {
   const NotchedNavigationBar({
     super.key,
     required this.selectedIndex,
     required this.onSelected,
-    required this.onAsk,
+    this.onAsk,
   });
 
   final int selectedIndex;
   final ValueChanged<int> onSelected;
-  final VoidCallback onAsk;
-
-  @override
-  State<NotchedNavigationBar> createState() => _NotchedNavigationBarState();
-}
-
-class _NotchedNavigationBarState extends State<NotchedNavigationBar>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _dotController;
-  late Animation<double> _dotPosition = AlwaysStoppedAnimation<double>(
-    widget.selectedIndex.toDouble(),
-  );
-  bool _askPressed = false;
-  bool _reduceMotion = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _dotController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 200),
-      value: 1,
-    );
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _reduceMotion = MediaQuery.disableAnimationsOf(context);
-  }
-
-  @override
-  void didUpdateWidget(covariant NotchedNavigationBar oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.selectedIndex == widget.selectedIndex) return;
-    final start = _dotPosition.value;
-    final end = widget.selectedIndex.toDouble();
-    if (_reduceMotion) {
-      _dotController.stop();
-      _dotPosition = AlwaysStoppedAnimation<double>(end);
-    } else {
-      _dotController.reset();
-      _dotPosition = Tween<double>(
-        begin: start,
-        end: end,
-      ).animate(CurvedAnimation(parent: _dotController, curve: Curves.easeOut));
-      _dotController.forward();
-    }
-  }
-
-  @override
-  void dispose() {
-    _dotController.dispose();
-    super.dispose();
-  }
+  final VoidCallback? onAsk;
 
   @override
   Widget build(BuildContext context) {
-    final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
-    if (keyboardOpen) return const SizedBox.shrink();
-    final tokens = AppTheme.colorsOf(context);
+    if (MediaQuery.viewInsetsOf(context).bottom > 0) {
+      return const SizedBox.shrink();
+    }
+    final tokens = AppTheme.homePaletteOf(context);
     final dark = Theme.of(context).brightness == Brightness.dark;
-    return SafeArea(
-      top: false,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(
-          16,
-          0,
-          16,
-          NotchedNavigationMetrics.bottomMargin,
-        ),
-        child: SizedBox(
-          height:
-              NotchedNavigationMetrics.height +
-              NotchedNavigationMetrics.centerLift,
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final width = constraints.maxWidth;
-              final tabWidth = (width - 88) / 4;
-              return Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  Positioned(
-                    top: NotchedNavigationMetrics.centerLift,
-                    left: 0,
-                    right: 0,
-                    height: NotchedNavigationMetrics.height,
-                    child: RepaintBoundary(
-                      child: CustomPaint(
-                        painter: _NotchedBarPainter(
-                          surface: tokens.surfaceHigh,
-                          outline: dark ? tokens.outline : AppTheme.transparent,
-                          shadow: tokens.navShadow,
-                        ),
+    final narrow = MediaQuery.sizeOf(context).width < 360;
+    final addSize = narrow ? 52.0 : 60.0;
+    return Padding(
+      padding: EdgeInsets.fromLTRB(16, 0, 16,
+        NotchedNavigationMetrics._safeBottom(context) +
+            NotchedNavigationMetrics.bottomMargin),
+      child: SizedBox(
+        height: NotchedNavigationMetrics.height,
+        child: Row(children: [
+          Expanded(child: DecoratedBox(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(32),
+              boxShadow: dark ? null : [BoxShadow(
+                color: tokens.text.withValues(alpha: .12),
+                blurRadius: 24, offset: const Offset(0, 8),
+              )],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(32),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: tokens.surface.withValues(alpha: .92),
+                    borderRadius: BorderRadius.circular(32),
+                    border: Border.all(color: tokens.line),
+                  ),
+                  child: LayoutBuilder(builder: (context, constraints) {
+                    final showLabel = constraints.maxWidth >= 244;
+                    final activeWidth = showLabel
+                        ? math.min(112.0,
+                            math.max(64.0, constraints.maxWidth - 3 * 48))
+                        : constraints.maxWidth / 4;
+                    final otherWidth = (constraints.maxWidth - activeWidth) / 3;
+                    return Stack(children: [
+                      AnimatedPositioned(
+                        duration: const Duration(milliseconds: 220),
+                        curve: Curves.easeOutCubic,
+                        left: selectedIndex * otherWidth,
+                        top: 8,
+                        width: activeWidth,
+                        height: 48,
+                        child: DecoratedBox(decoration: BoxDecoration(
+                          color: tokens.text,
+                          borderRadius: BorderRadius.circular(24),
+                        )),
                       ),
-                    ),
-                  ),
-                  Positioned(
-                    top: NotchedNavigationMetrics.centerLift,
-                    left: 0,
-                    right: 0,
-                    height: NotchedNavigationMetrics.height,
-                    child: Row(
-                      children: [
-                        _tab(
-                          0,
-                          'Home',
-                          Icons.home_outlined,
-                          Icons.home_rounded,
-                        ),
-                        _tab(
-                          1,
-                          'EMIs',
-                          Icons.account_balance_outlined,
-                          Icons.account_balance_rounded,
-                        ),
-                        const SizedBox(width: 88),
-                        _tab(
-                          2,
-                          'Money',
-                          Icons.payments_outlined,
-                          Icons.payments_rounded,
-                        ),
-                        _tab(3, 'Subs', Icons.autorenew, Icons.autorenew),
-                      ],
-                    ),
-                  ),
-                  AnimatedBuilder(
-                    animation: _dotPosition,
-                    builder: (context, _) => Positioned(
-                      top: NotchedNavigationMetrics.centerLift + 54,
-                      left: _dotCenter(_dotPosition.value, tabWidth) - 2.5,
-                      child: SizedBox.square(
-                        dimension: 5,
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: Theme.of(context).colorScheme.primary,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  Positioned(
-                    top: 0,
-                    left: (width - 60) / 2,
-                    child: Semantics(
-                      button: true,
-                      label: 'Ask FinKeep',
-                      child: GestureDetector(
-                        onTapDown: (_) => setState(() => _askPressed = true),
-                        onTapUp: (_) => setState(() => _askPressed = false),
-                        onTapCancel: () => setState(() => _askPressed = false),
-                        onTap: () {
-                          HapticFeedback.lightImpact();
-                          widget.onAsk();
-                        },
-                        child: AnimatedScale(
-                          scale: _askPressed ? 0.92 : 1,
-                          duration: MediaQuery.disableAnimationsOf(context)
-                              ? Duration.zero
-                              : const Duration(milliseconds: 140),
-                          curve: Curves.easeOut,
-                          child: Container(
-                            width: 60,
-                            height: 60,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              gradient: const LinearGradient(
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                                colors: [AppTheme.heroStart, AppTheme.heroEnd],
-                              ),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: AppTheme.heroStart.withValues(
-                                    alpha: 0.23,
-                                  ),
-                                  blurRadius: 16,
-                                  offset: const Offset(0, 5),
-                                ),
-                              ],
-                            ),
-                            child: const Icon(
-                              Icons.auto_awesome_rounded,
-                              size: 27,
-                              color: AppTheme.accent,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              );
+                      Row(children: [
+                        for (var index = 0; index < 4; index++)
+                          _tab(context, index,
+                            index == selectedIndex ? activeWidth : otherWidth,
+                            showLabel: showLabel),
+                      ]),
+                    ]);
+                  }),
+                ),
+              ),
+            ),
+          )),
+          SizedBox(width: narrow ? 6 : 8),
+          _DockActionButton(
+            label: 'Ask FinKeep',
+            size: 44,
+            icon: Icons.auto_awesome_outlined,
+            fill: tokens.surfaceAlt,
+            iconColor: tokens.text,
+            glow: tokens.text,
+            onTap: () {
+              HapticFeedback.lightImpact();
+              if (onAsk != null) {
+                onAsk!();
+              } else {
+                openAskFinKeep(context);
+              }
             },
           ),
-        ),
+          SizedBox(width: narrow ? 6 : 8),
+          _DockActionButton(
+            label: 'Add record',
+            size: addSize,
+            icon: Icons.add,
+            fill: tokens.text,
+            iconColor: tokens.surface,
+            glow: tokens.text,
+            rotateOnPress: true,
+            onTap: () {
+              HapticFeedback.lightImpact();
+              showAddMenu(context, tabIndex: selectedIndex);
+            },
+          ),
+        ]),
       ),
     );
   }
 
-  Widget _tab(int index, String label, IconData outline, IconData filled) {
-    final selected = widget.selectedIndex == index;
-    final active = Theme.of(context).brightness == Brightness.dark
-        ? Theme.of(context).colorScheme.primary
-        : AppTheme.heroEnd;
-    final inactive = Theme.of(context).brightness == Brightness.dark
-        ? AppTheme.colorsOf(context).secondaryText
-        : AppTheme.colorsOf(context).navInactive;
-    return Expanded(
-      child: Semantics(
+  Widget _tab(BuildContext context, int index, double width,
+      {required bool showLabel}) {
+    const labels = ['Home', 'EMIs', 'Money', 'Bills'];
+    final selected = selectedIndex == index;
+    final tokens = AppTheme.homePaletteOf(context);
+    final ink = selected ? tokens.text : tokens.text3;
+    return Semantics(
         button: true,
         selected: selected,
-        label: '$label tab${selected ? ', selected' : ''}',
-        child: InkWell(
-          borderRadius: BorderRadius.circular(16),
+        label: '${labels[index]} tab${selected ? ', selected' : ''}',
+        child: Tooltip(message: labels[index], child: InkWell(
           onTap: () {
+            if (selected) return;
             HapticFeedback.selectionClick();
-            widget.onSelected(index);
+            onSelected(index);
           },
-          child: SizedBox(
-            height: 64,
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                AnimatedScale(
-                  scale: selected ? 1.12 : 1,
-                  duration: MediaQuery.disableAnimationsOf(context)
-                      ? Duration.zero
-                      : const Duration(milliseconds: 200),
-                  curve: Curves.easeOut,
-                  child: Icon(
-                    selected ? filled : outline,
-                    size: 24,
-                    color: selected ? active : inactive,
-                  ),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOutCubic,
+            width: width,
+            height: 48,
+            alignment: Alignment.center,
+            margin: const EdgeInsets.symmetric(vertical: 8),
+            child: Row(mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min, children: [
+                Icon(_dockIcon(index, selected), size: 24,
+                  color: selected ? tokens.surface : ink),
+                if (selected && showLabel) ...[
+                  const SizedBox(width: 5),
+                  Flexible(child: Text(labels[index], maxLines: 1,
+                    overflow: TextOverflow.fade,
+                    style: TextStyle(fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: tokens.surface))),
+                ],
+              ]),
+          ),
+        )),
+    );
+  }
+}
+
+class _DockActionButton extends StatefulWidget {
+  const _DockActionButton({
+    required this.label,
+    required this.size,
+    required this.icon,
+    required this.fill,
+    required this.iconColor,
+    required this.glow,
+    required this.onTap,
+    this.rotateOnPress = false,
+  });
+
+  final String label;
+  final double size;
+  final IconData icon;
+  final Color fill, iconColor, glow;
+  final VoidCallback onTap;
+  final bool rotateOnPress;
+
+  @override
+  State<_DockActionButton> createState() => _DockActionButtonState();
+}
+
+class _DockActionButtonState extends State<_DockActionButton> {
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final duration = MediaQuery.disableAnimationsOf(context)
+        ? Duration.zero
+        : const Duration(milliseconds: 160);
+    return Semantics(
+      button: true,
+      label: widget.label,
+      child: Tooltip(
+        message: widget.label,
+        child: AnimatedScale(
+          scale: _pressed ? .90 : 1,
+          duration: duration,
+          curve: Curves.easeOutCubic,
+          child: AnimatedContainer(
+            duration: duration,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              boxShadow: [BoxShadow(
+                color: widget.glow.withValues(alpha: _pressed ? .30 : .16),
+                blurRadius: _pressed ? 22 : 16,
+                spreadRadius: _pressed ? 2 : 1,
+              )],
+            ),
+            child: Material(
+              color: widget.fill,
+              shape: const CircleBorder(),
+              child: InkWell(
+                customBorder: const CircleBorder(),
+                onHighlightChanged: (pressed) {
+                  if (mounted && _pressed != pressed) {
+                    setState(() => _pressed = pressed);
+                  }
+                },
+                onTap: widget.onTap,
+                child: SizedBox.square(
+                  dimension: widget.size,
+                  child: Center(child: AnimatedRotation(
+                    turns: _pressed
+                        ? (widget.rotateOnPress ? .125 : -.06)
+                        : 0,
+                    duration: duration,
+                    curve: Curves.easeOutCubic,
+                    child: Icon(widget.icon,
+                      size: widget.rotateOnPress ? 30 : 22,
+                      color: widget.iconColor),
+                  )),
                 ),
-                const SizedBox(height: 3),
-                Text(
-                  label,
-                  maxLines: 1,
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                    color: selected ? active : inactive,
-                  ),
-                ),
-                const SizedBox(height: 6),
-              ],
+              ),
             ),
           ),
         ),
       ),
     );
   }
-
-  double _dotCenter(double position, double tabWidth) {
-    final lower = position.floor().clamp(0, 3);
-    final upper = position.ceil().clamp(0, 3);
-    double center(int index) =>
-        index < 2 ? (index + 0.5) * tabWidth : (index + 0.5) * tabWidth + 88;
-    return center(lower) + (center(upper) - center(lower)) * (position - lower);
-  }
 }
 
-class _NotchedBarPainter extends CustomPainter {
-  _NotchedBarPainter({
-    required this.surface,
-    required this.outline,
-    required this.shadow,
-  });
-  final Color surface, outline, shadow;
-  Size? _pathSize;
-  Path? _path;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (_pathSize != size) {
-      _pathSize = size;
-      _path = _buildPath(size);
-    }
-    final path = _path!;
-    if (shadow.a > 0) {
-      canvas.drawPath(path.shift(const Offset(0, 7)), Paint()..color = shadow);
-      canvas.drawPath(path.shift(const Offset(0, 4)), Paint()..color = shadow);
-    }
-    canvas.drawPath(path, Paint()..color = surface);
-    if (outline.a > 0) {
-      canvas.drawPath(
-        path,
-        Paint()
-          ..color = outline
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1,
-      );
-    }
-  }
-
-  Path _buildPath(Size size) {
-    final width = size.width;
-    final height = size.height;
-    final center = width / 2;
-    final path = Path()
-      ..moveTo(28, 0)
-      ..lineTo(center - 58, 0)
-      ..cubicTo(center - 49, 0, center - 45, 4, center - 42, 12)
-      ..cubicTo(center - 34, 32, center - 20, 38, center, 38)
-      ..cubicTo(center + 20, 38, center + 34, 32, center + 42, 12)
-      ..cubicTo(center + 45, 4, center + 49, 0, center + 58, 0)
-      ..lineTo(width - 28, 0)
-      ..arcToPoint(Offset(width, 28), radius: const Radius.circular(28))
-      ..lineTo(width, height - 28)
-      ..arcToPoint(
-        Offset(width - 28, height),
-        radius: const Radius.circular(28),
-      )
-      ..lineTo(28, height)
-      ..arcToPoint(Offset(0, height - 28), radius: const Radius.circular(28))
-      ..lineTo(0, 28)
-      ..arcToPoint(const Offset(28, 0), radius: const Radius.circular(28))
-      ..close();
-    return path;
-  }
-
-  @override
-  bool shouldRepaint(covariant _NotchedBarPainter oldDelegate) =>
-      oldDelegate.surface != surface ||
-      oldDelegate.outline != outline ||
-      oldDelegate.shadow != shadow;
-}
+IconData _dockIcon(int index, bool selected) => switch (index) {
+  0 => selected ? Icons.home_rounded : Icons.home_outlined,
+  1 => selected
+      ? Icons.account_balance_rounded : Icons.account_balance_outlined,
+  2 => selected ? Icons.payments_rounded : Icons.payments_outlined,
+  _ => selected ? Icons.autorenew_rounded : Icons.autorenew_outlined,
+};

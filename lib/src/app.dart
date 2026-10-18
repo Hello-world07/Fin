@@ -32,21 +32,30 @@ class FinKeepApp extends ConsumerWidget {
       themeAnimationDuration: const Duration(milliseconds: 200),
       themeAnimationCurve: Curves.easeInOut,
       theme: AppTheme.light().copyWith(
-        extensions: [AppTheme.lightColors, _PrivacyTheme(privacy.enabled)],
+        extensions: [
+          AppTheme.lightColors,
+          AppTheme.lightHomePalette,
+          _PrivacyTheme(privacy.enabled),
+        ],
       ),
       darkTheme: AppTheme.dark().copyWith(
-        extensions: [AppTheme.darkColors, _PrivacyTheme(privacy.enabled)],
+        extensions: [
+          AppTheme.darkColors,
+          AppTheme.darkHomePalette,
+          _PrivacyTheme(privacy.enabled),
+        ],
       ),
       home: const IntroGate(child: AppShell()),
       builder: (context, child) {
         final dark = Theme.of(context).brightness == Brightness.dark;
-        final background = AppTheme.colorsOf(context).background;
         return AnnotatedRegion<SystemUiOverlayStyle>(
           value: SystemUiOverlayStyle(
             statusBarColor: AppTheme.transparent,
             statusBarIconBrightness: dark ? Brightness.light : Brightness.dark,
             statusBarBrightness: dark ? Brightness.dark : Brightness.light,
-            systemNavigationBarColor: background,
+            systemNavigationBarColor: AppTheme.transparent,
+            systemNavigationBarDividerColor: AppTheme.transparent,
+            systemNavigationBarContrastEnforced: false,
             systemNavigationBarIconBrightness: dark
                 ? Brightness.light
                 : Brightness.dark,
@@ -91,6 +100,7 @@ class _AppShellState extends ConsumerState<AppShell> {
   @override
   void initState() {
     super.initState();
+    unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
     LocalReminderService().setOpenHandler(_openReminder);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(
@@ -186,7 +196,6 @@ class _AppShellState extends ConsumerState<AppShell> {
         selectedIndex: index,
         onSelected: (value) =>
             ref.read(shellIndexProvider.notifier).state = value,
-        onAsk: () => openAskFinKeep(context),
       ),
     );
   }

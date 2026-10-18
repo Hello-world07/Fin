@@ -64,17 +64,44 @@ class HomeOverview {
   final int toCollect, toPay, emiRemaining;
   final DateTime? debtFreeDate;
 
-  int get balance => toCollect - toPay;
+  int get balance => toCollect - totalDebt;
   int get totalDebt => toPay + emiRemaining;
-  List<HomeDue> get next30 => dues
+  int get windowIncoming => weeks.fold(0, (sum, week) => sum + week.incoming);
+  int get windowOutgoing => weeks.fold(0, (sum, week) => sum + week.outgoing);
+  List<HomeDue> get windowDues => [for (final week in weeks) ...week.items];
+  List<HomeDue> get overdueDues =>
+      dues.where((due) => due.date.isBefore(today)).toList();
+  int get overdueAmount =>
+      overdueDues.fold(0, (sum, due) => sum + due.amount);
+  HomeDue? get heaviestDueDay {
+    final amounts = <DateTime, int>{};
+    final windowEnd = today.add(const Duration(days: 35));
+    for (final due in dues.where((due) =>
+        !due.incoming && !due.date.isBefore(today) && due.date.isBefore(windowEnd))) {
+      amounts.update(due.date, (value) => value + due.amount,
+          ifAbsent: () => due.amount);
+    }
+    if (amounts.isEmpty) return null;
+    final date = amounts.keys.reduce((a, b) {
+      final comparison = amounts[a]!.compareTo(amounts[b]!);
+      return comparison > 0 || (comparison == 0 && a.isBefore(b)) ? a : b;
+    });
+    return dues.firstWhere((due) => !due.incoming && due.date == date);
+  }
+  int get heaviestDueDayAmount => heaviestDueDay == null
+      ? 0
+      : dues.where((due) => !due.incoming && due.date == heaviestDueDay!.date)
+          .fold(0, (sum, due) => sum + due.amount);
+  List<HomeDue> get nextFiveWeeks => dues
       .where(
         (e) =>
             !e.incoming &&
             !e.date.isBefore(today) &&
-            e.date.isBefore(today.add(const Duration(days: 30))),
+            e.date.isBefore(today.add(const Duration(days: 35))),
       )
       .toList();
-  HomeDue? get nextToPay => dues.where((e) => !e.incoming).firstOrNull;
+  HomeDue? get nextToPay =>
+      windowDues.where((e) => !e.incoming).firstOrNull;
 
   static HomeOverview build(
     List<EmiDetail> allEmis,
@@ -167,6 +194,24 @@ class HomeOverview {
             .toList(),
       );
     });
+    assert(collect == money.where((detail) =>
+        detail.record.direction == MoneyDirection.given).fold<int>(0,
+        (sum, detail) => sum + detail.summary.remainingAmountPaise));
+    assert(pay == money.where((detail) =>
+        detail.record.direction == MoneyDirection.borrowed).fold<int>(0,
+        (sum, detail) => sum + detail.summary.remainingAmountPaise));
+    assert(remaining == emis.fold<int>(0,
+        (sum, detail) => sum + detail.remainingBalancePaise));
+    assert(pay + remaining == money.where((detail) =>
+        detail.record.direction == MoneyDirection.borrowed).fold<int>(0,
+        (sum, detail) => sum + detail.summary.remainingAmountPaise) +
+        emis.fold<int>(0, (sum, detail) => sum + detail.remainingBalancePaise));
+    assert(weeks.fold<int>(0, (sum, week) => sum + week.incoming) ==
+        dues.where((due) => due.incoming && !due.date.isBefore(today) && due.date.isBefore(end))
+            .fold<int>(0, (sum, due) => sum + due.amount));
+    assert(weeks.fold<int>(0, (sum, week) => sum + week.outgoing) ==
+        dues.where((due) => !due.incoming && !due.date.isBefore(today) && due.date.isBefore(end))
+            .fold<int>(0, (sum, due) => sum + due.amount));
     return HomeOverview(
       today: today,
       emis: emis,

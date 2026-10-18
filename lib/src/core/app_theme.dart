@@ -93,6 +93,157 @@ class AppColors extends ThemeExtension<AppColors> {
   }
 }
 
+@immutable
+class AppTone {
+  const AppTone(this.text, this.graphic, this.tint);
+
+  final Color text;
+  final Color graphic;
+  final Color tint;
+
+  AppTone lerp(AppTone other, double t) => AppTone(
+    Color.lerp(text, other.text, t)!,
+    Color.lerp(graphic, other.graphic, t)!,
+    Color.lerp(tint, other.tint, t)!,
+  );
+}
+
+@immutable
+class HomePalette extends ThemeExtension<HomePalette> {
+  const HomePalette({
+    required this.bg,
+    required this.surface,
+    required this.surfaceAlt,
+    required this.line,
+    required this.text,
+    required this.text2,
+    required this.text3,
+    required this.brand,
+    required this.onBrand,
+    required this.incoming,
+    required this.emiTone,
+    required this.owe,
+    required this.bills,
+    required this.out,
+    required this.heroStart,
+    required this.heroEnd,
+    required this.heroText,
+    required this.heroText2,
+    required this.heroOut,
+  });
+
+  final Color bg, surface, surfaceAlt, line, text, text2, text3;
+  final Color brand, onBrand, heroStart, heroEnd, heroText, heroText2, heroOut;
+  final AppTone incoming, emiTone, owe, bills, out;
+
+  Color get background => bg;
+  Color get outline => line;
+  Color get secondaryText => text2;
+  Color get selectedFill => incoming.tint;
+  Color get receive => incoming.graphic;
+  Color get pay => owe.graphic;
+  Color get emi => emiTone.graphic;
+  Color get subscriptions => bills.graphic;
+
+  AppColors get homeColors => AppColors(
+    background: bg,
+    surface: surface,
+    surfaceContainer: surfaceAlt,
+    surfaceHigh: surface,
+    outline: line,
+    text: text,
+    secondaryText: text2,
+    mutedText: text3,
+    fieldFill: surfaceAlt,
+    selectedFill: incoming.tint,
+    receive: incoming.graphic,
+    pay: owe.graphic,
+    emi: emiTone.graphic,
+    subscriptions: bills.graphic,
+    lime: brand,
+    navInactive: text3,
+    navShadow: AppTheme.transparent,
+  );
+
+  @override
+  HomePalette copyWith({
+    Color? bg, surface, surfaceAlt, line, text, text2, text3,
+    Color? brand, onBrand, heroStart, heroEnd, heroText, heroText2, heroOut,
+    AppTone? incoming, emiTone, owe, bills, out,
+  }) => HomePalette(
+    bg: bg ?? this.bg,
+    surface: surface ?? this.surface,
+    surfaceAlt: surfaceAlt ?? this.surfaceAlt,
+    line: line ?? this.line,
+    text: text ?? this.text,
+    text2: text2 ?? this.text2,
+    text3: text3 ?? this.text3,
+    brand: brand ?? this.brand,
+    onBrand: onBrand ?? this.onBrand,
+    incoming: incoming ?? this.incoming,
+    emiTone: emiTone ?? this.emiTone,
+    owe: owe ?? this.owe,
+    bills: bills ?? this.bills,
+    out: out ?? this.out,
+    heroStart: heroStart ?? this.heroStart,
+    heroEnd: heroEnd ?? this.heroEnd,
+    heroText: heroText ?? this.heroText,
+    heroText2: heroText2 ?? this.heroText2,
+    heroOut: heroOut ?? this.heroOut,
+  );
+
+  @override
+  HomePalette lerp(ThemeExtension<HomePalette>? other, double t) {
+    if (other is! HomePalette) return this;
+    Color blend(Color a, Color b) => Color.lerp(a, b, t)!;
+    return HomePalette(
+      bg: blend(bg, other.bg),
+      surface: blend(surface, other.surface),
+      surfaceAlt: blend(surfaceAlt, other.surfaceAlt),
+      line: blend(line, other.line),
+      text: blend(text, other.text),
+      text2: blend(text2, other.text2),
+      text3: blend(text3, other.text3),
+      brand: blend(brand, other.brand),
+      onBrand: blend(onBrand, other.onBrand),
+      incoming: incoming.lerp(other.incoming, t),
+      emiTone: emiTone.lerp(other.emiTone, t),
+      owe: owe.lerp(other.owe, t),
+      bills: bills.lerp(other.bills, t),
+      out: out.lerp(other.out, t),
+      heroStart: blend(heroStart, other.heroStart),
+      heroEnd: blend(heroEnd, other.heroEnd),
+      heroText: blend(heroText, other.heroText),
+      heroText2: blend(heroText2, other.heroText2),
+      heroOut: blend(heroOut, other.heroOut),
+    );
+  }
+}
+
+@immutable
+class NetCardPalette {
+  const NetCardPalette({
+    required this.surface,
+    required this.border,
+    required this.text,
+    required this.muted,
+    required this.greenBar,
+    required this.greenText,
+    required this.redBar,
+    required this.redText,
+    required this.mutedRedBar,
+    required this.lentBg,
+    required this.borrowedBg,
+    required this.debtBg,
+    required this.selectedBg,
+    required this.shadow,
+  });
+
+  final Color surface, border, text, muted;
+  final Color greenBar, greenText, redBar, redText, mutedRedBar;
+  final Color lentBg, borrowedBg, debtBg, selectedBg, shadow;
+}
+
 class AppTheme {
   static const fontFamily = 'Plus Jakarta Sans';
   static const motionDuration = Duration(milliseconds: 225);
@@ -110,7 +261,20 @@ class AppTheme {
   static const mutedText = Color(0xFF64748B);
   static const fieldFill = Color(0xFFF0F4F9);
   static const selectedFill = Color(0xFFECFDF5);
-  static const darkBackground = Color(0xFF0E1412);
+  static const darkBackground = Color(0xFF0B1110);
+  static const darkPrimary = Color(0xFF3DDC97);
+  static const darkOnPrimary = Color(0xFF04251A);
+  static const darkDateAmber = Color(0xFFFBBF24);
+  static const darkDateMuted = Color(0xFF9AA7A1);
+  static const darkDateOverdue = Color(0xFFFCA5A5);
+  static const darkUnpaid = Color(0xFFFBBF24);
+  static const darkUnpaidFill = Color(0xFF3B2A07);
+  static const darkPartial = Color(0xFF93C5FD);
+  static const darkPartialFill = Color(0xFF1E3A5F);
+  static const darkOverdue = Color(0xFFFCA5A5);
+  static const darkOverdueFill = Color(0xFF4A1D1D);
+  static const darkSettled = Color(0xFF86EFAC);
+  static const darkSettledFill = Color(0xFF123524);
   static const onHero = Color(0xFFFFFFFF);
   static const onHeroMuted = Color(0xB3FFFFFF);
   static const transparent = Color(0x00000000);
@@ -136,26 +300,98 @@ class AppTheme {
   );
   static const darkColors = AppColors(
     background: darkBackground,
-    surface: Color(0xFF151D1A),
-    surfaceContainer: Color(0xFF1C2622),
-    surfaceHigh: Color(0xFF243029),
-    outline: Color(0xFF33413B),
+    surface: Color(0xFF121A17),
+    surfaceContainer: Color(0xFF18231F),
+    surfaceHigh: Color(0xFF18231F),
+    outline: Color(0xFF24312C),
     text: Color(0xFFE8EEEB),
-    secondaryText: Color(0xFFA9B7B1),
+    secondaryText: Color(0xFF9AA7A1),
     mutedText: Color(0xFF7F8E88),
     fieldFill: Color(0xFF1C2622),
     selectedFill: Color(0xFF12372A),
-    receive: Color(0xFF34D399),
-    pay: Color(0xFFFB7185),
+    receive: Color(0xFF4ADE80),
+    pay: Color(0xFFF87171),
     emi: Color(0xFFFBBF24),
     subscriptions: Color(0xFFA78BFA),
     lime: accent,
-    navInactive: Color(0xFF7F8E88),
+    navInactive: Color(0xFF9AA7A1),
     navShadow: transparent,
   );
 
+  static const lightHomePalette = HomePalette(
+    bg: Color(0xFFF5F6F8),
+    surface: Color(0xFFFFFFFF),
+    surfaceAlt: Color(0xFFEEF0F4),
+    line: Color(0xFFE4E7EC),
+    text: Color(0xFF0E1525),
+    text2: Color(0xFF4B5565),
+    text3: Color(0xFF667085),
+    brand: Color(0xFF0A7C5C),
+    onBrand: Color(0xFFFFFFFF),
+    incoming: AppTone(Color(0xFF047857), Color(0xFF059669), Color(0xFFE7F6EF)),
+    emiTone: AppTone(Color(0xFFB45309), Color(0xFFD97706), Color(0xFFFEF3E2)),
+    owe: AppTone(Color(0xFF4F46E5), Color(0xFF4F46E5), Color(0xFFECEBFD)),
+    bills: AppTone(Color(0xFF0369A1), Color(0xFF0284C7), Color(0xFFE6F3FA)),
+    out: AppTone(Color(0xFFBE123C), Color(0xFFE11D48), Color(0xFFFDECEF)),
+    heroStart: Color(0xFF0E1525),
+    heroEnd: Color(0xFF1B2640),
+    heroText: Color(0xFFFFFFFF),
+    heroText2: Color(0xFFB6C0D2),
+    heroOut: Color(0xFFCBD5E1),
+  );
+  static const darkHomePalette = HomePalette(
+    bg: Color(0xFF0B1020),
+    surface: Color(0xFF121A2C),
+    surfaceAlt: Color(0xFF1A2338),
+    line: Color(0xFF243049),
+    text: Color(0xFFF2F5FA),
+    text2: Color(0xFFA9B4C8),
+    text3: Color(0xFF8491A8),
+    brand: Color(0xFF34D399),
+    onBrand: Color(0xFF06281F),
+    incoming: AppTone(Color(0xFF34D399), Color(0xFF34D399), Color(0xFF12302F)),
+    emiTone: AppTone(Color(0xFFFBBF24), Color(0xFFFBBF24), Color(0xFF2E2A1C)),
+    owe: AppTone(Color(0xFF818CF8), Color(0xFF818CF8), Color(0xFF1E2347)),
+    bills: AppTone(Color(0xFF38BDF8), Color(0xFF38BDF8), Color(0xFF0F2A3A)),
+    out: AppTone(Color(0xFFFB7185), Color(0xFFFB7185), Color(0xFF3A1A24)),
+    heroStart: Color(0xFF1A2338),
+    heroEnd: Color(0xFF121A2C),
+    heroText: Color(0xFFFFFFFF),
+    heroText2: Color(0xFFB6C0D2),
+    heroOut: Color(0xFFCBD5E1),
+  );
+
+  static const lightNetCard = NetCardPalette(
+    surface: Color(0xFFFFFFFF), border: Color(0xFFE6E8EF),
+    text: Color(0xFF0F1320), muted: Color(0xFF667085),
+    greenBar: Color(0xFF12B981), greenText: Color(0xFF047857),
+    redBar: Color(0xFFF43F5E), redText: Color(0xFFBE123C),
+    mutedRedBar: Color(0xFFFDA4B4),
+    lentBg: Color(0xFFE8F8F1), borrowedBg: Color(0xFFFFF1F3),
+    debtBg: Color(0xFFF6F7FA), selectedBg: Color(0xFFFFF1F3),
+    shadow: Color(0x14101828),
+  );
+
+  static const darkNetCard = NetCardPalette(
+    surface: Color(0xFF151A22), border: Color(0x14FFFFFF),
+    text: Color(0xFFF4F6FA), muted: Color(0xFF8F98A8),
+    greenBar: Color(0xFF4ADE9A), greenText: Color(0xFF4ADE9A),
+    redBar: Color(0xFFFF6B81), redText: Color(0xFFFF6B81),
+    mutedRedBar: Color(0x80FF6B81),
+    lentBg: Color(0x1F4ADE9A), borrowedBg: Color(0x1FFF6B81),
+    debtBg: Color(0x0AFFFFFF), selectedBg: Color(0x1AFF6B81),
+    shadow: Color(0x40000000),
+  );
+
+  static NetCardPalette netCardOf(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark
+          ? darkNetCard : lightNetCard;
+
   static AppColors colorsOf(BuildContext context) =>
       Theme.of(context).extension<AppColors>() ?? lightColors;
+
+  static HomePalette homePaletteOf(BuildContext context) =>
+      Theme.of(context).extension<HomePalette>() ?? lightHomePalette;
 
   static Color heroTextOf(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark
@@ -174,12 +410,13 @@ class AppTheme {
   static ThemeData _base(Brightness brightness) {
     final dark = brightness == Brightness.dark;
     final tokens = dark ? darkColors : lightColors;
+    final home = dark ? darkHomePalette : lightHomePalette;
     final scheme = ColorScheme.fromSeed(seedColor: seed, brightness: brightness)
         .copyWith(
-          primary: dark ? const Color(0xFF3DDC97) : null,
-          onPrimary: dark ? const Color(0xFF04261B) : null,
+          primary: dark ? darkPrimary : null,
+          onPrimary: dark ? darkOnPrimary : null,
           secondary: dark ? accent : null,
-          onSecondary: dark ? const Color(0xFF04261B) : null,
+          onSecondary: dark ? darkOnPrimary : null,
           secondaryContainer: dark ? tokens.selectedFill : null,
           onSecondaryContainer: dark ? tokens.text : null,
           surface: dark ? tokens.surface : null,
@@ -206,8 +443,8 @@ class AppTheme {
       useMaterial3: true,
       fontFamily: fontFamily,
       colorScheme: scheme,
-      extensions: [tokens],
-      scaffoldBackgroundColor: tokens.background,
+      extensions: [tokens, home],
+      scaffoldBackgroundColor: home.bg,
       canvasColor: dark ? tokens.background : null,
       disabledColor: dark ? tokens.mutedText : null,
       appBarTheme: AppBarTheme(
@@ -218,7 +455,7 @@ class AppTheme {
           statusBarColor: transparent,
           statusBarIconBrightness: dark ? Brightness.light : Brightness.dark,
           statusBarBrightness: dark ? Brightness.dark : Brightness.light,
-          systemNavigationBarColor: tokens.background,
+          systemNavigationBarColor: home.bg,
           systemNavigationBarIconBrightness: dark
               ? Brightness.light
               : Brightness.dark,
@@ -312,6 +549,8 @@ class AppTheme {
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
           minimumSize: const Size(48, 48),
+          backgroundColor: dark ? darkPrimary : null,
+          foregroundColor: dark ? darkOnPrimary : null,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         ),
       ),

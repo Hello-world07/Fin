@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:drift/drift.dart' hide Column;
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -42,13 +41,13 @@ String _moneyPhoneKey(String name) =>
     'money.phone.${name.trim().toLowerCase()}';
 String _moneyRemindedKey(int id) => 'money.reminded.$id';
 
-String _moneyReminderMessage(MoneyRecordDetail detail) {
+String _moneyReminderMessage(MoneyRecordDetail detail, {int? amountPaise}) {
   final record = detail.record;
   final amount = NumberFormat.currency(
     locale: 'en_IN',
     symbol: '₹',
-    decimalDigits: detail.summary.remainingAmountPaise % 100 == 0 ? 0 : 2,
-  ).format(detail.summary.remainingAmountPaise / 100);
+    decimalDigits: (amountPaise ?? detail.summary.remainingAmountPaise) % 100 == 0 ? 0 : 2,
+  ).format((amountPaise ?? detail.summary.remainingAmountPaise) / 100);
   final date = record.dueDate == null
       ? null
       : DateFormat('dd MMM').format(record.dueDate!);
@@ -85,6 +84,7 @@ String _whatsAppDigits(String phone) {
 Future<void> _shareMoneyReminder(
   BuildContext context,
   MoneyRecordDetail detail,
+  {int? amountPaise}
 ) async {
   final db = ProviderScope.containerOf(context).read(databaseProvider);
   final phone = await _savedMoneyPhone(db, detail.record.personName);
@@ -105,7 +105,7 @@ Future<void> _shareMoneyReminder(
     return;
   }
   final digits = _whatsAppDigits(phone);
-  final message = _moneyReminderMessage(detail);
+  final message = _moneyReminderMessage(detail, amountPaise: amountPaise);
   final uri = Uri.parse(
     'https://wa.me/$digits?text=${Uri.encodeComponent(message)}',
   );
@@ -162,6 +162,12 @@ Future<void> _shareMoneyReminder(
   );
 }
 
+Future<void> shareMoneyReminder(
+  BuildContext context,
+  MoneyRecordDetail detail,
+  {int? amountPaise}
+) => _shareMoneyReminder(context, detail, amountPaise: amountPaise);
+
 String? _moneyAmountText(String? value) {
   final error = amountText(value);
   if (error != null) return error;
@@ -173,18 +179,11 @@ String? _moneyAmountText(String? value) {
 }
 
 String _moneyRelativeDue(DateTime due, DateTime today) {
-  final days = DateUtils.dateOnly(due)
-      .difference(DateUtils.dateOnly(today))
-      .inDays;
-  if (days == 0) return 'Today';
-  if (days == 1) return 'Tomorrow';
-  if (days > 1) return 'in $days days';
-  final overdue = -days;
-  return 'Overdue $overdue ${overdue == 1 ? 'day' : 'days'}';
+  return formatDayDistance(due, today);
 }
 
 String _moneyDatedDue(DateTime due, DateTime today) =>
-    '${DateFormat(due.year == today.year ? 'd MMM' : 'd MMM y').format(due)} · ${_moneyRelativeDue(due, today)}';
+    formatDatedDistance(due, today);
 
 class _PersonBalance {
   _PersonBalance(this.name, this.records);
@@ -499,7 +498,6 @@ class _MoneyScreenState extends ConsumerState<MoneyScreen> {
     MoneyDirection.borrowed: '',
   };
   Timer? _searchDebounce;
-  bool _fabVisible = true;
   bool _showScrolledTotal = false;
   final _scrolledPastTotal = <MoneyDirection, bool>{};
   final _remindersInFlight = <int>{};
@@ -803,11 +801,6 @@ class _MoneyScreenState extends ConsumerState<MoneyScreen> {
           if (past != _showScrolledTotal) {
             setState(() => _showScrolledTotal = past);
           }
-          if (notification is UserScrollNotification) {
-            final visible = notification.metrics.extentAfter > 0 &&
-                notification.direction != ScrollDirection.reverse;
-            if (visible != _fabVisible) setState(() => _fabVisible = visible);
-          }
           return false;
         },
         child: Stack(
@@ -1060,10 +1053,7 @@ class _MoneyScreenState extends ConsumerState<MoneyScreen> {
             ),
             SliverToBoxAdapter(
               child: SizedBox(
-                height:
-                    NotchedNavigationMetrics.height +
-                    NotchedNavigationMetrics.fabHeight +
-                    24,
+                height: NotchedNavigationMetrics.contentPadding(context),
               ),
             ),
           ],
@@ -1097,30 +1087,6 @@ class _MoneyScreenState extends ConsumerState<MoneyScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      floatingActionButton: MediaQuery.viewInsetsOf(context).bottom > 0
-          ? null
-          : Padding(
-              padding: const EdgeInsets.only(
-                bottom: NotchedNavigationMetrics.fabBottomPadding,
-              ),
-              child: AnimatedOpacity(
-                opacity: _fabVisible ? 1 : 0,
-                duration: const Duration(milliseconds: 200),
-                child: IgnorePointer(
-                  ignoring: !_fabVisible,
-                  child: FloatingActionButton(
-                    backgroundColor: _moneyAccent(context),
-                    foregroundColor: Colors.white,
-                    tooltip: 'Add money record',
-                    onPressed: () => openFinanceSheet(
-                      context,
-                      MoneyFormSheet(initialDirection: _direction),
-                    ),
-                    child: const Icon(Icons.add),
-                  ),
-                ),
-              ),
-            ),
       body: AsyncView(
         value: ref.watch(moneyRecordsProvider),
         builder: (items) {
@@ -1147,10 +1113,9 @@ class _MoneyScreenState extends ConsumerState<MoneyScreen> {
                               ),
                               Tooltip(
                                 message: 'Ask AI',
-                                child: TextButton.icon(
+                                child: IconButton.filledTonal(
                                   onPressed: () => openAskFinKeep(context),
                                   icon: const Icon(Icons.auto_awesome, size: 18),
-                                  label: const Text('Ask AI'),
                                 ),
                               ),
                               const SectionReminderButton(
@@ -1178,7 +1143,7 @@ class _MoneyScreenState extends ConsumerState<MoneyScreen> {
                             selected: {_direction},
                             filled: true,
                             selectedBackground: _moneyAccent(context),
-                            selectedForeground: Colors.white,
+                            selectedForeground: Theme.of(context).colorScheme.onPrimary,
                             onSelectionChanged: (value) =>
                                 _selectDirection(value.single),
                           ),
@@ -1207,7 +1172,6 @@ class _MoneyScreenState extends ConsumerState<MoneyScreen> {
                     setState(() {
                       _direction = next;
                       _showScrolledTotal = _scrolledPastTotal[next] ?? false;
-                      _fabVisible = true;
                     });
                   },
                   children: [
@@ -1288,7 +1252,11 @@ class _MoneyHero extends StatelessWidget {
       margin: const EdgeInsets.symmetric(horizontal: 16),
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: const Color(0xFF17493B),
+        color: Theme.of(context).brightness == Brightness.dark
+            ? null : const Color(0xFF17493B),
+        gradient: Theme.of(context).brightness == Brightness.dark
+            ? const LinearGradient(colors: [
+                Color(0xFF17493B), Color(0xFF0F3328)]) : null,
         borderRadius: BorderRadius.circular(28),
       ),
       child: Column(
@@ -1711,12 +1679,19 @@ class _MoneyInsightSheetState extends State<_MoneyInsightSheet> {
 }
 
 class _MoneyRemindButton extends StatelessWidget {
-  const _MoneyRemindButton({required this.onPressed});
+  const _MoneyRemindButton({required this.onPressed, required this.filled});
 
   final VoidCallback onPressed;
+  final bool filled;
 
   @override
-  Widget build(BuildContext context) => Semantics(
+  Widget build(BuildContext context) {
+    final accent = _moneyAccent(context);
+    final foreground = filled
+        ? Theme.of(context).brightness == Brightness.dark
+            ? AppTheme.darkOnPrimary : Colors.white
+        : accent;
+    return Semantics(
     label: 'Remind on WhatsApp',
     button: true,
     child: Material(
@@ -1730,15 +1705,16 @@ class _MoneyRemindButton extends StatelessWidget {
             height: 36,
             padding: const EdgeInsets.symmetric(horizontal: 12),
             decoration: BoxDecoration(
-              color: _moneyAccent(context),
+              color: filled ? accent : Colors.transparent,
               borderRadius: BorderRadius.circular(18),
+              border: filled ? null : Border.all(color: accent),
             ),
-            child: const Row(
+            child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.phone_in_talk_outlined, size: 17, color: Colors.white),
-                SizedBox(width: 5),
-                Text('Remind', style: TextStyle(color: Colors.white)),
+                Icon(Icons.phone_in_talk_outlined, size: 17, color: foreground),
+                const SizedBox(width: 5),
+                Text('Remind', style: TextStyle(color: foreground)),
               ],
             ),
           ),
@@ -1746,6 +1722,7 @@ class _MoneyRemindButton extends StatelessWidget {
       ),
     ),
   );
+  }
 }
 
 class _MoneyPersonTile extends StatefulWidget {
@@ -1780,16 +1757,16 @@ class _MoneyPersonTileState extends State<_MoneyPersonTile> {
     final name = displayName(person.name);
     final due = person.nearestDue;
     final statusRed = dark
-        ? AppTheme.colorsOf(context).pay
+        ? AppTheme.darkOverdue
         : const Color(0xFFB91C1C);
-    final dateRed = dark ? const Color(0xFFFDA4AF) : const Color(0xFFB42318);
+    final dateRed = dark ? AppTheme.darkDateOverdue : const Color(0xFFB42318);
     final statusAmber = dark
-        ? AppTheme.colorsOf(context).emi
+        ? AppTheme.darkUnpaid
         : const Color(0xFF9A5700);
-    final dateAmber = dark ? const Color(0xFFFCD34D) : const Color(0xFFB54708);
-    final blue = dark ? const Color(0xFF93C5FD) : const Color(0xFF1D4ED8);
+    final dateAmber = dark ? AppTheme.darkDateAmber : const Color(0xFFB54708);
+    final blue = dark ? AppTheme.darkPartial : const Color(0xFF1D4ED8);
     final statusColor = person.remaining == 0
-        ? _moneyAccent(context)
+        ? (dark ? AppTheme.darkSettled : _moneyAccent(context))
         : person.overdue
         ? statusRed
         : person.repaid > 0
@@ -1803,7 +1780,12 @@ class _MoneyPersonTileState extends State<_MoneyPersonTile> {
         ? 'Partly paid'
         : 'Unpaid';
     final statusFill = dark
-        ? statusColor.withValues(alpha: 0.18)
+        ? switch (status) {
+            'Settled' => AppTheme.darkSettledFill,
+            'Overdue' => AppTheme.darkOverdueFill,
+            'Partly paid' => AppTheme.darkPartialFill,
+            _ => AppTheme.darkUnpaidFill,
+          }
         : switch (status) {
             'Settled' => const Color(0xFFE7F5EE),
             'Overdue' => const Color(0xFFFEECEB),
@@ -2016,7 +1998,7 @@ class _MoneyPersonTileState extends State<_MoneyPersonTile> {
                         Text(
                           widget.lastReminded == null
                               ? 'Not reminded yet'
-                              : 'Reminded ${DateUtils.dateOnly(DateTime.now()).difference(DateUtils.dateOnly(widget.lastReminded!)).inDays == 0 ? 'today' : '${DateUtils.dateOnly(DateTime.now()).difference(DateUtils.dateOnly(widget.lastReminded!)).inDays} days ago'}',
+                              : remindedAgo(widget.lastReminded!, DateTime.now()),
                           style: secondary,
                         ),
                     ],
@@ -2024,7 +2006,11 @@ class _MoneyPersonTileState extends State<_MoneyPersonTile> {
                 ),
                 if (widget.onRemind != null) ...[
                   const SizedBox(width: 8),
-                  _MoneyRemindButton(onPressed: widget.onRemind!),
+                  _MoneyRemindButton(
+                    onPressed: widget.onRemind!,
+                    filled: person.overdue ||
+                        (due != null && DateUtils.isSameDay(due, DateTime.now())),
+                  ),
                 ],
               ],
             ),
@@ -3440,14 +3426,16 @@ class _MoneyFormSheetState extends ConsumerState<MoneyFormSheet> {
                       ],
                       selected: {_direction},
                       filled: true,
-                      selectedBackground: _direction == MoneyDirection.given
-                          ? financeSelectedFill(context)
-                          : AppTheme.colorsOf(
-                              context,
-                            ).pay.withValues(alpha: 0.12),
-                      selectedForeground: _direction == MoneyDirection.given
-                          ? Theme.of(context).colorScheme.primary
-                          : AppTheme.colorsOf(context).pay,
+                      selectedBackground: Theme.of(context).brightness == Brightness.dark
+                          ? AppTheme.darkPrimary
+                          : _direction == MoneyDirection.given
+                              ? financeSelectedFill(context)
+                              : AppTheme.colorsOf(context).pay.withValues(alpha: 0.12),
+                      selectedForeground: Theme.of(context).brightness == Brightness.dark
+                          ? AppTheme.darkOnPrimary
+                          : _direction == MoneyDirection.given
+                              ? Theme.of(context).colorScheme.primary
+                              : AppTheme.colorsOf(context).pay,
                       onSelectionChanged: widget.record == null
                           ? (value) => setState(() => _direction = value.single)
                           : null,

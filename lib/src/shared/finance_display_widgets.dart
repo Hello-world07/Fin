@@ -18,12 +18,16 @@ class AmountText extends StatefulWidget {
     this.style,
     this.maxLines,
     this.compact = false,
+    this.maskWithSymbol = false,
+    this.symbolStyle,
   });
 
   final int paise;
   final TextStyle? style;
   final int? maxLines;
   final bool compact;
+  final bool maskWithSymbol;
+  final TextStyle? symbolStyle;
 
   @override
   State<AmountText> createState() => _AmountTextState();
@@ -119,19 +123,36 @@ class _AmountTextState extends State<AmountText> {
     },
     child: ValueListenableBuilder<AmountFormatter>(
       valueListenable: activeAmountFormatter,
-      builder: (context, _, _) => Text(
-        _revealed
+      builder: (context, formatter, _) {
+        final value = _revealed
             ? (widget.compact
                   ? formatCompactMoneyUnmasked(widget.paise)
                   : formatMoneyUnmasked(widget.paise))
-            : (widget.compact && !privacyAmountsHidden
+            : (privacyAmountsHidden && widget.maskWithSymbol
+                  ? '${formatter.symbol} ••••'
+                  : widget.compact && !privacyAmountsHidden
                   ? formatCompactMoneyUnmasked(widget.paise)
-                  : formatMoney(widget.paise)),
-        style: (widget.style ?? Theme.of(context).textTheme.bodyMedium)
-            ?.copyWith(fontFeatures: const [FontFeature.tabularFigures()]),
-        maxLines: widget.maxLines,
-        overflow: widget.maxLines == null ? null : TextOverflow.ellipsis,
-      ),
+                  : formatMoney(widget.paise));
+        final style = (widget.style ?? Theme.of(context).textTheme.bodyMedium)
+            ?.copyWith(fontFeatures: const [FontFeature.tabularFigures()]);
+        final symbol = formatter.symbol == 'AED' ? 'AED ' : formatter.symbol;
+        final symbolAt = value.startsWith('-') ? 1 : 0;
+        if (widget.symbolStyle != null &&
+            value.substring(symbolAt).startsWith(symbol)) {
+          return Text.rich(
+            TextSpan(children: [
+              if (symbolAt == 1) const TextSpan(text: '-'),
+              TextSpan(text: symbol, style: widget.symbolStyle),
+              TextSpan(text: value.substring(symbolAt + symbol.length)),
+            ]),
+            style: style,
+            maxLines: widget.maxLines,
+            overflow: widget.maxLines == null ? null : TextOverflow.ellipsis,
+          );
+        }
+        return Text(value, style: style, maxLines: widget.maxLines,
+          overflow: widget.maxLines == null ? null : TextOverflow.ellipsis);
+      },
     ),
   );
 }
