@@ -11,6 +11,7 @@ import 'core/notifications.dart';
 import 'domain/reminder_schedule.dart';
 import 'features/dashboard/dashboard_screen.dart';
 import 'features/emis/emis_screen.dart';
+import 'features/emis/emi_overview_screen.dart';
 import 'features/money/money_screen.dart';
 import 'features/subscriptions/subscriptions_screen.dart';
 import 'features/onboarding/intro_screen.dart';
@@ -92,7 +93,7 @@ class _AppShellState extends ConsumerState<AppShell> {
 
   Widget _screenFor(int index) => switch (index) {
     0 => const DashboardScreen(),
-    1 => const EmisScreen(),
+    1 => const EmiOverviewScreen(),
     2 => const MoneyScreen(),
     _ => const SubscriptionsScreen(),
   };

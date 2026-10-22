@@ -12,6 +12,8 @@ import '../data/repositories.dart';
 import '../domain/enums.dart';
 import '../features/assistant/ask_finkeep_sheet.dart';
 import '../features/emis/emis_screen.dart';
+import '../features/emis/emi_entry_flow.dart';
+import '../features/emis/emi_overview_screen.dart';
 import '../features/money/money_screen.dart';
 import '../features/subscriptions/subscriptions_screen.dart';
 import 'calculator_sheet.dart';
@@ -50,6 +52,8 @@ enum _MenuAction {
   moneyLent,
   moneyBorrowed,
   emi,
+  personalEmi,
+  friendEmi,
   subscription,
   calculator,
   markEmiPaid,
@@ -67,7 +71,16 @@ typedef _MenuItem = ({_MenuAction action, String label, IconData icon});
 
 List<_MenuItem> _menuFor(int tab) => switch (tab) {
   1 => [
-    (action: _MenuAction.emi, label: 'Add EMI', icon: Icons.add_circle_outline),
+    (
+      action: _MenuAction.personalEmi,
+      label: 'My personal loan or credit card',
+      icon: Icons.account_balance_outlined,
+    ),
+    (
+      action: _MenuAction.friendEmi,
+      label: 'Money I gave to someone',
+      icon: Icons.person_outline_rounded,
+    ),
     (
       action: _MenuAction.markEmiPaid,
       label: 'Mark installment paid',
@@ -323,7 +336,14 @@ Future<void> _runMenuAction(BuildContext context, _MenuAction action) async {
           const MoneyFormSheet(initialDirection: MoneyDirection.borrowed),
         );
       case _MenuAction.emi:
-        openFinanceSheet(context, const EmiFormSheet());
+        await openEmiEntryFlow(context);
+      case _MenuAction.personalEmi:
+        await openFinanceSheet(context, const EmiFormSheet());
+      case _MenuAction.friendEmi:
+        await openFinanceSheet(
+          context,
+          const EmiFormSheet(category: EmiCategory.givenToFriends),
+        );
       case _MenuAction.subscription:
         openFinanceSheet(context, const SubscriptionFormSheet());
       case _MenuAction.calculator:
@@ -331,7 +351,7 @@ Future<void> _runMenuAction(BuildContext context, _MenuAction action) async {
       case _MenuAction.markEmiPaid ||
           _MenuAction.editEmi ||
           _MenuAction.deleteEmi:
-        final details = await container.read(emiDetailsProvider.future);
+        final details = await container.read(allEmiDetailsProvider.future);
         if (!context.mounted) return;
         final selected = await _pickRecord<EmiDetail>(
           context,
@@ -350,11 +370,14 @@ Future<void> _runMenuAction(BuildContext context, _MenuAction action) async {
         );
         if (selected == null || !context.mounted) return;
         if (action == _MenuAction.editEmi) {
-          openFinanceSheet(context, EmiFormSheet(emi: selected.emi));
+          openFinanceSheet(
+            context,
+            EmiFormSheet(emi: selected.emi, category: selected.category),
+          );
         } else if (action == _MenuAction.markEmiPaid) {
           Navigator.of(context).push(
             MaterialPageRoute<void>(
-              builder: (_) => EmiDetailScreen(selected.emi.id),
+              builder: (_) => EmiAgreementDetailScreen(selected.emi.id),
             ),
           );
         } else if (await _confirmDelete(context, selected.emi.name)) {
@@ -515,109 +538,144 @@ class NotchedNavigationBar extends StatelessWidget {
     final narrow = MediaQuery.sizeOf(context).width < 360;
     final addSize = narrow ? 52.0 : 60.0;
     return Padding(
-      padding: EdgeInsets.fromLTRB(16, 0, 16,
+      padding: EdgeInsets.fromLTRB(
+        16,
+        0,
+        16,
         NotchedNavigationMetrics._safeBottom(context) +
-            NotchedNavigationMetrics.bottomMargin),
+            NotchedNavigationMetrics.bottomMargin,
+      ),
       child: SizedBox(
         height: NotchedNavigationMetrics.height,
-        child: Row(children: [
-          Expanded(child: DecoratedBox(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(32),
-              boxShadow: dark ? null : [BoxShadow(
-                color: tokens.text.withValues(alpha: .12),
-                blurRadius: 24, offset: const Offset(0, 8),
-              )],
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(32),
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: tokens.surface.withValues(alpha: .92),
-                    borderRadius: BorderRadius.circular(32),
-                    border: Border.all(color: tokens.line),
-                  ),
-                  child: LayoutBuilder(builder: (context, constraints) {
-                    final showLabel = constraints.maxWidth >= 244;
-                    final activeWidth = showLabel
-                        ? math.min(112.0,
-                            math.max(64.0, constraints.maxWidth - 3 * 48))
-                        : constraints.maxWidth / 4;
-                    final otherWidth = (constraints.maxWidth - activeWidth) / 3;
-                    return Stack(children: [
-                      AnimatedPositioned(
-                        duration: const Duration(milliseconds: 220),
-                        curve: Curves.easeOutCubic,
-                        left: selectedIndex * otherWidth,
-                        top: 8,
-                        width: activeWidth,
-                        height: 48,
-                        child: DecoratedBox(decoration: BoxDecoration(
-                          color: tokens.text,
-                          borderRadius: BorderRadius.circular(24),
-                        )),
+        child: Row(
+          children: [
+            Expanded(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(32),
+                  boxShadow: dark
+                      ? null
+                      : [
+                          BoxShadow(
+                            color: tokens.text.withValues(alpha: .12),
+                            blurRadius: 24,
+                            offset: const Offset(0, 8),
+                          ),
+                        ],
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(32),
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: tokens.surface.withValues(alpha: .92),
+                        borderRadius: BorderRadius.circular(32),
+                        border: Border.all(color: tokens.line),
                       ),
-                      Row(children: [
-                        for (var index = 0; index < 4; index++)
-                          _tab(context, index,
-                            index == selectedIndex ? activeWidth : otherWidth,
-                            showLabel: showLabel),
-                      ]),
-                    ]);
-                  }),
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          final showLabel = constraints.maxWidth >= 244;
+                          final activeWidth = showLabel
+                              ? math.min(
+                                  112.0,
+                                  math.max(64.0, constraints.maxWidth - 3 * 48),
+                                )
+                              : constraints.maxWidth / 4;
+                          final otherWidth =
+                              (constraints.maxWidth - activeWidth) / 3;
+                          return Stack(
+                            children: [
+                              AnimatedPositioned(
+                                duration: const Duration(milliseconds: 220),
+                                curve: Curves.easeOutCubic,
+                                left: selectedIndex * otherWidth,
+                                top: 8,
+                                width: activeWidth,
+                                height: 48,
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    color: tokens.text,
+                                    borderRadius: BorderRadius.circular(24),
+                                  ),
+                                ),
+                              ),
+                              Row(
+                                children: [
+                                  for (var index = 0; index < 4; index++)
+                                    _tab(
+                                      context,
+                                      index,
+                                      index == selectedIndex
+                                          ? activeWidth
+                                          : otherWidth,
+                                      showLabel: showLabel,
+                                    ),
+                                ],
+                              ),
+                            ],
+                          );
+                        },
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ),
-          )),
-          SizedBox(width: narrow ? 6 : 8),
-          _DockActionButton(
-            label: 'Ask FinKeep',
-            size: 44,
-            icon: Icons.auto_awesome_outlined,
-            fill: tokens.surfaceAlt,
-            iconColor: tokens.text,
-            glow: tokens.text,
-            onTap: () {
-              HapticFeedback.lightImpact();
-              if (onAsk != null) {
-                onAsk!();
-              } else {
-                openAskFinKeep(context);
-              }
-            },
-          ),
-          SizedBox(width: narrow ? 6 : 8),
-          _DockActionButton(
-            label: 'Add record',
-            size: addSize,
-            icon: Icons.add,
-            fill: tokens.text,
-            iconColor: tokens.surface,
-            glow: tokens.text,
-            rotateOnPress: true,
-            onTap: () {
-              HapticFeedback.lightImpact();
-              showAddMenu(context, tabIndex: selectedIndex);
-            },
-          ),
-        ]),
+            SizedBox(width: narrow ? 6 : 8),
+            _DockActionButton(
+              label: 'Ask FinKeep',
+              size: 44,
+              icon: Icons.auto_awesome_outlined,
+              fill: tokens.surfaceAlt,
+              iconColor: tokens.text,
+              glow: tokens.text,
+              onTap: () {
+                HapticFeedback.lightImpact();
+                if (onAsk != null) {
+                  onAsk!();
+                } else {
+                  openAskFinKeep(context);
+                }
+              },
+            ),
+            SizedBox(width: narrow ? 6 : 8),
+            _DockActionButton(
+              label: 'Add record',
+              size: addSize,
+              icon: Icons.add,
+              fill: tokens.text,
+              iconColor: tokens.surface,
+              glow: tokens.text,
+              rotateOnPress: true,
+              onTap: () {
+                HapticFeedback.lightImpact();
+                showAddMenu(context, tabIndex: selectedIndex);
+              },
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _tab(BuildContext context, int index, double width,
-      {required bool showLabel}) {
+  Widget _tab(
+    BuildContext context,
+    int index,
+    double width, {
+    required bool showLabel,
+  }) {
     const labels = ['Home', 'EMIs', 'Money', 'Bills'];
     final selected = selectedIndex == index;
     final tokens = AppTheme.homePaletteOf(context);
     final ink = selected ? tokens.text : tokens.text3;
     return Semantics(
-        button: true,
-        selected: selected,
-        label: '${labels[index]} tab${selected ? ', selected' : ''}',
-        child: Tooltip(message: labels[index], child: InkWell(
+      button: true,
+      selected: selected,
+      label: '${labels[index]} tab${selected ? ', selected' : ''}',
+      child: Tooltip(
+        message: labels[index],
+        child: InkWell(
           onTap: () {
             if (selected) return;
             HapticFeedback.selectionClick();
@@ -630,21 +688,35 @@ class NotchedNavigationBar extends StatelessWidget {
             height: 48,
             alignment: Alignment.center,
             margin: const EdgeInsets.symmetric(vertical: 8),
-            child: Row(mainAxisAlignment: MainAxisAlignment.center,
-              mainAxisSize: MainAxisSize.min, children: [
-                Icon(_dockIcon(index, selected), size: 24,
-                  color: selected ? tokens.surface : ink),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  _dockIcon(index, selected),
+                  size: 24,
+                  color: selected ? tokens.surface : ink,
+                ),
                 if (selected && showLabel) ...[
                   const SizedBox(width: 5),
-                  Flexible(child: Text(labels[index], maxLines: 1,
-                    overflow: TextOverflow.fade,
-                    style: TextStyle(fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      color: tokens.surface))),
+                  Flexible(
+                    child: Text(
+                      labels[index],
+                      maxLines: 1,
+                      overflow: TextOverflow.fade,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: tokens.surface,
+                      ),
+                    ),
+                  ),
                 ],
-              ]),
+              ],
+            ),
           ),
-        )),
+        ),
+      ),
     );
   }
 }
@@ -693,11 +765,13 @@ class _DockActionButtonState extends State<_DockActionButton> {
             duration: duration,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              boxShadow: [BoxShadow(
-                color: widget.glow.withValues(alpha: _pressed ? .30 : .16),
-                blurRadius: _pressed ? 22 : 16,
-                spreadRadius: _pressed ? 2 : 1,
-              )],
+              boxShadow: [
+                BoxShadow(
+                  color: widget.glow.withValues(alpha: _pressed ? .30 : .16),
+                  blurRadius: _pressed ? 22 : 16,
+                  spreadRadius: _pressed ? 2 : 1,
+                ),
+              ],
             ),
             child: Material(
               color: widget.fill,
@@ -712,16 +786,20 @@ class _DockActionButtonState extends State<_DockActionButton> {
                 onTap: widget.onTap,
                 child: SizedBox.square(
                   dimension: widget.size,
-                  child: Center(child: AnimatedRotation(
-                    turns: _pressed
-                        ? (widget.rotateOnPress ? .125 : -.06)
-                        : 0,
-                    duration: duration,
-                    curve: Curves.easeOutCubic,
-                    child: Icon(widget.icon,
-                      size: widget.rotateOnPress ? 30 : 22,
-                      color: widget.iconColor),
-                  )),
+                  child: Center(
+                    child: AnimatedRotation(
+                      turns: _pressed
+                          ? (widget.rotateOnPress ? .125 : -.06)
+                          : 0,
+                      duration: duration,
+                      curve: Curves.easeOutCubic,
+                      child: Icon(
+                        widget.icon,
+                        size: widget.rotateOnPress ? 30 : 22,
+                        color: widget.iconColor,
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -734,8 +812,8 @@ class _DockActionButtonState extends State<_DockActionButton> {
 
 IconData _dockIcon(int index, bool selected) => switch (index) {
   0 => selected ? Icons.home_rounded : Icons.home_outlined,
-  1 => selected
-      ? Icons.account_balance_rounded : Icons.account_balance_outlined,
+  1 =>
+    selected ? Icons.account_balance_rounded : Icons.account_balance_outlined,
   2 => selected ? Icons.payments_rounded : Icons.payments_outlined,
   _ => selected ? Icons.autorenew_rounded : Icons.autorenew_outlined,
 };

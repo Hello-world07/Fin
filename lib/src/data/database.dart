@@ -48,11 +48,6 @@ class EmiPayments extends Table {
   IntColumn get installmentNumber => integer()();
   BoolColumn get paidEarly => boolean().withDefault(const Constant(false))();
   TextColumn get notes => text().nullable()();
-
-  @override
-  List<Set<Column>> get uniqueKeys => [
-    {emiId, installmentNumber},
-  ];
 }
 
 class MoneyRecords extends Table {
@@ -130,7 +125,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.test(super.executor);
 
   @override
-  int get schemaVersion => 5;
+  int get schemaVersion => 6;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -186,6 +181,13 @@ class AppDatabase extends _$AppDatabase {
         await m.addColumn(emis, emis.initialPaidInstallments);
       }
       if (from < 5) await _createReadIndexes();
+      if (from < 6) {
+        await customStatement(
+          'DROP INDEX IF EXISTS emi_payments_once_per_installment',
+        );
+        await m.alterTable(TableMigration(emiPayments));
+        await _createReadIndexes();
+      }
     },
   );
 
@@ -209,5 +211,3 @@ LazyDatabase _openConnection() {
     return NativeDatabase.createInBackground(file);
   });
 }
-
- 

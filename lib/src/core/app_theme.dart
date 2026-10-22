@@ -167,9 +167,25 @@ class HomePalette extends ThemeExtension<HomePalette> {
 
   @override
   HomePalette copyWith({
-    Color? bg, surface, surfaceAlt, line, text, text2, text3,
-    Color? brand, onBrand, heroStart, heroEnd, heroText, heroText2, heroOut,
-    AppTone? incoming, emiTone, owe, bills, out,
+    Color? bg,
+    surface,
+    surfaceAlt,
+    line,
+    text,
+    text2,
+    text3,
+    Color? brand,
+    onBrand,
+    heroStart,
+    heroEnd,
+    heroText,
+    heroText2,
+    heroOut,
+    AppTone? incoming,
+    emiTone,
+    owe,
+    bills,
+    out,
   }) => HomePalette(
     bg: bg ?? this.bg,
     surface: surface ?? this.surface,
@@ -326,13 +342,13 @@ class AppTheme {
     text: Color(0xFF0E1525),
     text2: Color(0xFF4B5565),
     text3: Color(0xFF667085),
-    brand: Color(0xFF0A7C5C),
+    brand: Color(0xFF1D4ED8),
     onBrand: Color(0xFFFFFFFF),
-    incoming: AppTone(Color(0xFF047857), Color(0xFF059669), Color(0xFFE7F6EF)),
+    incoming: AppTone(Color(0xFF1D4ED8), Color(0xFF2563EB), Color(0xFFEFF6FF)),
     emiTone: AppTone(Color(0xFFB45309), Color(0xFFD97706), Color(0xFFFEF3E2)),
     owe: AppTone(Color(0xFF4F46E5), Color(0xFF4F46E5), Color(0xFFECEBFD)),
     bills: AppTone(Color(0xFF0369A1), Color(0xFF0284C7), Color(0xFFE6F3FA)),
-    out: AppTone(Color(0xFFBE123C), Color(0xFFE11D48), Color(0xFFFDECEF)),
+    out: AppTone(Color(0xFFB91C1C), Color(0xFFDC2626), Color(0xFFFEF2F2)),
     heroStart: Color(0xFF0E1525),
     heroEnd: Color(0xFF1B2640),
     heroText: Color(0xFFFFFFFF),
@@ -347,13 +363,13 @@ class AppTheme {
     text: Color(0xFFF2F5FA),
     text2: Color(0xFFA9B4C8),
     text3: Color(0xFF8491A8),
-    brand: Color(0xFF34D399),
-    onBrand: Color(0xFF06281F),
-    incoming: AppTone(Color(0xFF34D399), Color(0xFF34D399), Color(0xFF12302F)),
+    brand: Color(0xFF60A5FA),
+    onBrand: Color(0xFF071F3D),
+    incoming: AppTone(Color(0xFF93C5FD), Color(0xFF60A5FA), Color(0xFF172B48)),
     emiTone: AppTone(Color(0xFFFBBF24), Color(0xFFFBBF24), Color(0xFF2E2A1C)),
     owe: AppTone(Color(0xFF818CF8), Color(0xFF818CF8), Color(0xFF1E2347)),
     bills: AppTone(Color(0xFF38BDF8), Color(0xFF38BDF8), Color(0xFF0F2A3A)),
-    out: AppTone(Color(0xFFFB7185), Color(0xFFFB7185), Color(0xFF3A1A24)),
+    out: AppTone(Color(0xFFFCA5A5), Color(0xFFF87171), Color(0xFF3A1F22)),
     heroStart: Color(0xFF1A2338),
     heroEnd: Color(0xFF121A2C),
     heroText: Color(0xFFFFFFFF),
@@ -362,30 +378,43 @@ class AppTheme {
   );
 
   static const lightNetCard = NetCardPalette(
-    surface: Color(0xFFFFFFFF), border: Color(0xFFE6E8EF),
-    text: Color(0xFF0F1320), muted: Color(0xFF667085),
-    greenBar: Color(0xFF12B981), greenText: Color(0xFF047857),
-    redBar: Color(0xFFF43F5E), redText: Color(0xFFBE123C),
-    mutedRedBar: Color(0xFFFDA4B4),
-    lentBg: Color(0xFFE8F8F1), borrowedBg: Color(0xFFFFF1F3),
-    debtBg: Color(0xFFF6F7FA), selectedBg: Color(0xFFFFF1F3),
+    surface: Color(0xFFFFFFFF),
+    border: Color(0xFFE6E8EF),
+    text: Color(0xFF0F1320),
+    muted: Color(0xFF667085),
+    greenBar: Color(0xFF2563EB),
+    greenText: Color(0xFF1D4ED8),
+    redBar: Color(0xFFDC2626),
+    redText: Color(0xFFB91C1C),
+    mutedRedBar: Color(0xFFFCA5A5),
+    lentBg: Color(0xFFEFF6FF),
+    borrowedBg: Color(0xFFFEF2F2),
+    debtBg: Color(0xFFF6F7FA),
+    selectedBg: Color(0xFFFEF2F2),
     shadow: Color(0x14101828),
   );
 
   static const darkNetCard = NetCardPalette(
-    surface: Color(0xFF151A22), border: Color(0x14FFFFFF),
-    text: Color(0xFFF4F6FA), muted: Color(0xFF8F98A8),
-    greenBar: Color(0xFF4ADE9A), greenText: Color(0xFF4ADE9A),
-    redBar: Color(0xFFFF6B81), redText: Color(0xFFFF6B81),
-    mutedRedBar: Color(0x80FF6B81),
-    lentBg: Color(0x1F4ADE9A), borrowedBg: Color(0x1FFF6B81),
-    debtBg: Color(0x0AFFFFFF), selectedBg: Color(0x1AFF6B81),
+    surface: Color(0xFF151A22),
+    border: Color(0x14FFFFFF),
+    text: Color(0xFFF4F6FA),
+    muted: Color(0xFF8F98A8),
+    greenBar: Color(0xFF60A5FA),
+    greenText: Color(0xFF93C5FD),
+    redBar: Color(0xFFF87171),
+    redText: Color(0xFFFCA5A5),
+    mutedRedBar: Color(0x80F87171),
+    lentBg: Color(0x1F60A5FA),
+    borrowedBg: Color(0x1FF87171),
+    debtBg: Color(0x0AFFFFFF),
+    selectedBg: Color(0x1AF87171),
     shadow: Color(0x40000000),
   );
 
   static NetCardPalette netCardOf(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark
-          ? darkNetCard : lightNetCard;
+      ? darkNetCard
+      : lightNetCard;
 
   static AppColors colorsOf(BuildContext context) =>
       Theme.of(context).extension<AppColors>() ?? lightColors;

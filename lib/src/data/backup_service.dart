@@ -240,8 +240,8 @@ class LocalBackupService {
   Future<Map<String, Set<String>>> validateDocument(
     BackupDocument document,
   ) async {
-    if (document.schemaVersion != database.schemaVersion &&
-        document.schemaVersion != 3) {
+    if (document.schemaVersion < 3 ||
+        document.schemaVersion > database.schemaVersion) {
       throw const FormatException(
         'This backup uses an unsupported database version.',
       );

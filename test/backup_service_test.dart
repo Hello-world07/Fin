@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:personal_finance/src/data/backup_service.dart';
+import 'package:personal_finance/src/data/backup_codec.dart';
 import 'package:personal_finance/src/data/database.dart';
 import 'package:personal_finance/src/data/repositories.dart';
 import 'package:personal_finance/src/domain/enums.dart';
@@ -118,6 +119,22 @@ void main() {
       throwsFormatException,
     );
     expect((await db.select(db.subscriptions).get()).single.name, 'Keep me');
+  });
+
+  test('accepts a version 5 backup with unchanged table columns', () async {
+    final current = await backup.inspectBytes(await backup.createBackupBytes());
+    final legacy = BackupDocument(
+      tables: current.tables,
+      counts: current.counts,
+      createdAt: current.createdAt,
+      appVersion: current.appVersion,
+      schemaVersion: 5,
+      encrypted: current.encrypted,
+      legacy: current.legacy,
+      dataChecksum: current.dataChecksum,
+    );
+    final columns = await backup.validateDocument(legacy);
+    expect(columns['emis'], contains('type'));
   });
 
   test('rejects invalid enum values before replacing data', () async {

@@ -1486,10 +1486,6 @@ class $EmiPaymentsTable extends EmiPayments
   @override
   Set<GeneratedColumn> get $primaryKey => {id};
   @override
-  List<Set<GeneratedColumn>> get uniqueKeys => [
-    {emiId, installmentNumber},
-  ];
-  @override
   EmiPayment map(Map<String, dynamic> data, {String? tablePrefix}) {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return EmiPayment(

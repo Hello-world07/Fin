@@ -92,6 +92,22 @@ class EmiDetail {
   final Emi emi;
   final List<EmiPayment> payments;
 
+  EmiCategory get category => isFriendRepaymentType(emi.type)
+      ? EmiCategory.givenToFriends
+      : EmiCategory.personal;
+
+  Map<int, int> get paidByInstallment {
+    final totals = <int, int>{};
+    for (final payment in payments) {
+      totals.update(
+        payment.installmentNumber,
+        (value) => value + payment.amountPaise,
+        ifAbsent: () => payment.amountPaise,
+      );
+    }
+    return totals;
+  }
+
   EmiSchedule get schedule => calculateEmiSchedule(
     principalPaise: emi.principalPaise,
     installmentPaise: emi.emiAmountPaise,
@@ -111,13 +127,14 @@ class EmiDetail {
     tenure: emi.tenureMonths,
     frequency: emi.frequency,
     alreadyPaidCount: emi.initialPaidInstallments,
-    paidInstallmentNumbers:
-        payments.map((payment) => payment.installmentNumber).toSet()..addAll(
-          Iterable<int>.generate(
-            emi.initialPaidInstallments,
-            (index) => index + 1,
-          ),
-        ),
+    paidInstallmentNumbers: {
+      for (final entry in paidByInstallment.entries)
+        if (entry.value >= amountForInstallment(entry.key)) entry.key,
+      ...Iterable<int>.generate(
+        emi.initialPaidInstallments,
+        (index) => index + 1,
+      ),
+    },
   );
 
   EmiInstallment? get nextUnpaidInstallment {
@@ -127,7 +144,8 @@ class EmiDetail {
     return null;
   }
 
-  int get paidInstallments => emi.initialPaidInstallments + payments.length;
+  int get paidInstallments =>
+      installments.where((installment) => installment.isPaid).length;
   int get remainingInstallments =>
       (emi.tenureMonths - paidInstallments).clamp(0, emi.tenureMonths);
   int get paidPaise => schedule.paidPaise;
@@ -151,8 +169,44 @@ class EmiDetail {
     return _scheduledAmount(number);
   }
 
+  int unpaidAmountForInstallment(int number) =>
+      (amountForInstallment(number) - (paidByInstallment[number] ?? 0)).clamp(
+        0,
+        amountForInstallment(number),
+      );
+
   int get totalRepaymentPaise => schedule.totalRepaymentPaise;
   double get progress => schedule.progress;
+}
+
+int scheduledPersonalEmiAmountInMonth(
+  Iterable<EmiDetail> details,
+  DateTime month,
+) {
+  final start = DateTime(month.year, month.month, 1);
+  final end = DateTime(month.year, month.month + 1, 1);
+  return details
+      .where(
+        (detail) =>
+            detail.category == EmiCategory.personal &&
+            detail.emi.status != EmiStatus.paused,
+      )
+      .fold<int>(
+        0,
+        (sum, detail) =>
+            sum +
+            detail.installments
+                .where(
+                  (item) =>
+                      !item.dueDate.isBefore(start) &&
+                      item.dueDate.isBefore(end),
+                )
+                .fold<int>(
+                  0,
+                  (total, item) =>
+                      total + detail.amountForInstallment(item.number),
+                ),
+      );
 }
 
 class ReminderItem {
@@ -288,6 +342,35 @@ class FinanceRepository {
   Future<void> _reminderQueue = Future<void>.value();
   bool _legacyRemindersCleared = false;
   final Set<int> _repaymentsInFlight = <int>{};
+
+  Future<String?> friendEmiPhone(int id, String personName) async {
+    for (final key in [
+      'emi.friend.phone.$id',
+      'money.phone.${personName.trim().toLowerCase()}',
+    ]) {
+      final row = await (db.select(
+        db.settings,
+      )..where((setting) => setting.key.equals(key))).getSingleOrNull();
+      if (row?.value.trim().isNotEmpty == true) return row!.value.trim();
+    }
+    return null;
+  }
+
+  Future<void> saveFriendEmiPhone(int id, String? phone) async {
+    final key = 'emi.friend.phone.$id';
+    final value = phone?.trim() ?? '';
+    if (value.isEmpty) {
+      await (db.delete(
+        db.settings,
+      )..where((setting) => setting.key.equals(key))).go();
+    } else {
+      await db
+          .into(db.settings)
+          .insertOnConflictUpdate(
+            SettingsCompanion.insert(key: key, value: value),
+          );
+    }
+  }
 
   Future<ReminderPlanSettings> reminderSettings() async {
     final rows = await (db.select(
@@ -462,6 +545,7 @@ class FinanceRepository {
       };
       final groupedAutoDebits = <(DateTime, String), List<(EmiDetail, int)>>{};
       for (final detail in await _visibleEmiDetails()) {
+        if (detail.category == EmiCategory.givenToFriends) continue;
         if (detail.emi.status != EmiStatus.active) continue;
         for (final installment in detail.installments) {
           if (installment.isPaid) continue;
@@ -722,14 +806,20 @@ class FinanceRepository {
   bool _subscriptionRemindersPrimed = false;
   final AppDatabase db;
 
-  Stream<List<Emi>> watchEmis() =>
-      db.select(db.emis).watch().asyncMap((emis) async {
-        final archivedIds = await _archivedEmiIds();
-        return emis.where((emi) => !archivedIds.contains(emi.id)).toList()
-          ..sort((a, b) => a.nextDueDate.compareTo(b.nextDueDate));
-      });
+  Stream<List<Emi>> watchEmis() => db.select(db.emis).watch().asyncMap((
+    emis,
+  ) async {
+    final archivedIds = await _archivedEmiIds();
+    return emis
+        .where(
+          (emi) =>
+              !archivedIds.contains(emi.id) && !isFriendRepaymentType(emi.type),
+        )
+        .toList()
+      ..sort((a, b) => a.nextDueDate.compareTo(b.nextDueDate));
+  });
 
-  Stream<List<EmiDetail>> watchEmiDetails() {
+  Stream<List<EmiDetail>> watchEmiDetails({bool includeFriends = false}) {
     late final StreamController<List<EmiDetail>> controller;
     final subscriptions = <StreamSubscription<void>>[];
     Timer? pending;
@@ -738,7 +828,11 @@ class FinanceRepository {
     Future<void> emit() async {
       if (controller.isClosed) return;
       final request = ++generation;
-      final details = await _visibleEmiDetails();
+      final details = (await _visibleEmiDetails())
+          .where(
+            (item) => includeFriends || item.category == EmiCategory.personal,
+          )
+          .toList();
       details.sort((a, b) {
         final aDue = a.nextUnpaidInstallment?.dueDate ?? a.emi.nextDueDate;
         final bDue = b.nextUnpaidInstallment?.dueDate ?? b.emi.nextDueDate;
@@ -1206,7 +1300,9 @@ class FinanceRepository {
   }
 
   Future<DashboardSummary> _loadDashboard() async {
-    final emiDetails = await _visibleEmiDetails();
+    final emiDetails = (await _visibleEmiDetails())
+        .where((item) => item.category == EmiCategory.personal)
+        .toList();
     final records = await moneyDetails();
     final subscriptions = await _visibleSubscriptions();
     final today = dateOnly(DateTime.now());
@@ -1401,9 +1497,14 @@ class FinanceRepository {
       return item.id.value;
     });
     final saved = await emiDetail(id);
+    final friendAgreement = saved.category == EmiCategory.givenToFriends;
     await _logActivitySafely(
       type: isEdit ? ActivityType.emiEdited : ActivityType.emiCreated,
-      title: isEdit ? 'EMI Edited' : 'EMI Added',
+      title: friendAgreement
+          ? (isEdit
+                ? 'Repayment Agreement Edited'
+                : 'Repayment Agreement Added')
+          : (isEdit ? 'EMI Edited' : 'EMI Added'),
       description:
           '${saved.emi.name} · ${formatMoneyUnmasked(saved.scheduledInstallmentPaise)} × ${saved.emi.tenureMonths}',
       entityType: 'emi',
@@ -1511,12 +1612,13 @@ class FinanceRepository {
         : existing!.frequency;
     final paidNumbers = <int>{};
     if (existing != null) {
+      final prior = (await (db.select(
+        db.emiPayments,
+      )..where((payment) => payment.emiId.equals(existing!.id))).get());
       paidNumbers.addAll(
-        (await (db.select(
-          db.emiPayments,
-        )..where((payment) => payment.emiId.equals(existing!.id))).get()).map(
-          (payment) => payment.installmentNumber,
-        ),
+        EmiDetail(emi: existing, payments: prior).installments
+            .where((installment) => installment.isPaid)
+            .map((installment) => installment.number),
       );
     }
     paidNumbers.addAll(
@@ -1577,7 +1679,23 @@ class FinanceRepository {
     required DateTime expectedDueDate,
     int? expectedInstallmentNumber,
     bool paidEarly = false,
+  }) => recordEmiPayment(
+    emiId,
+    expectedDueDate: expectedDueDate,
+    expectedInstallmentNumber: expectedInstallmentNumber,
+    paidEarly: paidEarly,
+  );
+
+  Future<bool> recordEmiPayment(
+    int emiId, {
+    required DateTime expectedDueDate,
+    int? expectedInstallmentNumber,
+    int? amountPaise,
+    DateTime? paidOn,
+    String? requestKey,
+    bool paidEarly = false,
   }) async {
+    if (amountPaise != null && amountPaise <= 0) return false;
     final changed = await db.transaction(() async {
       final emi = await (db.select(
         db.emis,
@@ -1592,102 +1710,76 @@ class FinanceRepository {
       final existingPayments = await (db.select(
         db.emiPayments,
       )..where((t) => t.emiId.equals(emiId))).get();
-      final paidNumbers =
-          existingPayments.map((payment) => payment.installmentNumber).toSet()
-            ..addAll(
-              Iterable<int>.generate(
-                emi.initialPaidInstallments,
-                (index) => index + 1,
-              ),
-            );
-      final installments = buildEmiInstallments(
-        startDate: emi.startDate,
-        tenure: emi.tenureMonths,
-        frequency: emi.frequency,
-        paidInstallmentNumbers: paidNumbers,
-        alreadyPaidCount: emi.initialPaidInstallments,
-      );
-      EmiInstallment? nextInstallment;
-      for (final item in installments) {
-        if (!item.isPaid) {
-          nextInstallment = item;
-          break;
-        }
-      }
+      final detail = EmiDetail(emi: emi, payments: existingPayments);
+      final nextInstallment = detail.nextUnpaidInstallment;
       if (nextInstallment == null ||
           dateOnly(nextInstallment.dueDate) != dateOnly(expectedDueDate) ||
           (expectedInstallmentNumber != null &&
               nextInstallment.number != expectedInstallmentNumber)) {
         return false;
       }
-
-      if (existingPayments.length + emi.initialPaidInstallments >=
-          emi.tenureMonths) {
-        await (db.update(db.emis)..where((t) => t.id.equals(emiId))).write(
-          EmisCompanion(
-            status: const Value(EmiStatus.completed),
-            updatedAt: Value(DateTime.now()),
-          ),
-        );
-        return false;
+      if (requestKey != null) {
+        final used =
+            await (db.select(db.settings)
+                  ..where((row) => row.key.equals('emi.payment.$requestKey')))
+                .getSingleOrNull();
+        if (used != null) return false;
       }
-
       final installment = nextInstallment.number;
-      final schedule = calculateEmiSchedule(
-        principalPaise: emi.principalPaise,
-        installmentPaise: emi.emiAmountPaise,
-        tenure: emi.tenureMonths,
-        annualInterestRate: emi.interestRate,
-        paidInstallmentAmounts: [
-          ...List<int>.generate(
-            emi.initialPaidInstallments,
-            (index) => EmiDetail(
-              emi: emi,
-              payments: const [],
-            ).amountForInstallment(index + 1),
-          ),
-          ...existingPayments.map((item) => item.amountPaise),
-        ],
-      );
-      final paymentAmount = EmiDetail(
-        emi: emi,
-        payments: existingPayments,
-      ).amountForInstallment(installment);
-      if (!schedule.isConsistent ||
+      final stillDue =
+          detail.amountForInstallment(installment) -
+          (detail.paidByInstallment[installment] ?? 0);
+      final paymentAmount = amountPaise ?? stillDue;
+      if (!detail.schedule.isConsistent ||
           paymentAmount <= 0 ||
-          paymentAmount > schedule.remainingBalancePaise) {
+          paymentAmount > stillDue ||
+          paymentAmount > detail.remainingBalancePaise) {
         return false;
       }
-      final rowId = await db
+      await db
           .into(db.emiPayments)
           .insert(
             EmiPaymentsCompanion.insert(
               emiId: emi.id,
               amountPaise: paymentAmount,
-              paidOn: DateTime.now(),
+              paidOn: paidOn ?? DateTime.now(),
               installmentNumber: installment,
               paidEarly: Value(paidEarly),
             ),
-            mode: InsertMode.insertOrIgnore,
           );
-      if (rowId == 0) return false;
-
-      final completed = paidNumbers.length + 1 >= emi.tenureMonths;
-      DateTime? nextDueDate;
-      if (!completed) {
-        for (final item in installments) {
-          if (!item.isPaid && item.number != installment) {
-            nextDueDate = item.dueDate;
-            break;
-          }
-        }
+      if (requestKey != null) {
+        await db
+            .into(db.settings)
+            .insert(
+              SettingsCompanion.insert(
+                key: 'emi.payment.$requestKey',
+                value: '$emiId:$installment',
+              ),
+            );
       }
+      final updated = EmiDetail(
+        emi: emi,
+        payments: [
+          ...existingPayments,
+          EmiPayment(
+            id: -1,
+            emiId: emiId,
+            amountPaise: paymentAmount,
+            paidOn: paidOn ?? DateTime.now(),
+            installmentNumber: installment,
+            paidEarly: paidEarly,
+            notes: null,
+          ),
+        ],
+      );
+      final following = updated.nextUnpaidInstallment;
+      final completed = following == null;
       await (db.update(db.emis)..where((t) => t.id.equals(emi.id))).write(
         EmisCompanion(
           status: Value(completed ? EmiStatus.completed : EmiStatus.active),
-          nextDueDate: nextDueDate == null
+          nextDueDate: following == null
               ? const Value.absent()
-              : Value(nextDueDate),
+              : Value(following.dueDate),
           updatedAt: Value(DateTime.now()),
         ),
       );
@@ -1695,7 +1787,11 @@ class FinanceRepository {
         type: paidEarly
             ? ActivityType.emiPaidEarly
             : ActivityType.emiPaymentRecorded,
-        title: paidEarly ? 'EMI Paid Early' : 'EMI Paid',
+        title: detail.category == EmiCategory.givenToFriends
+            ? 'Repayment Received'
+            : paidEarly
+            ? 'EMI Paid Early'
+            : 'EMI Paid',
         description:
             '${emi.name} · ${formatMoneyUnmasked(paymentAmount)} · installment $installment',
         entityType: 'emi',
@@ -1716,6 +1812,75 @@ class FinanceRepository {
     return changed;
   }
 
+  Future<bool> settleEmiEarly(
+    int emiId, {
+    required int expectedRemainingPaise,
+    DateTime? paidOn,
+  }) async {
+    final settled = await db.transaction(() async {
+      final emi = await (db.select(
+        db.emis,
+      )..where((t) => t.id.equals(emiId))).getSingleOrNull();
+      if (emi == null ||
+          emi.status == EmiStatus.completed ||
+          emi.status == EmiStatus.paused ||
+          await _isEmiArchived(emiId)) {
+        return false;
+      }
+      final payments = await (db.select(
+        db.emiPayments,
+      )..where((row) => row.emiId.equals(emiId))).get();
+      final detail = EmiDetail(emi: emi, payments: payments);
+      if (detail.remainingBalancePaise <= 0 ||
+          detail.remainingBalancePaise != expectedRemainingPaise) {
+        return false;
+      }
+      final when = paidOn ?? DateTime.now();
+      var recorded = 0;
+      for (final installment in detail.installments.where(
+        (item) => !item.isPaid,
+      )) {
+        final outstanding =
+            detail.amountForInstallment(installment.number) -
+            (detail.paidByInstallment[installment.number] ?? 0);
+        if (outstanding <= 0) continue;
+        await db
+            .into(db.emiPayments)
+            .insert(
+              EmiPaymentsCompanion.insert(
+                emiId: emiId,
+                amountPaise: outstanding,
+                paidOn: when,
+                installmentNumber: installment.number,
+                paidEarly: Value(when.isBefore(installment.dueDate)),
+              ),
+            );
+        recorded += outstanding;
+      }
+      if (recorded != expectedRemainingPaise) {
+        throw StateError('Scheduled balance changed during settlement.');
+      }
+      await (db.update(db.emis)..where((t) => t.id.equals(emiId))).write(
+        EmisCompanion(
+          status: const Value(EmiStatus.completed),
+          updatedAt: Value(DateTime.now()),
+        ),
+      );
+      await _logActivity(
+        type: ActivityType.emiCompleted,
+        title: detail.category == EmiCategory.givenToFriends
+            ? 'Repayment Agreement Settled'
+            : 'EMI Paid Off',
+        description: '${emi.name} · ${formatMoneyUnmasked(recorded)}',
+        entityType: 'emi',
+        entityId: emiId,
+      );
+      return true;
+    });
+    if (settled) _queueReminderRefresh();
+    return settled;
+  }
+
   Future<bool> revertEmiPayment(int emiId, int paymentId) async {
     final changed = await db.transaction(() async {
       final emi = await (db.select(
@@ -1734,22 +1899,10 @@ class FinanceRepository {
       final remainingPayments = await (db.select(
         db.emiPayments,
       )..where((t) => t.emiId.equals(emiId))).get();
-      final paidNumbers =
-          remainingPayments.map((item) => item.installmentNumber).toSet()
-            ..addAll(
-              Iterable<int>.generate(
-                emi.initialPaidInstallments,
-                (index) => index + 1,
-              ),
-            );
-      final schedule = buildEmiInstallments(
-        startDate: emi.startDate,
-        tenure: emi.tenureMonths,
-        frequency: emi.frequency,
-        paidInstallmentNumbers: paidNumbers,
-        alreadyPaidCount: emi.initialPaidInstallments,
-      );
-      final next = schedule.where((item) => !item.isPaid).firstOrNull;
+      final next = EmiDetail(
+        emi: emi,
+        payments: remainingPayments,
+      ).nextUnpaidInstallment;
       await (db.update(db.emis)..where((t) => t.id.equals(emiId))).write(
         EmisCompanion(
           status: Value(next == null ? EmiStatus.completed : EmiStatus.active),
@@ -1839,6 +1992,7 @@ class FinanceRepository {
       description: saved.notes,
       entityType: 'money',
       entityId: id,
+      occurredAt: isEdit ? null : saved.recordDate,
     );
     _queueReminderRefresh();
     return id;
@@ -1945,13 +2099,14 @@ class FinanceRepository {
             'Repayment cannot exceed the remaining ${formatMoney(outstanding)}',
           );
         }
+        final transactionDate = paidOn ?? DateTime.now();
         final id = await db
             .into(db.moneyRepayments)
             .insert(
               MoneyRepaymentsCompanion.insert(
                 moneyRecordId: moneyRecordId,
                 amountPaise: amountPaise,
-                paidOn: paidOn ?? DateTime.now(),
+                paidOn: transactionDate,
                 notes: Value(notes),
               ),
             );
@@ -1978,6 +2133,7 @@ class FinanceRepository {
           description: notes,
           entityType: 'money',
           entityId: moneyRecordId,
+          occurredAt: transactionDate,
         );
         return id;
       });
@@ -2329,6 +2485,7 @@ class FinanceRepository {
     required String? description,
     required String entityType,
     required int entityId,
+    DateTime? occurredAt,
   }) {
     return db
         .into(db.activityLogs)
@@ -2339,7 +2496,7 @@ class FinanceRepository {
             description: Value(description),
             entityType: Value(entityType),
             entityId: Value(entityId),
-            occurredAt: Value(DateTime.now()),
+            occurredAt: Value(occurredAt ?? DateTime.now()),
           ),
         );
   }
@@ -2350,6 +2507,7 @@ class FinanceRepository {
     required String? description,
     required String entityType,
     required int entityId,
+    DateTime? occurredAt,
   }) async {
     try {
       await _logActivity(
@@ -2358,6 +2516,7 @@ class FinanceRepository {
         description: description,
         entityType: entityType,
         entityId: entityId,
+        occurredAt: occurredAt,
       );
     } catch (error, stackTrace) {
       debugPrint('Activity log write failed: $error');

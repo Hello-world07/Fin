@@ -15,6 +15,7 @@ import '../../core/providers.dart';
 import '../../data/database.dart';
 import '../../data/repositories.dart';
 import '../../domain/emi_math.dart';
+import '../../domain/emi_affordability.dart';
 import '../../domain/emi_payment_rules.dart';
 import '../../domain/enums.dart';
 import '../../domain/reminder_schedule.dart';
@@ -29,6 +30,7 @@ import '../../shared/finance_display_widgets.dart';
 import '../../shared/emi_visual_data.dart';
 import '../../shared/notched_navigation_bar.dart';
 import 'emi_payoff_simulation.dart';
+import 'emi_overview_screen.dart';
 
 enum _EmiSort { dueDate, amount, remaining, closingSoon, name }
 
@@ -455,11 +457,13 @@ class _EmisScreenState extends ConsumerState<EmisScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final tokens = AppTheme.colorsOf(context);
+    final dark = Theme.of(context).brightness == Brightness.dark;
     return AnnotatedRegion<SystemUiOverlayStyle>(
-      value: const SystemUiOverlayStyle(
-        statusBarColor: Color(0xFF0B4F44),
-        statusBarIconBrightness: Brightness.light,
-        statusBarBrightness: Brightness.dark,
+      value: SystemUiOverlayStyle(
+        statusBarColor: tokens.surface,
+        statusBarIconBrightness: dark ? Brightness.light : Brightness.dark,
+        statusBarBrightness: dark ? Brightness.dark : Brightness.light,
       ),
       child: Scaffold(
         backgroundColor: AppTheme.colorsOf(context).background,
@@ -499,7 +503,7 @@ class _EmisScreenState extends ConsumerState<EmisScreen> {
                       SizedBox(
                         height: topInset + 56,
                         child: ColoredBox(
-                          color: const Color(0xFF0B4F44),
+                          color: tokens.surface,
                           child: Padding(
                             padding: EdgeInsets.only(top: topInset),
                             child: Stack(
@@ -544,9 +548,8 @@ class _EmisScreenState extends ConsumerState<EmisScreen> {
                                                                     fontWeight:
                                                                         FontWeight
                                                                             .w700,
-                                                                    color: const Color(
-                                                                      0xFFE8EEEB,
-                                                                    ),
+                                                                    color: tokens
+                                                                        .text,
                                                                   ),
                                                             ),
                                                             Text(
@@ -560,9 +563,8 @@ class _EmisScreenState extends ConsumerState<EmisScreen> {
                                                                     fontWeight:
                                                                         FontWeight
                                                                             .w700,
-                                                                    color: const Color(
-                                                                      0xFFE8EEEB,
-                                                                    ),
+                                                                    color: tokens
+                                                                        .text,
                                                                   ),
                                                             ),
                                                           ],
@@ -581,9 +583,7 @@ class _EmisScreenState extends ConsumerState<EmisScreen> {
                                                                     FontWeight
                                                                         .w700,
                                                                 color:
-                                                                    const Color(
-                                                                      0xFFE8EEEB,
-                                                                    ),
+                                                                    tokens.text,
                                                               ),
                                                         ),
                                                 ),
@@ -604,23 +604,19 @@ class _EmisScreenState extends ConsumerState<EmisScreen> {
                                             width: 48,
                                             height: 48,
                                             child: IconButtonTheme(
-                                              data: const IconButtonThemeData(
+                                              data: IconButtonThemeData(
                                                 style: ButtonStyle(
                                                   foregroundColor:
                                                       WidgetStatePropertyAll(
-                                                        Color(0xFFE8EEEB),
+                                                        tokens.text,
                                                       ),
                                                 ),
                                               ),
-                                              child:
-                                                  const SectionReminderButton(
-                                                    type:
-                                                        FinanceReminderType.emi,
-                                                    dotColor: Color(0xFFC6F432),
-                                                    dotBorderColor: Color(
-                                                      0xFF0B4F44,
-                                                    ),
-                                                  ),
+                                              child: SectionReminderButton(
+                                                type: FinanceReminderType.emi,
+                                                dotColor: tokens.emi,
+                                                dotBorderColor: tokens.surface,
+                                              ),
                                             ),
                                           ),
                                         ],
@@ -638,9 +634,7 @@ class _EmisScreenState extends ConsumerState<EmisScreen> {
                                       height: 1,
                                       child: ColoredBox(
                                         color: scrolled
-                                            ? const Color(
-                                                0xFFE8EEEB,
-                                              ).withValues(alpha: .14)
+                                            ? tokens.outline
                                             : Colors.transparent,
                                       ),
                                     ),
@@ -973,13 +967,14 @@ class _EmiTabs extends StatelessWidget {
       builder: (context, constraints) => AnimatedBuilder(
         animation: controller,
         builder: (context, _) {
+          final tokens = AppTheme.colorsOf(context);
           final page = controller.hasClients
               ? (controller.page ?? (showCompleted ? 1.0 : 0.0))
               : (showCompleted ? 1.0 : 0.0);
           final half = constraints.maxWidth / 2;
           return DecoratedBox(
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: .16),
+              color: tokens.surfaceContainer,
               borderRadius: BorderRadius.circular(24),
             ),
             child: Stack(
@@ -991,7 +986,7 @@ class _EmiTabs extends StatelessWidget {
                   bottom: 3,
                   child: DecoratedBox(
                     decoration: BoxDecoration(
-                      color: Colors.white,
+                      color: tokens.selectedFill,
                       borderRadius: BorderRadius.circular(22),
                     ),
                   ),
@@ -1026,8 +1021,10 @@ class _EmiTabs extends StatelessWidget {
                                             (index == 0
                                                 ? page < .5
                                                 : page >= .5)
-                                            ? const Color(0xFF0B4F44)
-                                            : Colors.white,
+                                            ? Theme.of(
+                                                context,
+                                              ).colorScheme.primary
+                                            : tokens.secondaryText,
                                         fontWeight:
                                             (index == 0
                                                 ? page < .5
@@ -1092,6 +1089,18 @@ Future<void> _showEmiInsightSheet(
   ),
 );
 
+Future<void> openPersonalEmiIncomeInsight(
+  BuildContext context,
+  WidgetRef ref,
+  List<EmiDetail> items,
+) async {
+  await _showEmiInsightSheet(
+    context,
+    'Income & EMIs',
+    _EmiIncomeCard(items: items),
+  );
+}
+
 class _EmiInsights extends ConsumerStatefulWidget {
   const _EmiInsights({required this.items, required this.colors});
   final List<EmiDetail> items;
@@ -1102,25 +1111,10 @@ class _EmiInsights extends ConsumerStatefulWidget {
 }
 
 class _EmiInsightsState extends ConsumerState<_EmiInsights> {
-  int? _income;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadIncome();
-  }
-
-  Future<void> _loadIncome() async {
-    final db = ref.read(databaseProvider);
-    final row =
-        await (db.select(db.settings)
-              ..where((table) => table.key.equals('emi.monthlyIncomePaise')))
-            .getSingleOrNull();
-    if (mounted) setState(() => _income = int.tryParse(row?.value ?? ''));
-  }
-
   Future<void> _openIncome() async {
-    if (_income == null || _income == 0) {
+    final income = await ref.read(personalEmiIncomeProvider.future);
+    if (!mounted) return;
+    if (income == null) {
       final value = await showModalBottomSheet<int>(
         context: context,
         isScrollControlled: true,
@@ -1144,27 +1138,19 @@ class _EmiInsightsState extends ConsumerState<_EmiInsights> {
         _EmiIncomeCard(items: widget.items),
       );
     }
-    if (mounted) await _loadIncome();
   }
 
   @override
   Widget build(BuildContext context) {
+    final income = ref.watch(personalEmiIncomeProvider).valueOrNull;
+    final tokens = AppTheme.colorsOf(context);
+    final accent = Theme.of(context).colorScheme.primary;
     final data = ref.watch(_emiLoadProvider(_emiLoadKey(widget.items)));
     final current = data.months.isEmpty ? 0 : data.months.first.amountPaise;
     final next = data.months.length > 1 ? data.months[1].amountPaise : 0;
     final change = next - current;
-    final share = _income == null || _income == 0
-        ? null
-        : (current * 100 / _income!).round();
-    final zone = share == null
-        ? 'Add income'
-        : share < 30
-        ? 'Comfortable'
-        : share < 40
-        ? 'Watchful'
-        : share < 50
-        ? 'High'
-        : 'Very high';
+    final share = personalEmiIncomePercent(current, income);
+    final zone = personalEmiIncomeZone(share);
     final plan = data.plan;
     return Row(
       children: [
@@ -1183,18 +1169,16 @@ class _EmiInsightsState extends ConsumerState<_EmiInsights> {
                             ?.copyWith(
                               fontSize: 18,
                               fontWeight: FontWeight.w700,
-                              color: change < 0
-                                  ? const Color(0xFFC6F432)
-                                  : const Color(0xFFFCA5A5),
+                              color: change < 0 ? accent : tokens.pay,
                             ),
                       ),
                     ],
                   ),
             color: change < 0
-                ? const Color(0xFFC6F432)
+                ? accent
                 : change > 0
-                ? const Color(0xFFFCA5A5)
-                : const Color(0xFFE8EEEB),
+                ? tokens.pay
+                : tokens.text,
             caption: 'vs ${DateFormat('MMM').format(DateTime.now())}',
             onTap: () =>
                 _showEmiAllMonths(context, widget.items, widget.colors),
@@ -1241,7 +1225,7 @@ class _EmiStatDivider extends StatelessWidget {
     width: 1,
     height: 54,
     margin: const EdgeInsets.symmetric(horizontal: 8),
-    color: Colors.white.withValues(alpha: .16),
+    color: AppTheme.colorsOf(context).outline,
   );
 }
 
@@ -1259,7 +1243,7 @@ class _EmiHeroStat extends StatelessWidget {
   final Color? color;
   @override
   Widget build(BuildContext context) {
-    const white = Color(0xFFE8EEEB);
+    final tokens = AppTheme.colorsOf(context);
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(4),
@@ -1274,7 +1258,7 @@ class _EmiHeroStat extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               style: Theme.of(context).textTheme.labelSmall?.copyWith(
                 fontSize: 12,
-                color: white.withValues(alpha: .78),
+                color: tokens.secondaryText,
               ),
             ),
             FittedBox(
@@ -1284,7 +1268,7 @@ class _EmiHeroStat extends StatelessWidget {
                 style: Theme.of(context).textTheme.titleSmall!.copyWith(
                   fontSize: 18,
                   fontWeight: FontWeight.w700,
-                  color: color ?? white,
+                  color: color ?? tokens.text,
                 ),
                 child: value,
               ),
@@ -1295,7 +1279,7 @@ class _EmiHeroStat extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               style: Theme.of(context).textTheme.labelSmall?.copyWith(
                 fontSize: 12,
-                color: white.withValues(alpha: .78),
+                color: tokens.secondaryText,
               ),
             ),
           ],
@@ -1539,22 +1523,11 @@ class _EmiMonthSheetState extends ConsumerState<_EmiMonthSheet> {
   final Map<int, GlobalKey> _chipKeys = {};
   late final Map<int, String> _initials = _emiInitialsById(widget.items);
   late int _selected = widget.initialIndex;
-  int? _incomePaise;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) => _centerChip(_selected));
-    _readIncome();
-  }
-
-  Future<void> _readIncome() async {
-    final db = ref.read(databaseProvider);
-    final row =
-        await (db.select(db.settings)
-              ..where((table) => table.key.equals('emi.monthlyIncomePaise')))
-            .getSingleOrNull();
-    if (mounted) setState(() => _incomePaise = int.tryParse(row?.value ?? ''));
   }
 
   void _centerChip(int index) {
@@ -1698,7 +1671,7 @@ class _EmiMonthSheetState extends ConsumerState<_EmiMonthSheet> {
                   initials: _initials,
                   debtAfterPaise: data.debtAfter[index],
                   currentPaidPaise: index == 0 ? data.currentPaidPaise : 0,
-                  incomePaise: _incomePaise,
+                  incomePaise: ref.watch(personalEmiIncomeProvider).valueOrNull,
                 ),
               ),
             ),
@@ -2493,19 +2466,16 @@ class _EmiCompletedHero extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final dark = Theme.of(context).brightness == Brightness.dark;
-    const white = Color(0xFFE8EEEB);
+    final tokens = AppTheme.colorsOf(context);
+    final accent = Theme.of(context).colorScheme.primary;
     final paid = items.fold<int>(0, (sum, item) => sum + item.paidPaise);
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: dark
-              ? const [Color(0xFF0B4F44), Color(0xFF062E28)]
-              : const [Color(0xFF0B4F44), Color(0xFF0F6B5C)],
-        ),
-        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(32)),
+        color: tokens.surface,
+        border: Border(bottom: BorderSide(color: tokens.outline)),
+        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(24)),
       ),
       child: items.isEmpty
           ? Column(
@@ -2514,16 +2484,16 @@ class _EmiCompletedHero extends StatelessWidget {
                 Text(
                   'Nothing completed yet',
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    color: white,
+                    color: tokens.text,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   'EMIs you finish will show up here',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: white.withValues(alpha: .78),
-                  ),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodyMedium?.copyWith(color: tokens.secondaryText),
                 ),
               ],
             )
@@ -2534,7 +2504,7 @@ class _EmiCompletedHero extends StatelessWidget {
                   'Paid off',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     fontSize: 13,
-                    color: white.withValues(alpha: .78),
+                    color: tokens.secondaryText,
                   ),
                 ),
                 AmountText(
@@ -2542,14 +2512,14 @@ class _EmiCompletedHero extends StatelessWidget {
                   style: Theme.of(context).textTheme.displaySmall?.copyWith(
                     fontSize: 36,
                     fontWeight: FontWeight.w800,
-                    color: white,
+                    color: tokens.text,
                     fontFeatures: const [FontFeature.tabularFigures()],
                   ),
                 ),
                 const SizedBox(height: 10),
                 DecoratedBox(
                   decoration: BoxDecoration(
-                    color: const Color(0xFFC6F432),
+                    color: tokens.selectedFill,
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: Padding(
@@ -2562,7 +2532,7 @@ class _EmiCompletedHero extends StatelessWidget {
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         fontSize: 13,
                         fontWeight: FontWeight.w700,
-                        color: const Color(0xFF0B4F44),
+                        color: accent,
                       ),
                     ),
                   ),
@@ -2673,250 +2643,227 @@ class _EmiHeroState extends ConsumerState<_EmiHero>
       0,
       (max, month) => month.amountPaise > max ? month.amountPaise : max,
     );
-    final dark = Theme.of(context).brightness == Brightness.dark;
-    const white = Color(0xFFE8EEEB);
-    final muted = white.withValues(alpha: .78);
-    return AnnotatedRegion<SystemUiOverlayStyle>(
-      value: const SystemUiOverlayStyle(
-        statusBarColor: Colors.transparent,
-        statusBarIconBrightness: Brightness.light,
-        statusBarBrightness: Brightness.dark,
+    final tokens = AppTheme.colorsOf(context);
+    final accent = Theme.of(context).colorScheme.primary;
+    final muted = tokens.secondaryText;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+      decoration: BoxDecoration(
+        color: tokens.surface,
+        border: Border(bottom: BorderSide(color: tokens.outline)),
+        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(24)),
       ),
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: dark
-                ? const [Color(0xFF0B4F44), Color(0xFF062E28)]
-                : const [Color(0xFF0B4F44), Color(0xFF0F6B5C)],
-          ),
-          borderRadius: const BorderRadius.vertical(
-            bottom: Radius.circular(32),
-          ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (items.isEmpty) ...[
-              Text(
-                'No active EMIs',
-                style: Theme.of(
-                  context,
-                ).textTheme.titleMedium?.copyWith(color: white),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (items.isEmpty) ...[
+            Text(
+              'No active EMIs',
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(color: tokens.text),
+            ),
+            const SizedBox(height: 10),
+            TextButton.icon(
+              onPressed: widget.onAdd,
+              style: TextButton.styleFrom(
+                backgroundColor: tokens.selectedFill,
+                foregroundColor: accent,
               ),
-              const SizedBox(height: 10),
-              TextButton.icon(
-                onPressed: widget.onAdd,
-                style: TextButton.styleFrom(
-                  backgroundColor: const Color(0xFFC6F432),
-                  foregroundColor: const Color(0xFF0B4F44),
-                ),
-                icon: const Icon(Icons.add),
-                label: const Text('Add EMI'),
-              ),
-            ] else ...[
-              Text(
-                'Total left',
-                style: Theme.of(
-                  context,
-                ).textTheme.bodySmall?.copyWith(fontSize: 13, color: muted),
-              ),
-              AnimatedBuilder(
-                animation: _count,
-                builder: (context, _) => FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: Alignment.centerLeft,
-                  child: AmountText(
-                    _wholeRupees(
-                      (remaining *
-                              (MediaQuery.disableAnimationsOf(context)
-                                  ? 1
-                                  : _count.value))
-                          .round(),
-                    ),
-                    style: Theme.of(context).textTheme.displaySmall?.copyWith(
-                      fontSize: 36,
-                      fontWeight: FontWeight.w800,
-                      color: white,
-                      fontFeatures: const [FontFeature.tabularFigures()],
-                    ),
+              icon: const Icon(Icons.add),
+              label: const Text('Add EMI'),
+            ),
+          ] else ...[
+            Text(
+              'Total left',
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(fontSize: 13, color: muted),
+            ),
+            AnimatedBuilder(
+              animation: _count,
+              builder: (context, _) => FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: AmountText(
+                  _wholeRupees(
+                    (remaining *
+                            (MediaQuery.disableAnimationsOf(context)
+                                ? 1
+                                : _count.value))
+                        .round(),
+                  ),
+                  style: Theme.of(context).textTheme.displaySmall?.copyWith(
+                    fontSize: 40,
+                    fontWeight: FontWeight.w800,
+                    color: tokens.text,
+                    fontFeatures: const [FontFeature.tabularFigures()],
                   ),
                 ),
               ),
-              const SizedBox(height: 10),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 11,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFC6F432),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  'Debt-free ${DateFormat('MMM yyyy').format(finalDue!)} · $monthsToGo months',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: const Color(0xFF0B4F44),
-                  ),
+            ),
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+              decoration: BoxDecoration(
+                color: tokens.selectedFill,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Text(
+                'Debt-free ${DateFormat('MMM yyyy').format(finalDue!)} · $monthsToGo months',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: accent,
                 ),
               ),
-              if (load.length >= 2) ...[
-                const SizedBox(height: 10),
-                Column(
-                  children: [
-                    Row(
-                      children: [
-                        AmountText(
-                          _wholeRupees(load.first.amountPaise),
+            ),
+            if (load.length >= 2) ...[
+              const SizedBox(height: 10),
+              Column(
+                children: [
+                  Row(
+                    children: [
+                      AmountText(
+                        _wholeRupees(load.first.amountPaise),
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: tokens.text,
+                        ),
+                      ),
+                      const Spacer(),
+                      InkWell(
+                        onTap: () =>
+                            _showEmiAllMonths(context, items, widget.colors),
+                        child: Text(
+                          'All months ›',
                           style: Theme.of(context).textTheme.labelSmall
                               ?.copyWith(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w700,
-                                color: white,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: accent,
                               ),
                         ),
-                        const Spacer(),
-                        InkWell(
-                          onTap: () =>
-                              _showEmiAllMonths(context, items, widget.colors),
-                          child: Text(
-                            'All months ›',
-                            style: Theme.of(context).textTheme.labelSmall
-                                ?.copyWith(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                  color: white.withValues(alpha: .85),
-                                ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    SizedBox(
-                      height: 48,
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          for (var index = 0; index < load.length; index++) ...[
-                            if (index > 0) const SizedBox(width: 6),
-                            Expanded(
-                              child: InkWell(
-                                onTap: () => _openMonth(index),
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.end,
-                                  children: [
-                                    Container(
-                                      height: maxLoad == 0
-                                          ? 6
-                                          : 6 +
-                                                30 *
-                                                    load[index].amountPaise /
-                                                    maxLoad,
-                                      decoration: BoxDecoration(
-                                        color: index == 0
-                                            ? const Color(0xFFC6F432)
-                                            : Colors.white.withValues(
-                                                alpha: .35,
-                                              ),
-                                        borderRadius: BorderRadius.circular(4),
-                                        border: _selectedMonth == index
-                                            ? Border.all(
-                                                color: const Color(0xFFC6F432),
-                                                width: 2,
-                                              )
-                                            : null,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ],
-                        ],
                       ),
-                    ),
-                    const SizedBox(height: 5),
-                    Row(
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  SizedBox(
+                    height: 48,
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
                         for (var index = 0; index < load.length; index++) ...[
                           if (index > 0) const SizedBox(width: 6),
                           Expanded(
                             child: InkWell(
                               onTap: () => _openMonth(index),
-                              child: Text(
-                                load[index].month.month == 1
-                                    ? DateFormat(
-                                        'MMM yy',
-                                      ).format(load[index].month)
-                                    : DateFormat(
-                                        'MMM',
-                                      ).format(load[index].month),
-                                textAlign: TextAlign.center,
-                                style: Theme.of(context).textTheme.labelSmall
-                                    ?.copyWith(fontSize: 10, color: muted),
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.end,
+                                children: [
+                                  Container(
+                                    height: maxLoad == 0
+                                        ? 6
+                                        : 6 +
+                                              30 *
+                                                  load[index].amountPaise /
+                                                  maxLoad,
+                                    decoration: BoxDecoration(
+                                      color: index == 0
+                                          ? accent
+                                          : tokens.outline,
+                                      borderRadius: BorderRadius.circular(4),
+                                      border: _selectedMonth == index
+                                          ? Border.all(color: accent, width: 2)
+                                          : null,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                           ),
                         ],
-                        if (loadData.months.length > 12)
-                          Text(
-                            '+${loadData.months.length - 12} mo',
-                            style: Theme.of(context).textTheme.labelSmall
-                                ?.copyWith(fontSize: 10, color: muted),
-                          ),
                       ],
                     ),
-                  ],
-                ),
-              ],
-              if (loadData.currentPaidPaise > 0 && load.isNotEmpty) ...[
-                const SizedBox(height: 5),
-                Wrap(
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    Text(
-                      '${DateFormat('MMM').format(load.first.month)}: ',
-                      style: Theme.of(
-                        context,
-                      ).textTheme.labelSmall?.copyWith(color: muted),
-                    ),
-                    AmountText(
-                      _wholeRupees(loadData.currentPaidPaise),
-                      style: Theme.of(
-                        context,
-                      ).textTheme.labelSmall?.copyWith(color: white),
-                    ),
-                    Text(
-                      ' paid · ',
-                      style: Theme.of(
-                        context,
-                      ).textTheme.labelSmall?.copyWith(color: muted),
-                    ),
-                    AmountText(
-                      _wholeRupees(load.first.amountPaise),
-                      style: Theme.of(
-                        context,
-                      ).textTheme.labelSmall?.copyWith(color: white),
-                    ),
-                    Text(
-                      ' due',
-                      style: Theme.of(
-                        context,
-                      ).textTheme.labelSmall?.copyWith(color: muted),
-                    ),
-                  ],
-                ),
-              ],
-              const SizedBox(height: 14),
-              Container(height: 1, color: Colors.white.withValues(alpha: .16)),
-              const SizedBox(height: 10),
-              _EmiInsights(items: items, colors: widget.colors),
+                  ),
+                  const SizedBox(height: 5),
+                  Row(
+                    children: [
+                      for (var index = 0; index < load.length; index++) ...[
+                        if (index > 0) const SizedBox(width: 6),
+                        Expanded(
+                          child: InkWell(
+                            onTap: () => _openMonth(index),
+                            child: Text(
+                              load[index].month.month == 1
+                                  ? DateFormat(
+                                      'MMM yy',
+                                    ).format(load[index].month)
+                                  : DateFormat('MMM').format(load[index].month),
+                              textAlign: TextAlign.center,
+                              style: Theme.of(context).textTheme.labelSmall
+                                  ?.copyWith(fontSize: 10, color: muted),
+                            ),
+                          ),
+                        ),
+                      ],
+                      if (loadData.months.length > 12)
+                        Text(
+                          '+${loadData.months.length - 12} mo',
+                          style: Theme.of(context).textTheme.labelSmall
+                              ?.copyWith(fontSize: 10, color: muted),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
             ],
+            if (loadData.currentPaidPaise > 0 && load.isNotEmpty) ...[
+              const SizedBox(height: 5),
+              Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text(
+                    '${DateFormat('MMM').format(load.first.month)}: ',
+                    style: Theme.of(
+                      context,
+                    ).textTheme.labelSmall?.copyWith(color: muted),
+                  ),
+                  AmountText(
+                    _wholeRupees(loadData.currentPaidPaise),
+                    style: Theme.of(
+                      context,
+                    ).textTheme.labelSmall?.copyWith(color: tokens.text),
+                  ),
+                  Text(
+                    ' paid · ',
+                    style: Theme.of(
+                      context,
+                    ).textTheme.labelSmall?.copyWith(color: muted),
+                  ),
+                  AmountText(
+                    _wholeRupees(load.first.amountPaise),
+                    style: Theme.of(
+                      context,
+                    ).textTheme.labelSmall?.copyWith(color: tokens.text),
+                  ),
+                  Text(
+                    ' due',
+                    style: Theme.of(
+                      context,
+                    ).textTheme.labelSmall?.copyWith(color: muted),
+                  ),
+                ],
+              ),
+            ],
+            const SizedBox(height: 14),
+            Container(height: 1, color: tokens.outline),
+            const SizedBox(height: 10),
+            _EmiInsights(items: items, colors: widget.colors),
           ],
-        ),
+        ],
       ),
     );
   }
@@ -3095,7 +3042,7 @@ class _EmiGroupHeader extends StatelessWidget {
         days <= 7 &&
         items.any((item) => item.emi.status != EmiStatus.paused);
     return SizedBox(
-      height: 36,
+      height: 52,
       child: ColoredBox(
         color: tokens.background,
         child: Padding(
@@ -3103,35 +3050,42 @@ class _EmiGroupHeader extends StatelessWidget {
           child: Row(
             children: [
               Expanded(
-                child: Text.rich(
-                  TextSpan(
-                    children: [
-                      TextSpan(
-                        text: DateFormat('EEE d MMM').format(day),
-                        style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w800,
-                          color: tokens.text,
-                        ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      DateFormat('EEE d MMM').format(day),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: tokens.text,
                       ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text.rich(
                       TextSpan(
-                        text: ' · $count',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: Theme.of(context).brightness == Brightness.dark
-                              ? tokens.secondaryText
-                              : const Color(0xFF475569),
-                        ),
+                        children: [
+                          TextSpan(
+                            text: count,
+                            style: TextStyle(color: tokens.secondaryText),
+                          ),
+                          if (!completed)
+                            TextSpan(
+                              text: ' · $when',
+                              style: TextStyle(color: urgency),
+                            ),
+                        ],
                       ),
-                      if (!completed)
-                        TextSpan(
-                          text: ' · $when',
-                          style: TextStyle(fontSize: 13, color: urgency),
-                        ),
-                    ],
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(
+                        context,
+                      ).textTheme.bodySmall?.copyWith(fontSize: 12),
+                    ),
+                  ],
                 ),
               ),
               if (canMarkAll)
@@ -3146,13 +3100,26 @@ class _EmiGroupHeader extends StatelessWidget {
                   icon: const Icon(Icons.done_all, size: 18),
                 ),
               const SizedBox(width: 4),
-              AmountText(
-                _wholeRupees(total),
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  color: tokens.text,
-                ),
+              Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  AmountText(
+                    _wholeRupees(total),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: tokens.text,
+                    ),
+                  ),
+                  Text(
+                    completed ? 'paid total' : 'due total',
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      fontSize: 11,
+                      color: tokens.secondaryText,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -3174,28 +3141,38 @@ class _EmiActiveFooter extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
       child: Column(
         children: [
-          CustomPaint(
-            painter: _EmiDashedOutline(tokens.outline),
-            child: SizedBox(
-              width: double.infinity,
-              height: 56,
-              child: InkWell(
-                onTap: onAdd,
-                child: Center(
+          Material(
+            color: tokens.surface,
+            borderRadius: BorderRadius.circular(12),
+            child: InkWell(
+              onTap: onAdd,
+              borderRadius: BorderRadius.circular(12),
+              child: SizedBox(
+                height: 52,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
                   child: Row(
-                    mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(
-                        Icons.add,
+                        Icons.add_circle_outline,
+                        size: 20,
                         color: Theme.of(context).colorScheme.primary,
                       ),
-                      const SizedBox(width: 6),
-                      Text(
-                        'Add another EMI',
-                        style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                          color: Theme.of(context).colorScheme.primary,
-                          fontWeight: FontWeight.w700,
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'Add another EMI',
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(
+                                fontWeight: FontWeight.w600,
+                                color: tokens.text,
+                              ),
                         ),
+                      ),
+                      Icon(
+                        Icons.chevron_right,
+                        size: 20,
+                        color: tokens.secondaryText,
                       ),
                     ],
                   ),
@@ -3206,12 +3183,26 @@ class _EmiActiveFooter extends StatelessWidget {
           if (showTips)
             Padding(
               padding: const EdgeInsets.only(top: 12),
-              child: Text(
-                'Swipe right to mark paid · Long-press for more',
-                textAlign: TextAlign.center,
-                style: Theme.of(
-                  context,
-                ).textTheme.bodySmall?.copyWith(color: tokens.secondaryText),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.swipe_right_alt,
+                    size: 18,
+                    color: tokens.secondaryText,
+                  ),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      'Swipe right to mark paid · Long-press for more',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        fontSize: 12,
+                        color: tokens.secondaryText,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
         ],
@@ -3234,32 +3225,6 @@ class _EmiCompletedFooter extends StatelessWidget {
       ),
     ),
   );
-}
-
-class _EmiDashedOutline extends CustomPainter {
-  const _EmiDashedOutline(this.color);
-  final Color color;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = color
-      ..strokeWidth = 1;
-    for (var x = 0.0; x < size.width; x += 10) {
-      final end = math.min(x + 6, size.width);
-      canvas.drawLine(Offset(x, 0), Offset(end, 0), paint);
-      canvas.drawLine(Offset(x, size.height), Offset(end, size.height), paint);
-    }
-    for (var y = 0.0; y < size.height; y += 10) {
-      final end = math.min(y + 6, size.height);
-      canvas.drawLine(Offset(0, y), Offset(0, end), paint);
-      canvas.drawLine(Offset(size.width, y), Offset(size.width, end), paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _EmiDashedOutline oldDelegate) =>
-      color != oldDelegate.color;
 }
 
 class _DebtPoint {
@@ -3509,46 +3474,38 @@ class _EmiIncomeCard extends ConsumerStatefulWidget {
 
 class _EmiIncomeCardState extends ConsumerState<_EmiIncomeCard> {
   static const _key = 'emi.monthlyIncomePaise';
-  int? _income;
+  final _controller = TextEditingController();
+  bool _editing = false;
+  String? _error;
 
   @override
-  void initState() {
-    super.initState();
-    _load();
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
   }
 
-  Future<void> _load() async {
-    final db = ref.read(databaseProvider);
-    final row = await (db.select(
-      db.settings,
-    )..where((table) => table.key.equals(_key))).getSingleOrNull();
-    if (mounted) setState(() => _income = int.tryParse(row?.value ?? ''));
-  }
-
-  Future<void> _edit() async {
-    Future<void>? sheetClosed;
-    final value = await showModalBottomSheet<int>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      builder: (sheetContext) {
-        sheetClosed ??= ModalRoute.of(sheetContext)?.completed;
-        return _IncomeAmountSheet(initialIncome: _income);
-      },
-    );
-    if (!mounted || value == null) return;
-    if (sheetClosed != null) await sheetClosed;
-    if (!mounted) return;
+  Future<void> _save() async {
+    int value;
+    try {
+      value = parseRupeesToPaise(_controller.text);
+      if (value <= 0) throw const FormatException();
+    } on FormatException {
+      setState(() => _error = 'Enter an amount above zero');
+      return;
+    }
+    FocusScope.of(context).unfocus();
     final db = ref.read(databaseProvider);
     await db
         .into(db.settings)
         .insertOnConflictUpdate(
           SettingsCompanion.insert(key: _key, value: value.toString()),
         );
-    if (!mounted) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) setState(() => _income = value);
-    });
+    if (mounted) {
+      setState(() {
+        _editing = false;
+        _error = null;
+      });
+    }
   }
 
   Future<void> _remove() async {
@@ -3556,117 +3513,266 @@ class _EmiIncomeCardState extends ConsumerState<_EmiIncomeCard> {
     await (db.delete(
       db.settings,
     )..where((table) => table.key.equals(_key))).go();
-    if (!mounted) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) setState(() => _income = null);
-    });
+    if (mounted) setState(() => _editing = false);
   }
 
   Widget _compactContent(BuildContext context) {
     final tokens = AppTheme.colorsOf(context);
-    if (_income == null) {
-      return Column(
+    final income = ref.watch(personalEmiIncomeProvider).valueOrNull;
+    final now = DateTime.now();
+    final thisMonth = scheduledPersonalEmiAmountInMonth(widget.items, now);
+    final nextMonth = scheduledPersonalEmiAmountInMonth(
+      widget.items,
+      DateTime(now.year, now.month + 1),
+    );
+    final share = personalEmiIncomePercent(thisMonth, income);
+    final nextShare = personalEmiIncomePercent(nextMonth, income);
+    final riskShare = math.max(share ?? 0, nextShare ?? 0);
+    final label = personalEmiIncomeZone(riskShare);
+    final shareText = privacyAmountsHidden ? hiddenAmount : '${share ?? 0}%';
+    final nextText = privacyAmountsHidden ? hiddenAmount : '${nextShare ?? 0}%';
+    final palette = AppTheme.homePaletteOf(context);
+    Widget comparison(String prefix, int payment) => Text.rich(
+      TextSpan(
+        children: [
+          TextSpan(
+            text: prefix,
+            style: TextStyle(color: tokens.secondaryText),
+          ),
+          TextSpan(
+            text: '${formatMoney(payment)} EMIs',
+            style: TextStyle(
+              color: palette.out.text,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          TextSpan(
+            text: ' of ${formatMoney(income!)} income',
+            style: TextStyle(color: tokens.secondaryText),
+          ),
+        ],
+      ),
+    );
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: palette.surfaceAlt,
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Add monthly income to see your EMI share.'),
-          const SizedBox(height: 12),
-          TextButton(onPressed: _edit, child: const Text('Add income')),
-        ],
-      );
-    }
-    final months = buildEmiVisualData(
-      widget.items,
-      dateOnly(DateTime.now()),
-    ).months;
-    final share = _income == 0 ? 0.0 : months.first.amountPaise / _income!;
-    final nextShare = _income == 0 ? 0.0 : months[1].amountPaise / _income!;
-    final label = share < .3
-        ? 'Comfortable'
-        : share < .4
-        ? 'Watchful'
-        : share <= .5
-        ? 'High'
-        : 'Very high';
-    final shareText = privacyAmountsHidden
-        ? hiddenAmount
-        : '${(share * 100).round()}%';
-    final nextText = privacyAmountsHidden
-        ? hiddenAmount
-        : '${(nextShare * 100).round()}%';
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Align(
-          alignment: Alignment.centerRight,
-          child: PopupMenuButton<String>(
-            tooltip: 'Income actions',
-            icon: const Icon(Icons.more_horiz),
-            onSelected: (value) => value == 'edit' ? _edit() : _remove(),
-            itemBuilder: (_) => const [
-              PopupMenuItem(value: 'edit', child: Text('Edit income')),
-              PopupMenuItem(value: 'remove', child: Text('Remove income')),
+          Row(
+            children: [
+              const Spacer(),
+              TextButton(
+                style: TextButton.styleFrom(foregroundColor: palette.owe.text),
+                onPressed: () {
+                  _controller.text = income == null
+                      ? ''
+                      : NumberFormat.decimalPattern(
+                          'en_IN',
+                        ).format(income / 100);
+                  setState(() => _editing = !_editing);
+                },
+                child: Text(income == null ? 'Add income' : 'Edit income'),
+              ),
             ],
           ),
-        ),
-        Center(
-          child: RepaintBoundary(
-            child: SizedBox(
-              width: 220,
-              height: 130,
-              child: Stack(
-                alignment: Alignment.bottomCenter,
-                children: [
-                  CustomPaint(
-                    size: const Size(220, 120),
-                    painter: _IncomeZonesPainter(
-                      share: share.clamp(0, 1),
-                      colors: [
-                        tokens.receive,
-                        tokens.emi,
-                        Color.lerp(tokens.emi, tokens.pay, .45)!,
-                        tokens.pay,
-                      ],
-                      track: tokens.surfaceContainer,
-                    ),
-                  ),
-                  Column(
-                    mainAxisSize: MainAxisSize.min,
+          if (_editing) ...[
+            TextField(
+              controller: _controller,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              textInputAction: TextInputAction.done,
+              decoration: InputDecoration(
+                prefixText: '₹ ',
+                hintText: 'Monthly income',
+                filled: true,
+                fillColor: tokens.surfaceContainer,
+                border: InputBorder.none,
+              ),
+              onSubmitted: (_) => _save(),
+            ),
+            if (_error != null)
+              Text(
+                _error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            TextButton(
+              onPressed: _save,
+              style: TextButton.styleFrom(foregroundColor: palette.owe.text),
+              child: const Text('Save income'),
+            ),
+            if (income != null)
+              TextButton(
+                onPressed: _remove,
+                style: TextButton.styleFrom(foregroundColor: palette.owe.text),
+                child: const Text('Remove income'),
+              ),
+          ] else if (income == null)
+            const Text('Add monthly income to see your EMI share.')
+          else ...[
+            Row(
+              children: [
+                _IncomeRiskGauge(percent: riskShare),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        shareText,
-                        style: Theme.of(context).textTheme.headlineMedium,
+                        label,
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(
+                              color: _incomeRiskColor(context, riskShare),
+                              fontWeight: FontWeight.w800,
+                            ),
+                      ),
+                      const SizedBox(height: 5),
+                      Text(
+                        'This month $shareText',
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(
+                              color: tokens.text,
+                              fontWeight: FontWeight.w700,
+                            ),
                       ),
                       Text(
-                        privacyAmountsHidden ? 'Private' : label,
-                        style: Theme.of(context).textTheme.labelMedium,
+                        'Next month $nextText',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: tokens.secondaryText,
+                        ),
                       ),
                     ],
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
+            const SizedBox(height: 12),
+            comparison('This month · ', thisMonth),
+            const SizedBox(height: 3),
+            comparison('Next month · ', nextMonth),
+            const SizedBox(height: 4),
+            Text(
+              'Risk level uses the higher of the two months.',
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: tokens.secondaryText),
+            ),
+          ],
+          const SizedBox(height: 10),
+          Text(
+            'Most lenders prefer under 40–50%.',
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: tokens.secondaryText),
           ),
-        ),
-        const SizedBox(height: 20),
-        Text('$shareText of your income goes to EMIs.'),
-        const SizedBox(height: 6),
-        Text(
-          'Next month $nextText',
-          style: Theme.of(context).textTheme.bodyMedium,
-        ),
-        const SizedBox(height: 10),
-        Text(
-          'Lenders often prefer under about 40-50%.',
-          style: Theme.of(
-            context,
-          ).textTheme.bodySmall?.copyWith(color: tokens.secondaryText),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
   @override
   Widget build(BuildContext context) => _compactContent(context);
+}
+
+Color _incomeRiskColor(BuildContext context, int percent) {
+  final palette = AppTheme.homePaletteOf(context);
+  if (percent < 30) {
+    return Theme.of(context).brightness == Brightness.dark
+        ? AppTheme.darkColors.receive
+        : AppTheme.heroEnd;
+  }
+  if (percent < 40) return palette.emiTone.text;
+  return palette.out.text;
+}
+
+class _IncomeRiskGauge extends StatelessWidget {
+  const _IncomeRiskGauge({required this.percent});
+  final int percent;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = AppTheme.colorsOf(context);
+    final zones = [
+      tokens.receive,
+      tokens.emi,
+      Color.lerp(tokens.emi, tokens.pay, .5)!,
+      tokens.pay,
+    ];
+    return Semantics(
+      label: privacyAmountsHidden
+          ? 'EMI income risk hidden'
+          : 'EMI income risk, ${personalEmiIncomeZone(percent)}, $percent percent',
+      child: SizedBox(
+        width: 130,
+        height: 78,
+        child: RepaintBoundary(
+          child: CustomPaint(
+            painter: _IncomeRiskPainter(
+              percent: privacyAmountsHidden ? null : percent,
+              zones: zones,
+              marker: tokens.text,
+              surface: tokens.surfaceContainer,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _IncomeRiskPainter extends CustomPainter {
+  const _IncomeRiskPainter({
+    required this.percent,
+    required this.zones,
+    required this.marker,
+    required this.surface,
+  });
+  final int? percent;
+  final List<Color> zones;
+  final Color marker, surface;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height - 5);
+    final radius = math.min(size.width / 2 - 9, size.height - 13);
+    final rect = Rect.fromCircle(center: center, radius: radius);
+    const stops = [0.0, .3, .4, .5, 1.0];
+    for (var i = 0; i < zones.length; i++) {
+      final start = math.pi * (1 + stops[i]) + .025;
+      final sweep = math.pi * (stops[i + 1] - stops[i]) - .05;
+      canvas.drawArc(
+        rect,
+        start,
+        sweep,
+        false,
+        Paint()
+          ..color = zones[i]
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round
+          ..strokeWidth = 10,
+      );
+    }
+    if (percent == null) return;
+    final angle = math.pi * (1 + percent!.clamp(0, 100) / 100);
+    final point = Offset(
+      center.dx + radius * math.cos(angle),
+      center.dy + radius * math.sin(angle),
+    );
+    canvas.drawCircle(point, 7, Paint()..color = surface);
+    canvas.drawCircle(point, 4, Paint()..color = marker);
+  }
+
+  @override
+  bool shouldRepaint(covariant _IncomeRiskPainter old) =>
+      percent != old.percent ||
+      marker != old.marker ||
+      surface != old.surface ||
+      !listEquals(zones, old.zones);
 }
 
 class _IncomeAmountSheet extends StatefulWidget {
@@ -3752,58 +3858,6 @@ class _IncomeAmountSheetState extends State<_IncomeAmountSheet> {
       ],
     ),
   );
-}
-
-class _IncomeZonesPainter extends CustomPainter {
-  const _IncomeZonesPainter({
-    required this.share,
-    required this.colors,
-    required this.track,
-  });
-  final double share;
-  final List<Color> colors;
-  final Color track;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final rect = Rect.fromLTWH(8, 8, size.width - 16, size.width - 16);
-    final paint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 12;
-    canvas.drawArc(rect, math.pi, math.pi, false, paint..color = track);
-    const stops = [0.0, .3, .4, .5, 1.0];
-    for (var i = 0; i < 4; i++) {
-      final start = math.pi + stops[i] * math.pi + .015;
-      final sweep = (stops[i + 1] - stops[i]) * math.pi - .03;
-      canvas.drawArc(rect, start, sweep, false, paint..color = colors[i]);
-    }
-    final angle = math.pi * (1 + share);
-    final radius = (size.width - 16) / 2;
-    final center = Offset(size.width / 2, 8 + radius);
-    final dot = Offset(
-      center.dx + radius * math.cos(angle),
-      center.dy + radius * math.sin(angle),
-    );
-    canvas.drawCircle(
-      dot,
-      8,
-      Paint()
-        ..color =
-            colors[share < .3
-                ? 0
-                : share < .4
-                ? 1
-                : share <= .5
-                ? 2
-                : 3],
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant _IncomeZonesPainter old) =>
-      share != old.share ||
-      track != old.track ||
-      !listEquals(colors, old.colors);
 }
 
 class _EmiPayoffPlanner extends StatefulWidget {
@@ -4012,11 +4066,15 @@ class _SwipePayTile extends StatefulWidget {
   State<_SwipePayTile> createState() => _SwipePayTileState();
 }
 
-class _SwipePayTileState extends State<_SwipePayTile> {
+class _SwipePayTileState extends State<_SwipePayTile>
+    with SingleTickerProviderStateMixin {
   Offset? _start;
   int? _pointer;
   VelocityTracker? _velocity;
-  double _drag = 0;
+  late final AnimationController _slide = AnimationController.unbounded(
+    vsync: this,
+    duration: const Duration(milliseconds: 240),
+  );
   bool _ticked = false;
   bool _claimed = false;
   bool _rejected = false;
@@ -4028,7 +4086,9 @@ class _SwipePayTileState extends State<_SwipePayTile> {
     _velocity = null;
     _claimed = false;
     _rejected = false;
-    if (_drag != 0) setState(() => _drag = 0);
+    if (_slide.value != 0) {
+      unawaited(_slide.animateTo(0, curve: Curves.easeOutCubic));
+    }
   }
 
   @override
@@ -4044,6 +4104,7 @@ class _SwipePayTileState extends State<_SwipePayTile> {
   @override
   void dispose() {
     widget.scrolling.removeListener(_onScroll);
+    _slide.dispose();
     super.dispose();
   }
 
@@ -4089,13 +4150,15 @@ class _SwipePayTileState extends State<_SwipePayTile> {
               _ticked = true;
               HapticFeedback.selectionClick();
             }
-            if (_drag != next) setState(() => _drag = next);
+            _slide.stop();
+            _slide.value = next;
           },
           onPointerUp: (event) {
             if (event.pointer != _pointer) return;
             _velocity?.addPosition(event.timeStamp, event.position);
             final speed = _velocity?.getVelocity().pixelsPerSecond.dx ?? 0;
-            final confirmed = _claimed && (_drag >= threshold || speed > 700);
+            final confirmed =
+                _claimed && (_slide.value >= threshold || speed > 700);
             _clearPointer();
             if (confirmed) {
               _committing = true;
@@ -4158,13 +4221,13 @@ class _SwipePayTileState extends State<_SwipePayTile> {
                   ),
                 ),
               ),
-              AnimatedSlide(
-                offset: Offset(_drag / constraints.maxWidth, 0),
-                duration: _claimed
-                    ? Duration.zero
-                    : const Duration(milliseconds: 220),
-                curve: Curves.easeOutBack,
+              AnimatedBuilder(
+                animation: _slide,
                 child: widget.child,
+                builder: (context, child) => Transform.translate(
+                  offset: Offset(_slide.value, 0),
+                  child: child,
+                ),
               ),
             ],
           ),
@@ -4237,6 +4300,8 @@ class _EmiRow extends StatelessWidget {
     final tokens = AppTheme.colorsOf(context);
     final dark = Theme.of(context).brightness == Brightness.dark;
     final color = arcColor ?? tokens.emi;
+    final nameColor = Color.lerp(color, tokens.text, dark ? .58 : 0)!;
+    final outstandingColor = AppTheme.homePaletteOf(context).emiTone.text;
     final next = detail.nextUnpaidInstallment;
     final amount = completed
         ? detail.paidPaise
@@ -4288,8 +4353,8 @@ class _EmiRow extends StatelessWidget {
       fontWeight: FontWeight.w700,
       color: completed ? tokens.secondaryText : tokens.text,
     );
-    final content = SizedBox(
-      height: 84,
+    final content = ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 84),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 7),
         child: Row(
@@ -4313,10 +4378,10 @@ class _EmiRow extends StatelessWidget {
                           style: Theme.of(context).textTheme.titleSmall
                               ?.copyWith(
                                 fontSize: 16,
-                                fontWeight: FontWeight.w600,
+                                fontWeight: FontWeight.w700,
                                 color: completed
                                     ? tokens.secondaryText
-                                    : tokens.text,
+                                    : nameColor,
                               ),
                         ),
                       ),
@@ -4324,12 +4389,17 @@ class _EmiRow extends StatelessWidget {
                         const SizedBox(width: 6),
                         ConstrainedBox(
                           constraints: const BoxConstraints(maxWidth: 92),
-                          child: FittedBox(
-                            fit: BoxFit.scaleDown,
-                            alignment: Alignment.centerRight,
-                            child: AmountText(
-                              _wholeRupees(amount),
-                              style: amountStyle,
+                          child: Tooltip(
+                            message: completed
+                                ? 'Total paid'
+                                : 'Next installment amount',
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              alignment: Alignment.centerRight,
+                              child: AmountText(
+                                _wholeRupees(amount),
+                                style: amountStyle,
+                              ),
                             ),
                           ),
                         ),
@@ -4362,10 +4432,19 @@ class _EmiRow extends StatelessWidget {
                                       ? amount
                                       : detail.remainingBalancePaise,
                                 ),
-                                style: secondary,
+                                style: completed
+                                    ? secondary
+                                    : secondary?.copyWith(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w700,
+                                        color: outstandingColor,
+                                        fontFeatures: const [
+                                          FontFeature.tabularFigures(),
+                                        ],
+                                      ),
                               ),
                               Text(
-                                completed ? ' paid' : ' left',
+                                completed ? ' paid' : ' outstanding',
                                 style: secondary,
                               ),
                             ],
@@ -4383,14 +4462,12 @@ class _EmiRow extends StatelessWidget {
                               ? 'All ${emi.tenureMonths} paid'
                               : detail.remainingInstallments == 1
                               ? 'Last EMI'
-                              : '${detail.remainingInstallments} left${detail.paidInstallments > 0 ? ' · ${detail.paidInstallments} paid' : ''}',
+                              : '${detail.remainingInstallments} EMIs left${detail.paidInstallments > 0 ? ' · ${detail.paidInstallments} paid' : ''}',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: completed || detail.remainingInstallments == 1
                               ? greenTextStyle
-                              : secondary?.copyWith(
-                                  fontWeight: FontWeight.w600,
-                                ),
+                              : statusTextStyle,
                         ),
                       ),
                       if (status != null) ...[
@@ -4409,7 +4486,7 @@ class _EmiRow extends StatelessWidget {
     return Semantics(
       button: true,
       label:
-          '${_emiName(emi.name)}, ${detail.remainingInstallments} EMIs left of ${emi.tenureMonths}, ${formatMoney(_wholeRupees(emi.emiAmountPaise))} per month',
+          '${_emiName(emi.name)}, ${detail.remainingInstallments} EMIs left of ${emi.tenureMonths}, ${formatMoney(_wholeRupees(emi.emiAmountPaise))} per month${completed ? '' : ', ${formatMoney(_wholeRupees(detail.remainingBalancePaise))} outstanding'}',
       child: _EmiRowGesture(
         scrolling: scrolling,
         onLongPress: onLongPress,
@@ -4582,10 +4659,13 @@ class _EmiDetailScreenState extends ConsumerState<EmiDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final details = ref.watch(emiDetailsProvider);
+    final details = ref.watch(allEmiDetailsProvider);
     final detail = details.valueOrNull
         ?.where((item) => item.emi.id == widget.id)
         .firstOrNull;
+    if (detail?.category == EmiCategory.givenToFriends) {
+      return EmiAgreementDetailScreen(widget.id);
+    }
     return Scaffold(
       appBar: AppBar(
         title: Text(displayName(detail?.emi.name ?? 'EMI')),
@@ -5276,6 +5356,7 @@ class EmiFormSheet extends ConsumerStatefulWidget {
   const EmiFormSheet({
     super.key,
     this.emi,
+    this.category = EmiCategory.personal,
     this.initialEmiAmount,
     this.initialPrincipal,
     this.initialInterestRate,
@@ -5286,6 +5367,7 @@ class EmiFormSheet extends ConsumerStatefulWidget {
   });
 
   final Emi? emi;
+  final EmiCategory category;
   final String? initialEmiAmount;
   final String? initialPrincipal;
   final String? initialInterestRate;
@@ -5299,6 +5381,10 @@ class EmiFormSheet extends ConsumerStatefulWidget {
 }
 
 class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
+  bool get _isFriend =>
+      widget.category == EmiCategory.givenToFriends ||
+      isFriendRepaymentType(widget.emi?.type);
+
   final _formKey = GlobalKey<FormState>();
   late final _name = TextEditingController(
     text: widget.emi?.name ?? widget.initialName ?? '',
@@ -5323,6 +5409,9 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
         '12',
   );
   late final _notes = TextEditingController(text: widget.emi?.notes ?? '');
+  final _friendPhone = TextEditingController();
+  late DateTime _agreementDate = widget.emi?.createdAt ?? DateTime.now();
+  bool _friendTermsLocked = false;
   late final _interest = TextEditingController(
     text:
         widget.emi?.interestRate?.toString() ??
@@ -5343,8 +5432,12 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
       widget.emi?.frequency ??
       widget.initialFrequency ??
       PaymentFrequency.monthly;
-  late String _type = widget.emi?.type ?? 'Loan';
-  late String _providerChoice = _providerChipFor(widget.emi?.provider);
+  late String _type = _isFriend
+      ? friendRepaymentSubtype(widget.emi?.type)
+      : widget.emi?.type ?? 'Loan';
+  late String _providerChoice = _isFriend && widget.emi?.provider == null
+      ? 'Other'
+      : _providerChipFor(widget.emi?.provider);
   String? _selectedPaymentTile;
   late String _tenureChoice =
       const ['6', '12', '24', '36'].contains(
@@ -5370,6 +5463,14 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
   void initState() {
     super.initState();
     _selectedPaymentTile = null;
+    if (_isFriend && widget.emi != null) {
+      ref
+          .read(financeRepositoryProvider)
+          .friendEmiPhone(widget.emi!.id, widget.emi!.name)
+          .then((phone) {
+            if (mounted && phone != null) _friendPhone.text = phone;
+          });
+    }
   }
 
   @override
@@ -5409,6 +5510,10 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
         _due = detail.nextUnpaidInstallment?.dueDate ?? detail.emi.nextDueDate;
         _loadedNextDue = _due;
         _paid.text = detail.paidInstallments.toString();
+        _friendTermsLocked =
+            _isFriend &&
+            (detail.payments.isNotEmpty ||
+                detail.emi.initialPaidInstallments > 0);
       });
     } catch (_) {
       if (!mounted) return;
@@ -5433,6 +5538,7 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
     _notes.dispose();
     _interest.dispose();
     _paid.dispose();
+    _friendPhone.dispose();
     super.dispose();
   }
 
@@ -5455,7 +5561,9 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
         value: PaymentFrequency.weekly,
         label: Text('Weekly'),
       ),
-      if (_frequency == PaymentFrequency.yearly)
+      if (_isFriend)
+        const ButtonSegment(value: PaymentFrequency.once, label: Text('Once')),
+      if (_isFriend || _frequency == PaymentFrequency.yearly)
         const ButtonSegment(
           value: PaymentFrequency.yearly,
           label: Text('Yearly'),
@@ -5510,18 +5618,24 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
                             ),
                           ],
                           selected: {_type},
-                          onSelectionChanged: (value) =>
-                              setState(() => _type = value.first),
+                          onSelectionChanged: _friendTermsLocked
+                              ? null
+                              : (value) => setState(() => _type = value.first),
                         ),
                       ),
                       const SizedBox(height: 24),
-                      HeroAmountInput(
-                        controller: _amount,
-                        obscureAmount: privacyAmountsHidden,
-                        label: 'MONTHLY EMI',
-                        validator: amountText,
-                        calculator: () =>
-                            _openAmountCalculator(_amount, 'Monthly EMI'),
+                      IgnorePointer(
+                        ignoring: _friendTermsLocked,
+                        child: HeroAmountInput(
+                          controller: _amount,
+                          obscureAmount: privacyAmountsHidden,
+                          label: _isFriend
+                              ? 'INSTALLMENT TO RECEIVE'
+                              : 'MONTHLY EMI',
+                          validator: amountText,
+                          calculator: () =>
+                              _openAmountCalculator(_amount, 'Monthly EMI'),
+                        ),
                       ),
                       const SizedBox(height: 20),
                       _FieldLabel('NAME'),
@@ -5530,11 +5644,38 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
                         controller: _name,
                         decoration: _filledDecoration(
                           context,
-                          hint: 'Loan name',
-                          icon: Icons.account_balance_outlined,
+                          hint: _isFriend
+                              ? 'Person or agreement name'
+                              : 'Loan name',
+                          icon: _isFriend
+                              ? Icons.person_outline
+                              : Icons.account_balance_outlined,
                         ),
                         validator: requiredText,
                       ),
+                      if (_isFriend) ...[
+                        const SizedBox(height: 20),
+                        const _FieldLabel('PHONE NUMBER (OPTIONAL)'),
+                        const SizedBox(height: 7),
+                        TextFormField(
+                          controller: _friendPhone,
+                          keyboardType: TextInputType.phone,
+                          decoration: _filledDecoration(
+                            context,
+                            hint: 'Phone number',
+                            icon: Icons.phone_outlined,
+                          ),
+                          validator: (value) {
+                            final digits = (value ?? '').replaceAll(
+                              RegExp(r'\D'),
+                              '',
+                            );
+                            return digits.isEmpty || digits.length >= 10
+                                ? null
+                                : 'Enter a valid phone number';
+                          },
+                        ),
+                      ],
                       const SizedBox(height: 20),
                       _FieldLabel('LENDER'),
                       const SizedBox(height: 8),
@@ -5548,9 +5689,11 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
                                 child: ChoiceChip(
                                   label: Text(provider),
                                   selected: _providerChoice == provider,
-                                  onSelected: (_) => setState(
-                                    () => _providerChoice = provider,
-                                  ),
+                                  onSelected: _friendTermsLocked
+                                      ? null
+                                      : (_) => setState(
+                                          () => _providerChoice = provider,
+                                        ),
                                 ),
                               ),
                             Padding(
@@ -5558,8 +5701,11 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
                               child: ChoiceChip(
                                 label: const Text('Other'),
                                 selected: _providerChoice == 'Other',
-                                onSelected: (_) =>
-                                    setState(() => _providerChoice = 'Other'),
+                                onSelected: _friendTermsLocked
+                                    ? null
+                                    : (_) => setState(
+                                        () => _providerChoice = 'Other',
+                                      ),
                               ),
                             ),
                           ],
@@ -5569,6 +5715,7 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
                         const SizedBox(height: 8),
                         TextFormField(
                           controller: _provider,
+                          enabled: !_friendTermsLocked,
                           decoration: _filledDecoration(
                             context,
                             hint: 'Lender name',
@@ -5583,6 +5730,7 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
                             child: _LabeledInput(
                               label: 'PRINCIPAL',
                               controller: _principal,
+                              enabled: !_friendTermsLocked,
                               obscureAmount: privacyAmountsHidden,
                               hint: 'Amount',
                               prefix: '${activeAmountFormatter.value.symbol} ',
@@ -5602,6 +5750,7 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
                             child: _LabeledInput(
                               label: 'INTEREST RATE (OPTIONAL)',
                               controller: _interest,
+                              enabled: !_friendTermsLocked,
                               hint: '0',
                               suffix: '%',
                               keyboardType:
@@ -5624,16 +5773,20 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
                             ChoiceChip(
                               label: Text(months),
                               selected: _tenureChoice == months,
-                              onSelected: (_) => setState(() {
-                                _tenureChoice = months;
-                                _tenure.text = months;
-                              }),
+                              onSelected: _friendTermsLocked
+                                  ? null
+                                  : (_) => setState(() {
+                                      _tenureChoice = months;
+                                      _tenure.text = months;
+                                    }),
                             ),
                           ChoiceChip(
                             label: const Text('Custom'),
                             selected: _tenureChoice == 'Custom',
-                            onSelected: (_) =>
-                                setState(() => _tenureChoice = 'Custom'),
+                            onSelected: _friendTermsLocked
+                                ? null
+                                : (_) =>
+                                      setState(() => _tenureChoice = 'Custom'),
                           ),
                         ],
                       ),
@@ -5641,6 +5794,7 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
                         const SizedBox(height: 8),
                         TextFormField(
                           controller: _tenure,
+                          enabled: !_friendTermsLocked,
                           keyboardType: TextInputType.number,
                           decoration: _filledDecoration(
                             context,
@@ -5652,14 +5806,34 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
                       const SizedBox(height: 20),
                       _SelectorGroup(
                         label: 'FREQUENCY',
-                        child: SegmentedToggle<PaymentFrequency>(
-                          segments: frequencySegments,
-                          selected: {_frequency},
-                          onSelectionChanged: (value) =>
-                              setState(() => _frequency = value.first),
+                        child: SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: SegmentedToggle<PaymentFrequency>(
+                            segments: frequencySegments,
+                            selected: {_frequency},
+                            onSelectionChanged: _friendTermsLocked
+                                ? null
+                                : (value) =>
+                                      setState(() => _frequency = value.first),
+                          ),
                         ),
                       ),
                       const SizedBox(height: 20),
+                      if (_isFriend) ...[
+                        IgnorePointer(
+                          ignoring: _friendTermsLocked,
+                          child: DateTile(
+                            label: 'AGREEMENT DATE',
+                            value: _agreementDate,
+                            onChanged: (value) {
+                              if (value != null) {
+                                setState(() => _agreementDate = value);
+                              }
+                            },
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                      ],
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -5669,8 +5843,11 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
                               children: [
                                 _DateSelector(
                                   value: _due,
-                                  onChanged: (value) =>
-                                      setState(() => _due = value),
+                                  onChanged: (value) {
+                                    if (!_friendTermsLocked) {
+                                      setState(() => _due = value);
+                                    }
+                                  },
                                 ),
                               ],
                             ),
@@ -5680,6 +5857,7 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
                             child: _LabeledInput(
                               label: 'EMIS ALREADY PAID',
                               controller: _paid,
+                              enabled: !_friendTermsLocked,
                               hint: '0',
                               keyboardType: TextInputType.number,
                               validator: _paidValidator,
@@ -5823,6 +6001,25 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
       return;
     }
     final paidCount = int.parse(_paid.text.trim());
+    if (_isFriend && _agreementDate.isAfter(DateTime.now())) {
+      setState(
+        () => _scheduleError = 'The agreement date cannot be in the future.',
+      );
+      return;
+    }
+    if (_isFriend && dateOnly(_due).isBefore(dateOnly(_agreementDate))) {
+      setState(
+        () => _scheduleError =
+            'The first repayment cannot precede the agreement date.',
+      );
+      return;
+    }
+    if (_frequency == PaymentFrequency.once && tenure != 1) {
+      setState(
+        () => _scheduleError = 'A one-time repayment has one installment.',
+      );
+      return;
+    }
     if (paidCount > tenure) {
       setState(
         () => _scheduleError = 'Already-paid EMIs cannot exceed tenure.',
@@ -5854,7 +6051,15 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
       return;
     }
     if (!mounted) return;
-    final recordedPaid = detail?.payments.length ?? 0;
+    final recordedPaid =
+        detail?.installments
+            .where(
+              (installment) =>
+                  installment.isPaid &&
+                  installment.number > detail!.emi.initialPaidInstallments,
+            )
+            .length ??
+        0;
     final baselinePaid = paidCount - recordedPaid;
     if (baselinePaid < 0) {
       setState(() {
@@ -5884,7 +6089,8 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
       startDate: Value(startDate),
       nextDueDate: Value(_due),
       frequency: Value(_frequency),
-      type: Value(_type),
+      type: Value(_isFriend ? '$friendRepaymentType:$_type' : _type),
+      createdAt: _isFriend ? Value(_agreementDate) : const Value.absent(),
       initialPaidInstallments: Value(baselinePaid),
       paymentMethodId: Value(_paymentMethodId),
       status: Value(
@@ -5898,7 +6104,14 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
     if (!mounted) return;
     final repo = ref.read(financeRepositoryProvider);
     closeFinanceSheetAndSave(context, () async {
-      await repo.saveEmi(item);
+      final id = await repo.saveEmi(item);
+      if (_isFriend) {
+        try {
+          await repo.saveFriendEmiPhone(id, _friendPhone.text);
+        } catch (error, stack) {
+          debugPrint('Could not save optional friend contact: $error\n$stack');
+        }
+      }
     }, errorMessage: 'Could not save this EMI.');
   }
 
@@ -6027,6 +6240,7 @@ class _LabeledInput extends StatelessWidget {
     this.validator,
     this.calculator,
     this.obscureAmount = false,
+    this.enabled = true,
   });
   final String label;
   final TextEditingController controller;
@@ -6037,12 +6251,14 @@ class _LabeledInput extends StatelessWidget {
   final String? Function(String?)? validator;
   final VoidCallback? calculator;
   final bool obscureAmount;
+  final bool enabled;
 
   @override
   Widget build(BuildContext context) => FilledField(
     label: label,
     child: TextFormField(
       controller: controller,
+      enabled: enabled,
       obscureText: obscureAmount,
       keyboardType: keyboardType,
       decoration: financeFieldDecoration(context, hint: hint).copyWith(

@@ -55,6 +55,26 @@ final emiDetailsProvider = StreamProvider<List<EmiDetail>>((ref) {
   return ref.watch(financeRepositoryProvider).watchEmiDetails();
 });
 
+final allEmiDetailsProvider = StreamProvider<List<EmiDetail>>((ref) {
+  return ref
+      .watch(financeRepositoryProvider)
+      .watchEmiDetails(includeFriends: true);
+});
+
+// null selects All; Home can deep-link to one EMI category without a new route.
+final emiOverviewCategoryProvider = StateProvider<EmiCategory?>((ref) => null);
+
+final personalEmiIncomeProvider = StreamProvider<int?>((ref) {
+  final db = ref.watch(databaseProvider);
+  return (db.select(db.settings)
+        ..where((table) => table.key.equals('emi.monthlyIncomePaise')))
+      .watchSingleOrNull()
+      .map((row) {
+        final amount = int.tryParse(row?.value ?? '');
+        return amount != null && amount > 0 ? amount : null;
+      });
+});
+
 final moneyRecordsProvider = StreamProvider<List<MoneyRecordDetail>>((ref) {
   return ref.watch(financeRepositoryProvider).watchMoneyRecords();
 });

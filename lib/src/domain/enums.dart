@@ -1,5 +1,18 @@
 enum EmiStatus { active, dueSoon, overdue, completed, paused }
 
+enum EmiCategory { personal, givenToFriends }
+
+const friendRepaymentType = 'Friend repayment';
+
+bool isFriendRepaymentType(String? type) =>
+    type == friendRepaymentType ||
+    (type?.startsWith('$friendRepaymentType:') ?? false);
+
+String friendRepaymentSubtype(String? type) =>
+    type?.startsWith('$friendRepaymentType:') == true
+    ? type!.substring(friendRepaymentType.length + 1)
+    : 'Loan';
+
 enum MoneyDirection { given, borrowed }
 
 enum MoneyStatus { active, dueSoon, overdue, settled, paused }
