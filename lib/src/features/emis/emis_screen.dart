@@ -29,6 +29,7 @@ import '../../shared/finance_bottom_sheet.dart';
 import '../../shared/finance_display_widgets.dart';
 import '../../shared/emi_visual_data.dart';
 import '../../shared/notched_navigation_bar.dart';
+import '../../shared/timed_snackbar.dart';
 import 'emi_payoff_simulation.dart';
 import 'emi_overview_screen.dart';
 
@@ -181,7 +182,8 @@ class _EmisScreenState extends ConsumerState<EmisScreen> {
           .where((p) => p.installmentNumber == installment.number)
           .firstOrNull;
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
-      ScaffoldMessenger.of(context).showSnackBar(
+      showTimedSnackBar(
+        ScaffoldMessenger.of(context),
         SnackBar(
           duration: const Duration(seconds: 6),
           content: const Text('Marked paid.'),
@@ -304,7 +306,8 @@ class _EmisScreenState extends ConsumerState<EmisScreen> {
       final repository = ref.read(financeRepositoryProvider);
       await repository.deleteEmi(detail.emi.id);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      showTimedSnackBar(
+        ScaffoldMessenger.of(context),
         SnackBar(
           duration: const Duration(seconds: 6),
           content: const Text('Moved to Deleted'),
@@ -4740,6 +4743,12 @@ class _EmiDetailScreenState extends ConsumerState<EmiDetailScreen> {
                   padding: const EdgeInsets.fromLTRB(20, 12, 20, 36),
                   children: [
                     _EmiOverview(detail: detail),
+                    if (detail.emi.productPricePaise != null ||
+                        detail.emi.feesPaise > 0 ||
+                        detail.emi.interestRate != null) ...[
+                      const SizedBox(height: 24),
+                      _EmiFinancingTerms(emi: detail.emi),
+                    ],
                     const SizedBox(height: 28),
                     Text(
                       'Installments',
@@ -4878,12 +4887,64 @@ class _EmiOverview extends StatelessWidget {
             ),
             Expanded(
               child: _OverviewMetric(
-                label: 'Total payable',
+                label:
+                    detail.emi.productPricePaise != null ||
+                        detail.emi.feesPaise > 0
+                    ? 'EMI total'
+                    : 'Total payable',
                 value: formatMoney(detail.totalRepaymentPaise),
               ),
             ),
           ],
         ),
+      ],
+    );
+  }
+}
+
+class _EmiFinancingTerms extends StatelessWidget {
+  const _EmiFinancingTerms({required this.emi});
+
+  final Emi emi;
+
+  @override
+  Widget build(BuildContext context) {
+    final rate = emi.interestRate;
+    final displayedRate = rate == null
+        ? null
+        : emi.interestPeriod == EmiRatePeriod.monthly
+        ? rate / 12
+        : rate;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Financing terms',
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 8),
+        if (emi.productPricePaise case final price?)
+          _SummaryLine('Product price', formatMoney(price)),
+        if (emi.downPaymentPaise case final downPayment?)
+          _SummaryLine('Down payment', formatMoney(downPayment)),
+        _SummaryLine('Principal', formatMoney(emi.principalPaise)),
+        if (displayedRate != null)
+          _SummaryLine(
+            '${emi.interestMethod == EmiInterestMethod.flat ? 'Flat' : 'Reducing'} interest · '
+                '${emi.interestPeriod == EmiRatePeriod.monthly ? 'monthly' : 'annual'}',
+            '${NumberFormat('0.####').format(displayedRate)}%',
+          ),
+        if (emi.feesPaise > 0)
+          _SummaryLine('Separate fees', formatMoney(emi.feesPaise)),
+        if (emi.contractualEmi)
+          Text(
+            'Entered EMI differs from the calculated amount; the contract amount is kept.',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: AppTheme.colorsOf(context).secondaryText,
+            ),
+          ),
       ],
     );
   }
@@ -5384,6 +5445,7 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
   bool get _isFriend =>
       widget.category == EmiCategory.givenToFriends ||
       isFriendRepaymentType(widget.emi?.type);
+  bool get _isProduct => _type == 'Phone/Product';
 
   final _formKey = GlobalKey<FormState>();
   late final _name = TextEditingController(
@@ -5402,6 +5464,21 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
         widget.initialEmiAmount ??
         (widget.emi == null ? '' : rupeesText(widget.emi!.emiAmountPaise)),
   );
+  late final _productPrice = TextEditingController(
+    text: widget.emi?.productPricePaise == null
+        ? ''
+        : rupeesText(widget.emi!.productPricePaise!),
+  );
+  late final _downPayment = TextEditingController(
+    text: widget.emi?.downPaymentPaise == null
+        ? ''
+        : rupeesText(widget.emi!.downPaymentPaise!),
+  );
+  late final _fees = TextEditingController(
+    text: widget.emi == null || widget.emi!.feesPaise == 0
+        ? ''
+        : rupeesText(widget.emi!.feesPaise),
+  );
   late final _tenure = TextEditingController(
     text:
         widget.emi?.tenureMonths.toString() ??
@@ -5409,15 +5486,28 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
         '12',
   );
   late final _notes = TextEditingController(text: widget.emi?.notes ?? '');
+  late bool _showFinancingDetails =
+      _interest.text.trim().isNotEmpty || _fees.text.trim().isNotEmpty;
+  late bool _showPaymentDetails =
+      widget.emi?.paymentMethodId != null || _notes.text.trim().isNotEmpty;
   final _friendPhone = TextEditingController();
   late DateTime _agreementDate = widget.emi?.createdAt ?? DateTime.now();
   bool _friendTermsLocked = false;
   late final _interest = TextEditingController(
     text:
-        widget.emi?.interestRate?.toString() ??
+        (widget.emi?.interestRate == null
+            ? null
+            : widget.emi!.interestPeriod == EmiRatePeriod.monthly
+            ? (widget.emi!.interestRate! / 12).toString()
+            : widget.emi!.interestRate!.toString()) ??
         widget.initialInterestRate ??
         '',
   );
+  late EmiRatePeriod _ratePeriod =
+      widget.emi?.interestPeriod ?? EmiRatePeriod.annual;
+  late EmiInterestMethod _interestMethod =
+      widget.emi?.interestMethod ?? EmiInterestMethod.reducing;
+  late bool _keepEnteredEmi = widget.emi?.contractualEmi ?? false;
   String? _scheduleError;
   late int? _paymentMethodId = widget.emi?.paymentMethodId;
   late DateTime _due =
@@ -5456,12 +5546,25 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
     _principal,
     _amount,
     _tenure,
+    _interest,
+    _productPrice,
+    _downPayment,
+    _fees,
     _paid,
   ]);
 
   @override
   void initState() {
     super.initState();
+    for (final input in [
+      _principal,
+      _tenure,
+      _interest,
+      _productPrice,
+      _downPayment,
+    ]) {
+      input.addListener(_syncCalculatedEmi);
+    }
     _selectedPaymentTile = null;
     if (_isFriend && widget.emi != null) {
       ref
@@ -5470,6 +5573,33 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
           .then((phone) {
             if (mounted && phone != null) _friendPhone.text = phone;
           });
+    }
+  }
+
+  void _syncCalculatedEmi() {
+    if (_keepEnteredEmi || _friendTermsLocked) return;
+    final principal = _principal.text.trim().isNotEmpty
+        ? _tryPaise(_principal.text)
+        : _isProduct
+        ? _estimatedPrincipal()
+        : null;
+    final tenure = int.tryParse(_tenure.text.trim());
+    final rate = _annualRate();
+    if (principal == null ||
+        principal <= 0 ||
+        tenure == null ||
+        tenure <= 0 ||
+        (_interest.text.trim().isNotEmpty && rate == null)) {
+      return;
+    }
+    final calculated = expectedEmiInstallmentPaise(
+      principalPaise: principal,
+      tenure: tenure,
+      annualInterestRate: rate ?? 0,
+      interestMethod: _interestMethod,
+    );
+    if (calculated > 0 && _tryPaise(_amount.text) != calculated) {
+      _amount.text = rupeesText(calculated);
     }
   }
 
@@ -5537,6 +5667,9 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
     _tenure.dispose();
     _notes.dispose();
     _interest.dispose();
+    _productPrice.dispose();
+    _downPayment.dispose();
+    _fees.dispose();
     _paid.dispose();
     _friendPhone.dispose();
     super.dispose();
@@ -5544,6 +5677,27 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = AppTheme.homePaletteOf(context);
+    final accent = palette.owe.text;
+    final onAccent = Theme.of(context).brightness == Brightness.dark
+        ? palette.bg
+        : palette.surface;
+    final previousNames = <String>[];
+    if (widget.emi == null) {
+      final previous = [...?ref.watch(allEmiDetailsProvider).valueOrNull]
+        ..sort((a, b) => b.emi.createdAt.compareTo(a.emi.createdAt));
+      final seen = <String>{};
+      for (final detail in previous) {
+        final name = detail.emi.name.trim();
+        if (detail.category != widget.category ||
+            name.isEmpty ||
+            !seen.add(name.toLowerCase())) {
+          continue;
+        }
+        previousNames.add(name);
+        if (previousNames.length == 6) break;
+      }
+    }
     final methods = ref.watch(paymentMethodsProvider).valueOrNull ?? const [];
     final selectedPaymentTile =
         _selectedPaymentTile ??
@@ -5573,368 +5727,653 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
         (MediaQuery.sizeOf(context).height -
             MediaQuery.viewInsetsOf(context).bottom) *
         0.92;
-    return SafeArea(
-      child: SizedBox(
-        height: availableHeight,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
-          child: Form(
-            key: _formKey,
-            child: Column(
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        widget.emi == null ? 'New EMI' : 'Edit EMI',
-                        style: Theme.of(context).textTheme.titleMedium
-                            ?.copyWith(fontWeight: FontWeight.w800),
-                      ),
-                    ),
-                    IconButton(
-                      tooltip: 'Close',
-                      onPressed: () => Navigator.pop(context),
-                      icon: const Icon(Icons.close),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                Expanded(
-                  child: ListView(
-                    padding: const EdgeInsets.only(bottom: 18),
+    return Theme(
+      data: Theme.of(context).copyWith(
+        visualDensity: const VisualDensity(horizontal: -1, vertical: -1),
+        colorScheme: Theme.of(context).colorScheme.copyWith(
+          primary: accent,
+          onPrimary: onAccent,
+          primaryContainer: accent.withValues(alpha: .12),
+          onPrimaryContainer: accent,
+        ),
+        chipTheme: Theme.of(context).chipTheme.copyWith(
+          selectedColor: accent.withValues(alpha: .12),
+          side: BorderSide(color: palette.line),
+        ),
+        filledButtonTheme: FilledButtonThemeData(
+          style: FilledButton.styleFrom(
+            backgroundColor: accent,
+            foregroundColor: onAccent,
+          ),
+        ),
+      ),
+      child: SafeArea(
+        child: SizedBox(
+          height: availableHeight,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
+            child: Form(
+              key: _formKey,
+              child: Column(
+                children: [
+                  Row(
                     children: [
-                      _SelectorGroup(
-                        label: 'TYPE',
-                        child: SegmentedToggle<String>(
-                          segments: const [
-                            ButtonSegment(value: 'Loan', label: Text('Loan')),
-                            ButtonSegment(
-                              value: 'Phone/Product',
-                              label: Text('Phone / Product'),
-                            ),
-                            ButtonSegment(
-                              value: 'Credit Card',
-                              label: Text('Credit Card'),
-                            ),
-                          ],
-                          selected: {_type},
-                          onSelectionChanged: _friendTermsLocked
-                              ? null
-                              : (value) => setState(() => _type = value.first),
+                      Expanded(
+                        child: Text(
+                          widget.emi == null ? 'New EMI' : 'Edit EMI',
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(fontWeight: FontWeight.w800),
                         ),
                       ),
-                      const SizedBox(height: 24),
-                      IgnorePointer(
-                        ignoring: _friendTermsLocked,
-                        child: HeroAmountInput(
-                          controller: _amount,
-                          obscureAmount: privacyAmountsHidden,
-                          label: _isFriend
-                              ? 'INSTALLMENT TO RECEIVE'
-                              : 'MONTHLY EMI',
-                          validator: amountText,
-                          calculator: () =>
-                              _openAmountCalculator(_amount, 'Monthly EMI'),
-                        ),
+                      IconButton(
+                        tooltip: 'Close',
+                        onPressed: () => Navigator.pop(context),
+                        icon: const Icon(Icons.close),
                       ),
-                      const SizedBox(height: 20),
-                      _FieldLabel('NAME'),
-                      const SizedBox(height: 7),
-                      TextFormField(
-                        controller: _name,
-                        decoration: _filledDecoration(
-                          context,
-                          hint: _isFriend
-                              ? 'Person or agreement name'
-                              : 'Loan name',
-                          icon: _isFriend
-                              ? Icons.person_outline
-                              : Icons.account_balance_outlined,
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Expanded(
+                    child: ListView(
+                      padding: const EdgeInsets.only(bottom: 18),
+                      children: [
+                        _SelectorGroup(
+                          label: 'TYPE',
+                          child: SegmentedToggle<String>(
+                            segments: const [
+                              ButtonSegment(value: 'Loan', label: Text('Loan')),
+                              ButtonSegment(
+                                value: 'Phone/Product',
+                                label: Text('Phone / Product'),
+                              ),
+                              ButtonSegment(
+                                value: 'Credit Card',
+                                label: Text('Credit Card'),
+                              ),
+                            ],
+                            selected: {_type},
+                            selectedBackground: accent.withValues(alpha: .12),
+                            selectedForeground: accent,
+                            filled: true,
+                            onSelectionChanged: _friendTermsLocked
+                                ? null
+                                : (value) =>
+                                      setState(() => _type = value.first),
+                          ),
                         ),
-                        validator: requiredText,
-                      ),
-                      if (_isFriend) ...[
-                        const SizedBox(height: 20),
-                        const _FieldLabel('PHONE NUMBER (OPTIONAL)'),
+                        if (_type == 'Credit Card') ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            'This form tracks a fixed card EMI. Card statements, minimum dues and purchase conversions are not included in this repayment schedule.',
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(color: palette.text2),
+                          ),
+                        ],
+                        const SizedBox(height: 14),
+                        _FieldLabel('NAME'),
                         const SizedBox(height: 7),
                         TextFormField(
-                          controller: _friendPhone,
-                          keyboardType: TextInputType.phone,
+                          controller: _name,
                           decoration: _filledDecoration(
                             context,
-                            hint: 'Phone number',
-                            icon: Icons.phone_outlined,
+                            hint: _isFriend
+                                ? 'Person or agreement name'
+                                : 'Loan name',
+                            icon: _isFriend
+                                ? Icons.person_outline
+                                : Icons.account_balance_outlined,
                           ),
-                          validator: (value) {
-                            final digits = (value ?? '').replaceAll(
-                              RegExp(r'\D'),
-                              '',
-                            );
-                            return digits.isEmpty || digits.length >= 10
-                                ? null
-                                : 'Enter a valid phone number';
-                          },
+                          validator: requiredText,
                         ),
-                      ],
-                      const SizedBox(height: 20),
-                      _FieldLabel('LENDER'),
-                      const SizedBox(height: 8),
-                      SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        child: Row(
-                          children: [
-                            for (final provider in _knownProviders)
+                        if (previousNames.isNotEmpty) ...[
+                          const SizedBox(height: 10),
+                          Text(
+                            'Recently used names',
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(color: palette.text2),
+                          ),
+                          const SizedBox(height: 6),
+                          SizedBox(
+                            height: 38,
+                            child: ListView.separated(
+                              scrollDirection: Axis.horizontal,
+                              itemCount: previousNames.length,
+                              separatorBuilder: (_, _) =>
+                                  const SizedBox(width: 8),
+                              itemBuilder: (context, index) => ActionChip(
+                                label: Text(previousNames[index]),
+                                onPressed: () =>
+                                    _name.text = previousNames[index],
+                              ),
+                            ),
+                          ),
+                        ],
+                        if (_isFriend) ...[
+                          const SizedBox(height: 14),
+                          const _FieldLabel('PHONE NUMBER (OPTIONAL)'),
+                          const SizedBox(height: 7),
+                          TextFormField(
+                            controller: _friendPhone,
+                            keyboardType: TextInputType.phone,
+                            decoration: _filledDecoration(
+                              context,
+                              hint: 'Phone number',
+                              icon: Icons.phone_outlined,
+                            ),
+                            validator: (value) {
+                              final digits = (value ?? '').replaceAll(
+                                RegExp(r'\D'),
+                                '',
+                              );
+                              return digits.isEmpty || digits.length >= 10
+                                  ? null
+                                  : 'Enter a valid phone number';
+                            },
+                          ),
+                        ],
+                        const SizedBox(height: 14),
+                        _FieldLabel('LENDER'),
+                        const SizedBox(height: 8),
+                        SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(
+                            children: [
+                              for (final provider in _knownProviders)
+                                Padding(
+                                  padding: const EdgeInsets.only(right: 8),
+                                  child: ChoiceChip(
+                                    label: Text(provider),
+                                    selected: _providerChoice == provider,
+                                    onSelected: _friendTermsLocked
+                                        ? null
+                                        : (_) => setState(
+                                            () => _providerChoice = provider,
+                                          ),
+                                  ),
+                                ),
                               Padding(
                                 padding: const EdgeInsets.only(right: 8),
                                 child: ChoiceChip(
-                                  label: Text(provider),
-                                  selected: _providerChoice == provider,
+                                  label: const Text('Other'),
+                                  selected: _providerChoice == 'Other',
                                   onSelected: _friendTermsLocked
                                       ? null
                                       : (_) => setState(
-                                          () => _providerChoice = provider,
+                                          () => _providerChoice = 'Other',
                                         ),
                                 ),
                               ),
-                            Padding(
-                              padding: const EdgeInsets.only(right: 8),
-                              child: ChoiceChip(
-                                label: const Text('Other'),
-                                selected: _providerChoice == 'Other',
+                            ],
+                          ),
+                        ),
+                        if (_providerChoice == 'Other') ...[
+                          const SizedBox(height: 8),
+                          TextFormField(
+                            controller: _provider,
+                            enabled: !_friendTermsLocked,
+                            decoration: _filledDecoration(
+                              context,
+                              hint: 'Lender name',
+                            ),
+                          ),
+                        ],
+                        if (_isProduct) ...[
+                          const SizedBox(height: 14),
+                          _LabeledInput(
+                            label: 'PRODUCT PRICE',
+                            controller: _productPrice,
+                            enabled: !_friendTermsLocked,
+                            hint: 'Full purchase price',
+                            prefix: '${activeAmountFormatter.value.symbol} ',
+                            keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true,
+                            ),
+                            validator: amountText,
+                          ),
+                          const SizedBox(height: 14),
+                          _LabeledInput(
+                            label: 'DOWN PAYMENT (OPTIONAL)',
+                            controller: _downPayment,
+                            enabled: !_friendTermsLocked,
+                            hint: 'Paid upfront',
+                            prefix: '${activeAmountFormatter.value.symbol} ',
+                            keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true,
+                            ),
+                            validator: (value) => value?.trim().isEmpty == true
+                                ? null
+                                : amountText(value),
+                          ),
+                        ],
+                        const SizedBox(height: 14),
+                        IgnorePointer(
+                          ignoring: _friendTermsLocked,
+                          child: HeroAmountInput(
+                            controller: _amount,
+                            obscureAmount: privacyAmountsHidden,
+                            label: _isFriend
+                                ? 'INSTALLMENT TO RECEIVE'
+                                : 'MONTHLY EMI',
+                            validator: amountText,
+                            calculator: () =>
+                                _openAmountCalculator(_amount, 'Monthly EMI'),
+                          ),
+                        ),
+                        if (_type != 'Credit Card')
+                          SwitchListTile.adaptive(
+                            contentPadding: EdgeInsets.zero,
+                            title: const Text('Keep entered EMI'),
+                            subtitle: const Text(
+                              'Use the contract amount instead of recalculating it',
+                            ),
+                            value: _keepEnteredEmi,
+                            onChanged: _friendTermsLocked
+                                ? null
+                                : (value) {
+                                    setState(() => _keepEnteredEmi = value);
+                                    if (!value) _syncCalculatedEmi();
+                                  },
+                          ),
+                        ListenableBuilder(
+                          listenable: _summaryInputs,
+                          builder: (context, _) {
+                            final summary = _liveSummary();
+                            final tenure = int.tryParse(_tenure.text);
+                            if (summary == null || tenure == null) {
+                              return const SizedBox.shrink();
+                            }
+                            return Padding(
+                              padding: const EdgeInsets.only(top: 6),
+                              child: Text(
+                                '$tenure payments · ${formatMoney(summary.totalPaise)} total to ${_isFriend ? 'receive' : 'pay'}',
+                                style: Theme.of(context).textTheme.bodySmall
+                                    ?.copyWith(
+                                      color: palette.text,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                              ),
+                            );
+                          },
+                        ),
+                        const SizedBox(height: 14),
+                        _FieldLabel('TENURE'),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            for (final months in const ['6', '12', '24', '36'])
+                              ChoiceChip(
+                                label: Text(months),
+                                selected: _tenureChoice == months,
                                 onSelected: _friendTermsLocked
                                     ? null
-                                    : (_) => setState(
-                                        () => _providerChoice = 'Other',
-                                      ),
+                                    : (_) => setState(() {
+                                        _tenureChoice = months;
+                                        _tenure.text = months;
+                                      }),
                               ),
+                            ChoiceChip(
+                              label: const Text('Custom'),
+                              selected: _tenureChoice == 'Custom',
+                              onSelected: _friendTermsLocked
+                                  ? null
+                                  : (_) => setState(
+                                      () => _tenureChoice = 'Custom',
+                                    ),
                             ),
                           ],
                         ),
-                      ),
-                      if (_providerChoice == 'Other') ...[
-                        const SizedBox(height: 8),
-                        TextFormField(
-                          controller: _provider,
-                          enabled: !_friendTermsLocked,
-                          decoration: _filledDecoration(
-                            context,
-                            hint: 'Lender name',
+                        if (_tenureChoice == 'Custom') ...[
+                          const SizedBox(height: 8),
+                          TextFormField(
+                            controller: _tenure,
+                            enabled: !_friendTermsLocked,
+                            keyboardType: TextInputType.number,
+                            decoration: _filledDecoration(
+                              context,
+                              hint: 'Number of payments',
+                            ),
+                            validator: _positiveIntegerValidator,
+                          ),
+                        ],
+                        const SizedBox(height: 14),
+                        InkWell(
+                          onTap: () => setState(
+                            () =>
+                                _showFinancingDetails = !_showFinancingDetails,
+                          ),
+                          borderRadius: BorderRadius.circular(12),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    'Interest & fees',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleSmall
+                                        ?.copyWith(fontWeight: FontWeight.w700),
+                                  ),
+                                ),
+                                Icon(
+                                  _showFinancingDetails
+                                      ? Icons.expand_less
+                                      : Icons.expand_more,
+                                  color: palette.text2,
+                                ),
+                              ],
+                            ),
                           ),
                         ),
-                      ],
-                      const SizedBox(height: 20),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            child: _LabeledInput(
-                              label: 'PRINCIPAL',
-                              controller: _principal,
+                        if (_showFinancingDetails) ...[
+                          _LabeledInput(
+                            label: 'INTEREST RATE (OPTIONAL)',
+                            controller: _interest,
+                            enabled: !_friendTermsLocked,
+                            hint: '0',
+                            suffix: '%',
+                            keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true,
+                            ),
+                            validator: _interestValidator,
+                          ),
+                          if (_type != 'Credit Card') ...[
+                            const SizedBox(height: 8),
+                            SegmentedToggle<EmiRatePeriod>(
+                              segments: const [
+                                ButtonSegment(
+                                  value: EmiRatePeriod.annual,
+                                  label: Text('Per year'),
+                                ),
+                                ButtonSegment(
+                                  value: EmiRatePeriod.monthly,
+                                  label: Text('Per month'),
+                                ),
+                              ],
+                              selected: {_ratePeriod},
+                              selectedBackground: accent.withValues(alpha: .12),
+                              selectedForeground: accent,
+                              filled: true,
+                              onSelectionChanged: _friendTermsLocked
+                                  ? null
+                                  : (value) {
+                                      setState(() => _ratePeriod = value.first);
+                                      _syncCalculatedEmi();
+                                    },
+                            ),
+                            const SizedBox(height: 12),
+                            _SelectorGroup(
+                              label: 'INTEREST METHOD',
+                              child: SegmentedToggle<EmiInterestMethod>(
+                                segments: const [
+                                  ButtonSegment(
+                                    value: EmiInterestMethod.reducing,
+                                    label: Text('Reducing balance'),
+                                  ),
+                                  ButtonSegment(
+                                    value: EmiInterestMethod.flat,
+                                    label: Text('Flat rate'),
+                                  ),
+                                ],
+                                selected: {_interestMethod},
+                                selectedBackground: accent.withValues(
+                                  alpha: .12,
+                                ),
+                                selectedForeground: accent,
+                                filled: true,
+                                onSelectionChanged: _friendTermsLocked
+                                    ? null
+                                    : (value) {
+                                        setState(
+                                          () => _interestMethod = value.first,
+                                        );
+                                        _syncCalculatedEmi();
+                                      },
+                              ),
+                            ),
+                          ],
+                          if (_type != 'Credit Card') ...[
+                            const SizedBox(height: 14),
+                            _LabeledInput(
+                              label: 'FEES (OPTIONAL)',
+                              controller: _fees,
                               enabled: !_friendTermsLocked,
-                              obscureAmount: privacyAmountsHidden,
-                              hint: 'Amount',
+                              hint: 'Separate from EMI and principal',
                               prefix: '${activeAmountFormatter.value.symbol} ',
                               keyboardType:
                                   const TextInputType.numberWithOptions(
                                     decimal: true,
                                   ),
-                              validator: amountText,
-                              calculator: () => _openAmountCalculator(
-                                _principal,
-                                'Principal',
+                              validator: (value) =>
+                                  value?.trim().isEmpty == true
+                                  ? null
+                                  : amountText(value),
+                            ),
+                          ],
+                        ],
+                        const SizedBox(height: 14),
+                        _LabeledInput(
+                          label: 'PRINCIPAL (OPTIONAL)',
+                          controller: _principal,
+                          enabled: !_friendTermsLocked,
+                          obscureAmount: privacyAmountsHidden,
+                          hint: 'Calculated if left blank',
+                          prefix: '${activeAmountFormatter.value.symbol} ',
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true,
+                          ),
+                          validator: (value) => value?.trim().isEmpty == true
+                              ? null
+                              : amountText(value),
+                          calculator: () =>
+                              _openAmountCalculator(_principal, 'Principal'),
+                        ),
+                        ListenableBuilder(
+                          listenable: _summaryInputs,
+                          builder: (context, _) {
+                            if (_principal.text.trim().isNotEmpty) {
+                              return const SizedBox.shrink();
+                            }
+                            final estimate = _estimatedPrincipal();
+                            if (estimate == null || estimate <= 0) {
+                              return const SizedBox.shrink();
+                            }
+                            return Padding(
+                              padding: const EdgeInsets.only(top: 6),
+                              child: Text(
+                                '${_isProduct ? 'Price minus down payment' : 'Calculated principal'}: ${formatMoney(estimate)}${!_isProduct && _interest.text.trim().isEmpty ? ' · assumes 0% interest' : ''}',
+                                style: Theme.of(context).textTheme.bodySmall
+                                    ?.copyWith(color: palette.text2),
+                              ),
+                            );
+                          },
+                        ),
+                        const SizedBox(height: 14),
+                        _SelectorGroup(
+                          label: 'FREQUENCY',
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: SegmentedToggle<PaymentFrequency>(
+                              segments: frequencySegments,
+                              selected: {_frequency},
+                              selectedBackground: accent.withValues(alpha: .12),
+                              selectedForeground: accent,
+                              filled: true,
+                              onSelectionChanged: _friendTermsLocked
+                                  ? null
+                                  : (value) => setState(
+                                      () => _frequency = value.first,
+                                    ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        if (_isFriend) ...[
+                          IgnorePointer(
+                            ignoring: _friendTermsLocked,
+                            child: DateTile(
+                              label: 'AGREEMENT DATE',
+                              value: _agreementDate,
+                              onChanged: (value) {
+                                if (value != null) {
+                                  setState(() => _agreementDate = value);
+                                }
+                              },
+                            ),
+                          ),
+                          const SizedBox(height: 14),
+                        ],
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  _DateSelector(
+                                    value: _due,
+                                    onChanged: (value) {
+                                      if (!_friendTermsLocked) {
+                                        setState(() => _due = value);
+                                      }
+                                    },
+                                  ),
+                                ],
                               ),
                             ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: _LabeledInput(
-                              label: 'INTEREST RATE (OPTIONAL)',
-                              controller: _interest,
-                              enabled: !_friendTermsLocked,
-                              hint: '0',
-                              suffix: '%',
-                              keyboardType:
-                                  const TextInputType.numberWithOptions(
-                                    decimal: true,
-                                  ),
-                              validator: _interestValidator,
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: ListenableBuilder(
+                                listenable: _tenure,
+                                builder: (context, _) {
+                                  final tenure = int.tryParse(_tenure.text);
+                                  return _LabeledInput(
+                                    label: 'EMIS ALREADY PAID',
+                                    controller: _paid,
+                                    enabled: !_friendTermsLocked,
+                                    hint: '0',
+                                    helperText: tenure == null || tenure <= 0
+                                        ? 'Number of installments already paid'
+                                        : 'Number of installments already paid (0–$tenure)',
+                                    keyboardType:
+                                        const TextInputType.numberWithOptions(),
+                                    autovalidateMode: AutovalidateMode.always,
+                                    validator: _paidValidator,
+                                  );
+                                },
+                              ),
                             ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 20),
-                      _FieldLabel('TENURE'),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          for (final months in const ['6', '12', '24', '36'])
-                            ChoiceChip(
-                              label: Text(months),
-                              selected: _tenureChoice == months,
-                              onSelected: _friendTermsLocked
-                                  ? null
-                                  : (_) => setState(() {
-                                      _tenureChoice = months;
-                                      _tenure.text = months;
-                                    }),
-                            ),
-                          ChoiceChip(
-                            label: const Text('Custom'),
-                            selected: _tenureChoice == 'Custom',
-                            onSelected: _friendTermsLocked
-                                ? null
-                                : (_) =>
-                                      setState(() => _tenureChoice = 'Custom'),
-                          ),
-                        ],
-                      ),
-                      if (_tenureChoice == 'Custom') ...[
-                        const SizedBox(height: 8),
-                        TextFormField(
-                          controller: _tenure,
-                          enabled: !_friendTermsLocked,
-                          keyboardType: TextInputType.number,
-                          decoration: _filledDecoration(
-                            context,
-                            hint: 'Number of payments',
-                          ),
-                          validator: _positiveIntegerValidator,
+                          ],
                         ),
-                      ],
-                      const SizedBox(height: 20),
-                      _SelectorGroup(
-                        label: 'FREQUENCY',
-                        child: SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: SegmentedToggle<PaymentFrequency>(
-                            segments: frequencySegments,
-                            selected: {_frequency},
-                            onSelectionChanged: _friendTermsLocked
-                                ? null
-                                : (value) =>
-                                      setState(() => _frequency = value.first),
+                        const SizedBox(height: 14),
+                        InkWell(
+                          onTap: () => setState(
+                            () => _showPaymentDetails = !_showPaymentDetails,
                           ),
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-                      if (_isFriend) ...[
-                        IgnorePointer(
-                          ignoring: _friendTermsLocked,
-                          child: DateTile(
-                            label: 'AGREEMENT DATE',
-                            value: _agreementDate,
-                            onChanged: (value) {
-                              if (value != null) {
-                                setState(() => _agreementDate = value);
-                              }
-                            },
-                          ),
-                        ),
-                        const SizedBox(height: 20),
-                      ],
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                          borderRadius: BorderRadius.circular(12),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            child: Row(
                               children: [
-                                _DateSelector(
-                                  value: _due,
-                                  onChanged: (value) {
-                                    if (!_friendTermsLocked) {
-                                      setState(() => _due = value);
-                                    }
-                                  },
+                                Expanded(
+                                  child: Text(
+                                    'Payment method & notes',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleSmall
+                                        ?.copyWith(fontWeight: FontWeight.w700),
+                                  ),
+                                ),
+                                Icon(
+                                  _showPaymentDetails
+                                      ? Icons.expand_less
+                                      : Icons.expand_more,
+                                  color: palette.text2,
                                 ),
                               ],
                             ),
                           ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: _LabeledInput(
-                              label: 'EMIS ALREADY PAID',
-                              controller: _paid,
-                              enabled: !_friendTermsLocked,
-                              hint: '0',
-                              keyboardType: TextInputType.number,
-                              validator: _paidValidator,
+                        ),
+                        if (_showPaymentDetails) ...[
+                          const _FieldLabel('PAYMENT METHOD'),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              for (final option in _methodTiles)
+                                Expanded(
+                                  child: Padding(
+                                    padding: EdgeInsets.only(
+                                      right: option == _methodTiles.last
+                                          ? 0
+                                          : 8,
+                                    ),
+                                    child: _PaymentTile(
+                                      label: option.$1,
+                                      icon: option.$2,
+                                      selected:
+                                          selectedPaymentTile == option.$1,
+                                      selectedFill: accent.withValues(
+                                        alpha: .12,
+                                      ),
+                                      onTap: () => setState(() {
+                                        _selectedPaymentTile = option.$1;
+                                        _paymentMethodId = _methodIdForTile(
+                                          option.$1,
+                                          methods,
+                                        );
+                                      }),
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                          const SizedBox(height: 14),
+                          const _FieldLabel('NOTES'),
+                          const SizedBox(height: 7),
+                          TextFormField(
+                            controller: _notes,
+                            maxLines: 3,
+                            decoration: _filledDecoration(
+                              context,
+                              hint: 'Optional notes',
                             ),
                           ),
                         ],
-                      ),
-                      const SizedBox(height: 20),
-                      const _FieldLabel('PAYMENT METHOD'),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          for (final option in _methodTiles)
-                            Expanded(
-                              child: Padding(
-                                padding: EdgeInsets.only(
-                                  right: option == _methodTiles.last ? 0 : 8,
-                                ),
-                                child: _PaymentTile(
-                                  label: option.$1,
-                                  icon: option.$2,
-                                  selected: selectedPaymentTile == option.$1,
-                                  onTap: () => setState(() {
-                                    _selectedPaymentTile = option.$1;
-                                    _paymentMethodId = _methodIdForTile(
-                                      option.$1,
-                                      methods,
-                                    );
-                                  }),
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                      const SizedBox(height: 20),
-                      const _FieldLabel('NOTES'),
-                      const SizedBox(height: 7),
-                      TextFormField(
-                        controller: _notes,
-                        maxLines: 3,
-                        decoration: _filledDecoration(
-                          context,
-                          hint: 'Optional notes',
+                        ListenableBuilder(
+                          listenable: _summaryInputs,
+                          builder: (context, _) {
+                            final summary = _liveSummary();
+                            if (summary == null) return const SizedBox.shrink();
+                            return Padding(
+                              padding: const EdgeInsets.only(top: 20),
+                              child: _EmiSummaryCard(summary: summary),
+                            );
+                          },
                         ),
-                      ),
-                      ListenableBuilder(
-                        listenable: _summaryInputs,
-                        builder: (context, _) {
-                          final summary = _liveSummary();
-                          if (summary == null) return const SizedBox.shrink();
-                          return Padding(
-                            padding: const EdgeInsets.only(top: 20),
-                            child: _EmiSummaryCard(summary: summary),
-                          );
-                        },
-                      ),
-                      if (_scheduleError != null) ...[
-                        const SizedBox(height: 16),
-                        _ValidationMessage(_scheduleError!),
+                        if (_scheduleError != null) ...[
+                          const SizedBox(height: 16),
+                          _ValidationMessage(_scheduleError!),
+                        ],
                       ],
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 8),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton.icon(
-                    style: FilledButton.styleFrom(
-                      minimumSize: const Size.fromHeight(54),
-                      shape: const StadiumBorder(),
                     ),
-                    onPressed: _saving ? null : _save,
-                    icon: const Icon(Icons.save_outlined),
-                    label: Text(_saving ? 'Saving...' : 'Save EMI'),
                   ),
-                ),
-              ],
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size.fromHeight(54),
+                        shape: const StadiumBorder(),
+                      ),
+                      onPressed: _saving ? null : _save,
+                      icon: const Icon(Icons.save_outlined),
+                      label: Text(_saving ? 'Saving...' : 'Save EMI'),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -5957,7 +6396,9 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
   }
 
   _EmiFormSummary? _liveSummary() {
-    final principal = _tryPaise(_principal.text);
+    final principal = _principal.text.trim().isEmpty
+        ? _estimatedPrincipal()
+        : _tryPaise(_principal.text);
     final installment = _tryPaise(_amount.text);
     final tenure = int.tryParse(_tenure.text);
     final paid = int.tryParse(_paid.text);
@@ -5976,28 +6417,123 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
     final endDate = remaining == 0
         ? _due
         : emiInstallmentDueDate(_due, remaining, _frequency);
-    final total = installment * tenure;
+    final rate = _annualRate();
+    if (_interest.text.trim().isNotEmpty && rate == null) return null;
+    final expected = expectedEmiInstallmentPaise(
+      principalPaise: principal,
+      tenure: tenure,
+      annualInterestRate: rate ?? 0,
+      interestMethod: _interestMethod,
+    );
+    final mismatch = (installment - expected).abs() > 50;
+    final schedule = calculateEmiSchedule(
+      principalPaise: principal,
+      installmentPaise: installment,
+      tenure: tenure,
+      annualInterestRate: rate,
+      interestMethod: _interestMethod,
+      contractualEmi: _keepEnteredEmi || mismatch,
+    );
     return _EmiFormSummary(
       endDate: endDate,
       remaining: remaining,
-      totalPaise: total,
-      interestPaise: total - principal,
+      totalPaise: schedule.totalRepaymentPaise,
+      interestPaise: (schedule.totalRepaymentPaise - principal).clamp(
+        0,
+        schedule.totalRepaymentPaise,
+      ),
+      feesPaise: _type == 'Credit Card' ? 0 : (_tryPaise(_fees.text) ?? 0),
+      downPaymentPaise: _isProduct ? (_tryPaise(_downPayment.text) ?? 0) : 0,
+      expectedEmiPaise: expected,
+      enteredEmiPaise: installment,
+      hasContractualDifference: mismatch,
+      keepEnteredEmi: _keepEnteredEmi,
     );
+  }
+
+  double? _annualRate() {
+    final text = _interest.text.trim();
+    if (text.isEmpty) return null;
+    final entered = double.tryParse(text);
+    if (entered == null || !entered.isFinite) return null;
+    return annualizedEmiRate(entered, _ratePeriod);
+  }
+
+  int? _estimatedPrincipal() {
+    if (_isProduct) {
+      final price = _tryPaise(_productPrice.text);
+      final downPayment = _downPayment.text.trim().isEmpty
+          ? 0
+          : _tryPaise(_downPayment.text);
+      if (price != null && downPayment != null && price > downPayment) {
+        return price - downPayment;
+      }
+    }
+    final installment = _tryPaise(_amount.text);
+    final tenure = int.tryParse(_tenure.text.trim());
+    final rateText = _interest.text.trim();
+    final rate = _annualRate();
+    if (installment == null ||
+        installment <= 0 ||
+        tenure == null ||
+        tenure <= 0 ||
+        (rateText.isNotEmpty && rate == null)) {
+      return null;
+    }
+    final estimate = estimatedPrincipalPaise(
+      installmentPaise: installment,
+      tenure: tenure,
+      annualInterestRate: rate,
+      interestMethod: _interestMethod,
+    );
+    return estimate > 0 ? estimate : null;
   }
 
   Future<void> _save() async {
     setState(() => _scheduleError = null);
+    final interestError = _interestValidator(_interest.text);
+    if (interestError != null) {
+      setState(() {
+        _showFinancingDetails = true;
+        _scheduleError = interestError;
+      });
+      return;
+    }
     if (!_formKey.currentState!.validate()) return;
     late final int principalPaise;
     late final int emiAmountPaise;
     late final int tenure;
-    final interest = double.tryParse(_interest.text.trim());
+    late final int feesPaise;
+    int? productPricePaise;
+    int? downPaymentPaise;
+    final interest = _annualRate();
     try {
-      principalPaise = parseRupeesToPaise(_principal.text);
       emiAmountPaise = parseRupeesToPaise(_amount.text);
       tenure = int.parse(_tenure.text.trim());
+      feesPaise = _type != 'Credit Card' && _fees.text.trim().isNotEmpty
+          ? parseRupeesToPaise(_fees.text)
+          : 0;
+      productPricePaise = _isProduct
+          ? parseRupeesToPaise(_productPrice.text)
+          : null;
+      downPaymentPaise = _isProduct && _downPayment.text.trim().isNotEmpty
+          ? parseRupeesToPaise(_downPayment.text)
+          : null;
+      principalPaise = _principal.text.trim().isEmpty
+          ? _estimatedPrincipal() ?? 0
+          : parseRupeesToPaise(_principal.text);
     } on FormatException catch (error) {
       setState(() => _scheduleError = error.message);
+      return;
+    }
+    if (_isProduct &&
+        (productPricePaise == null ||
+            productPricePaise <= 0 ||
+            (downPaymentPaise ?? 0) >= productPricePaise)) {
+      setState(
+        () => _scheduleError =
+            'Down payment must be less than the product price.',
+      );
       return;
     }
     final paidCount = int.parse(_paid.text.trim());
@@ -6020,21 +6556,53 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
       );
       return;
     }
-    if (paidCount > tenure) {
-      setState(
-        () => _scheduleError = 'Already-paid EMIs cannot exceed tenure.',
-      );
-      return;
-    }
     final schedule = calculateEmiSchedule(
       principalPaise: principalPaise,
       installmentPaise: emiAmountPaise,
       tenure: tenure,
       annualInterestRate: interest,
+      interestMethod: _interestMethod,
+      contractualEmi: _keepEnteredEmi,
     );
-    if (!schedule.isConsistent) {
-      setState(() => _scheduleError = schedule.validationMessage);
+    if (principalPaise <= 0) {
+      setState(() => _scheduleError = 'Principal must be greater than zero.');
       return;
+    }
+    final productPrincipalMismatch =
+        _isProduct &&
+        principalPaise != productPricePaise! - (downPaymentPaise ?? 0);
+    if ((!schedule.isConsistent && !_keepEnteredEmi) ||
+        productPrincipalMismatch) {
+      final differences = <String>[
+        if (productPrincipalMismatch)
+          'Price minus down payment is '
+              '${formatMoney(productPricePaise - (downPaymentPaise ?? 0))}, '
+              'but Principal is ${formatMoney(principalPaise)}.',
+        if (!schedule.isConsistent)
+          'You entered ${formatMoney(emiAmountPaise)} per payment. '
+              'The principal, rate and tenure imply about '
+              '${formatMoney(schedule.expectedInstallmentPaise)}.',
+      ];
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Check the financing amounts'),
+          content: Text(
+            '${differences.join('\n\n')}\n\nKeep your entered amounts without changing Principal?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Review'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Keep entered amounts'),
+            ),
+          ],
+        ),
+      );
+      if (!mounted || confirmed != true) return;
     }
     setState(() => _saving = true);
     EmiDetail? detail;
@@ -6085,6 +6653,12 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
       principalPaise: Value(principalPaise),
       emiAmountPaise: Value(emiAmountPaise),
       interestRate: Value(interest),
+      interestMethod: Value(_interestMethod),
+      interestPeriod: Value(_ratePeriod),
+      productPricePaise: Value(productPricePaise),
+      downPaymentPaise: Value(downPaymentPaise),
+      feesPaise: Value(feesPaise),
+      contractualEmi: Value(_keepEnteredEmi || !schedule.isConsistent),
       tenureMonths: Value(tenure),
       startDate: Value(startDate),
       nextDueDate: Value(_due),
@@ -6119,14 +6693,25 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
     final text = value?.trim() ?? '';
     if (text.isEmpty) return null;
     final parsed = double.tryParse(text);
-    if (parsed == null) return 'Enter a valid percentage';
+    if (parsed == null || !parsed.isFinite) {
+      return 'Enter a valid percentage';
+    }
     if (parsed < 0) return 'Interest rate cannot be negative';
     return null;
   }
 
   String? _paidValidator(String? value) {
-    final count = int.tryParse(value?.trim() ?? '');
-    if (count == null || count < 0) return 'Enter 0 or more';
+    final text = value?.trim() ?? '';
+    final tenure = int.tryParse(_tenure.text.trim());
+    if (text.isEmpty) return 'Enter how many installments are paid';
+    if (!RegExp(r'^\d+$').hasMatch(text)) {
+      return 'Enter a whole-number count, not an amount';
+    }
+    final count = int.tryParse(text);
+    if (count == null) return 'Enter a valid installment count';
+    if (tenure != null && tenure > 0 && count > tenure) {
+      return 'Cannot exceed $tenure installments';
+    }
     return null;
   }
 
@@ -6235,6 +6820,8 @@ class _LabeledInput extends StatelessWidget {
     required this.controller,
     required this.hint,
     required this.keyboardType,
+    this.helperText,
+    this.autovalidateMode,
     this.prefix,
     this.suffix,
     this.validator,
@@ -6246,6 +6833,8 @@ class _LabeledInput extends StatelessWidget {
   final TextEditingController controller;
   final String hint;
   final TextInputType keyboardType;
+  final String? helperText;
+  final AutovalidateMode? autovalidateMode;
   final String? prefix;
   final String? suffix;
   final String? Function(String?)? validator;
@@ -6261,7 +6850,11 @@ class _LabeledInput extends StatelessWidget {
       enabled: enabled,
       obscureText: obscureAmount,
       keyboardType: keyboardType,
+      autovalidateMode: autovalidateMode,
       decoration: financeFieldDecoration(context, hint: hint).copyWith(
+        helperText: helperText,
+        helperMaxLines: helperText == null ? null : 3,
+        errorMaxLines: helperText == null ? null : 3,
         prefixText: prefix,
         suffixText: suffix,
         suffixIcon: calculator == null
@@ -6297,16 +6890,23 @@ class _PaymentTile extends StatelessWidget {
     required this.label,
     required this.icon,
     required this.selected,
+    required this.selectedFill,
     required this.onTap,
   });
   final String label;
   final IconData icon;
   final bool selected;
+  final Color selectedFill;
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) =>
-      OptionTile(label: label, icon: icon, selected: selected, onTap: onTap);
+  Widget build(BuildContext context) => OptionTile(
+    label: label,
+    icon: icon,
+    selected: selected,
+    selectedFill: selectedFill,
+    onTap: onTap,
+  );
 }
 
 class _EmiFormSummary {
@@ -6315,11 +6915,23 @@ class _EmiFormSummary {
     required this.remaining,
     required this.totalPaise,
     required this.interestPaise,
+    required this.feesPaise,
+    required this.downPaymentPaise,
+    required this.expectedEmiPaise,
+    required this.enteredEmiPaise,
+    required this.hasContractualDifference,
+    required this.keepEnteredEmi,
   });
   final DateTime endDate;
   final int remaining;
   final int totalPaise;
   final int interestPaise;
+  final int feesPaise;
+  final int downPaymentPaise;
+  final int expectedEmiPaise;
+  final int enteredEmiPaise;
+  final bool hasContractualDifference;
+  final bool keepEnteredEmi;
 }
 
 class _EmiSummaryCard extends StatelessWidget {
@@ -6337,10 +6949,40 @@ class _EmiSummaryCard extends StatelessWidget {
       ),
       child: Column(
         children: [
+          _SummaryLine('Calculated EMI', formatMoney(summary.expectedEmiPaise)),
           _SummaryLine('End date', formatDate(summary.endDate)),
           _SummaryLine('EMIs remaining', '${summary.remaining}'),
-          _SummaryLine('Total payable', formatMoney(summary.totalPaise)),
-          _SummaryLine('Total interest', formatMoney(summary.interestPaise)),
+          _SummaryLine('Installments total', formatMoney(summary.totalPaise)),
+          _SummaryLine(
+            summary.hasContractualDifference
+                ? 'Interest implied by entered payments'
+                : 'Estimated interest',
+            formatMoney(summary.interestPaise),
+          ),
+          if (summary.hasContractualDifference)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                'Entered EMI ${formatMoney(summary.enteredEmiPaise)} differs from '
+                'calculated EMI ${formatMoney(summary.expectedEmiPaise)}. '
+                '${summary.keepEnteredEmi ? 'Your contract amount will be kept.' : 'Review the EMI or keep the entered contract amount.'}',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.error,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          if (summary.feesPaise > 0)
+            _SummaryLine('Separate fees', formatMoney(summary.feesPaise)),
+          if (summary.feesPaise > 0 || summary.downPaymentPaise > 0)
+            _SummaryLine(
+              'Overall cost',
+              formatMoney(
+                summary.totalPaise +
+                    summary.feesPaise +
+                    summary.downPaymentPaise,
+              ),
+            ),
         ],
       ),
     );

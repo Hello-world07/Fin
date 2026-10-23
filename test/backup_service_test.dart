@@ -137,6 +137,49 @@ void main() {
     expect(columns['emis'], contains('type'));
   });
 
+  test('restores old EMI backups with default financing terms', () async {
+    await repo.saveEmi(
+      EmisCompanion.insert(
+        name: 'Existing loan',
+        principalPaise: 1200000,
+        emiAmountPaise: 100000,
+        tenureMonths: 12,
+        startDate: DateTime(2026, 11, 1),
+        nextDueDate: DateTime(2026, 11, 1),
+        frequency: PaymentFrequency.monthly,
+        status: EmiStatus.active,
+      ),
+    );
+    final current = await backup.inspectBytes(await backup.createBackupBytes());
+    final tables =
+        jsonDecode(jsonEncode(current.tables)) as Map<String, dynamic>;
+    final oldEmi = (tables['emis'] as List).single as Map<String, dynamic>;
+    for (final column in [
+      'interest_method',
+      'interest_period',
+      'product_price_paise',
+      'down_payment_paise',
+      'fees_paise',
+      'contractual_emi',
+    ]) {
+      oldEmi.remove(column);
+    }
+    final legacy = BackupDocument(
+      tables: tables,
+      counts: current.counts,
+      createdAt: current.createdAt,
+      appVersion: current.appVersion,
+      schemaVersion: 6,
+      encrypted: current.encrypted,
+      legacy: current.legacy,
+      dataChecksum: current.dataChecksum,
+    );
+    await backup.validateDocument(legacy);
+    expect(oldEmi['interest_method'], 'reducing');
+    expect(oldEmi['interest_period'], 'annual');
+    expect(oldEmi['fees_paise'], 0);
+  });
+
   test('rejects invalid enum values before replacing data', () async {
     await repo.saveSubscription(
       SubscriptionsCompanion.insert(

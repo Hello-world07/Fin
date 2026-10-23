@@ -19,12 +19,13 @@ import '../dashboard/home_overview.dart';
 import '../../shared/finance_display_widgets.dart';
 import '../../shared/forms.dart';
 import '../../shared/notched_navigation_bar.dart';
+import '../../shared/timed_snackbar.dart';
 import 'emi_entry_flow.dart';
 import 'emis_screen.dart';
 
-enum _OverviewTab { all, personal, friends }
+enum _OverviewTab { all, personal, friends, completed }
 
-enum _EmiCardAction { pay, edit, delete }
+enum _EmiCardAction { history, remind, pay, edit, delete }
 
 Color _incomeInk(BuildContext context) =>
     Theme.of(context).brightness == Brightness.dark
@@ -77,7 +78,11 @@ class EmiOverviewScreen extends ConsumerStatefulWidget {
 class _EmiOverviewScreenState extends ConsumerState<EmiOverviewScreen> {
   double _tabSwipeDistance = 0;
   final _scrollController = ScrollController();
+  final _agendaSearchController = TextEditingController();
+  String? _selectedAgendaGroup;
+  bool _agendaSearchOpen = false;
   bool _summaryScrolled = false;
+  bool _completedTab = false;
 
   @override
   void initState() {
@@ -93,51 +98,115 @@ class _EmiOverviewScreenState extends ConsumerState<EmiOverviewScreen> {
   @override
   void dispose() {
     _scrollController.dispose();
+    _agendaSearchController.dispose();
     super.dispose();
   }
 
   void _selectTab(_OverviewTab value) {
     if (_scrollController.hasClients) _scrollController.jumpTo(0);
-    if (_summaryScrolled) setState(() => _summaryScrolled = false);
+    setState(() {
+      _summaryScrolled = false;
+      _completedTab = value == _OverviewTab.completed;
+      _selectedAgendaGroup = null;
+      _agendaSearchOpen = false;
+      _agendaSearchController.clear();
+    });
     ref.read(emiOverviewCategoryProvider.notifier).state = switch (value) {
       _OverviewTab.all => null,
       _OverviewTab.personal => EmiCategory.personal,
       _OverviewTab.friends => EmiCategory.givenToFriends,
+      _OverviewTab.completed => null,
     };
   }
 
-  Future<void> _showCardActions(EmiDetail detail) async {
+  Future<void> _showCardActions(
+    EmiDetail detail, {
+    bool longPress = false,
+  }) async {
     final friend = detail.category == EmiCategory.givenToFriends;
     final action = await showModalBottomSheet<_EmiCardAction>(
       context: context,
       showDragHandle: true,
-      builder: (sheet) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (detail.nextUnpaidInstallment != null &&
-                detail.emi.status != EmiStatus.paused)
-              ListTile(
-                leading: const Icon(Icons.check_outlined),
-                title: Text(friend ? 'Record repayment' : 'Mark paid'),
-                onTap: () => Navigator.pop(sheet, _EmiCardAction.pay),
-              ),
-            ListTile(
-              leading: const Icon(Icons.edit_outlined),
-              title: const Text('Edit'),
-              onTap: () => Navigator.pop(sheet, _EmiCardAction.edit),
+      builder: (sheet) {
+        final palette = AppTheme.homePaletteOf(sheet);
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  detail.emi.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(sheet).textTheme.titleLarge?.copyWith(
+                    color: palette.text,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  longPress ? 'Agreement and payment history' : 'Quick actions',
+                  style: TextStyle(color: palette.text2),
+                ),
+                const SizedBox(height: 12),
+                if (longPress)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.history_rounded),
+                    title: const Text('View history'),
+                    subtitle: const Text('Installments and payments'),
+                    onTap: () => Navigator.pop(sheet, _EmiCardAction.history),
+                  ),
+                if (longPress && friend && detail.nextUnpaidInstallment != null)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.notifications_outlined),
+                    title: const Text('Send reminder'),
+                    onTap: () => Navigator.pop(sheet, _EmiCardAction.remind),
+                  ),
+                if (detail.nextUnpaidInstallment != null &&
+                    detail.emi.status != EmiStatus.paused)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.check_outlined),
+                    title: Text(friend ? 'Record repayment' : 'Mark paid'),
+                    onTap: () => Navigator.pop(sheet, _EmiCardAction.pay),
+                  ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.edit_outlined),
+                  title: const Text('Edit'),
+                  onTap: () => Navigator.pop(sheet, _EmiCardAction.edit),
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.delete_outline),
+                  title: const Text('Move to Deleted'),
+                  onTap: () => Navigator.pop(sheet, _EmiCardAction.delete),
+                ),
+              ],
             ),
-            ListTile(
-              leading: const Icon(Icons.delete_outline),
-              title: const Text('Move to Deleted'),
-              onTap: () => Navigator.pop(sheet, _EmiCardAction.delete),
-            ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
     if (!mounted || action == null) return;
     switch (action) {
+      case _EmiCardAction.history:
+        await Navigator.push<void>(
+          context,
+          MaterialPageRoute(
+            builder: (_) => EmiAgreementDetailScreen(detail.emi.id),
+          ),
+        );
+      case _EmiCardAction.remind:
+        await _remindFriendEmi(
+          context,
+          ref.read(financeRepositoryProvider),
+          detail,
+        );
       case _EmiCardAction.pay:
         await _confirmSwipePayment(detail);
       case _EmiCardAction.edit:
@@ -169,7 +238,8 @@ class _EmiOverviewScreenState extends ConsumerState<EmiOverviewScreen> {
         final repository = ref.read(financeRepositoryProvider);
         await repository.deleteEmi(detail.emi.id);
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
+        showTimedSnackBar(
+          ScaffoldMessenger.of(context),
           SnackBar(
             content: const Text('Moved to Deleted'),
             duration: const Duration(seconds: 6),
@@ -231,7 +301,8 @@ class _EmiOverviewScreenState extends ConsumerState<EmiOverviewScreen> {
     final payment = updated.payments
         .where((item) => !previousIds.contains(item.id))
         .firstOrNull;
-    ScaffoldMessenger.of(context).showSnackBar(
+    showTimedSnackBar(
+      ScaffoldMessenger.of(context),
       SnackBar(
         content: Text(
           friend ? 'Repayment recorded' : 'Installment marked paid',
@@ -254,11 +325,13 @@ class _EmiOverviewScreenState extends ConsumerState<EmiOverviewScreen> {
   Widget build(BuildContext context) {
     final colors = AppTheme.homePaletteOf(context);
     final category = ref.watch(emiOverviewCategoryProvider);
-    final tab = switch (category) {
-      null => _OverviewTab.all,
-      EmiCategory.personal => _OverviewTab.personal,
-      EmiCategory.givenToFriends => _OverviewTab.friends,
-    };
+    final tab = _completedTab && category == null
+        ? _OverviewTab.completed
+        : switch (category) {
+            null => _OverviewTab.all,
+            EmiCategory.personal => _OverviewTab.personal,
+            EmiCategory.givenToFriends => _OverviewTab.friends,
+          };
     final details = ref.watch(allEmiDetailsProvider);
     return Scaffold(
       backgroundColor: colors.bg,
@@ -283,16 +356,29 @@ class _EmiOverviewScreenState extends ConsumerState<EmiOverviewScreen> {
           ),
           data: (all) {
             final current = switch (tab) {
-              _OverviewTab.all => all,
+              _OverviewTab.all =>
+                all
+                    .where((item) => item.nextUnpaidInstallment != null)
+                    .toList(),
               _OverviewTab.personal =>
                 all
-                    .where((item) => item.category == EmiCategory.personal)
+                    .where(
+                      (item) =>
+                          item.category == EmiCategory.personal &&
+                          item.nextUnpaidInstallment != null,
+                    )
                     .toList(),
               _OverviewTab.friends =>
                 all
                     .where(
-                      (item) => item.category == EmiCategory.givenToFriends,
+                      (item) =>
+                          item.category == EmiCategory.givenToFriends &&
+                          item.nextUnpaidInstallment != null,
                     )
+                    .toList(),
+              _OverviewTab.completed =>
+                all
+                    .where((item) => item.nextUnpaidInstallment == null)
                     .toList(),
             };
             final active =
@@ -344,11 +430,33 @@ class _EmiOverviewScreenState extends ConsumerState<EmiOverviewScreen> {
                   : 'Later';
               groups[group]!.add(item);
             }
-            final agenda = <({String? header, EmiDetail? detail})>[
+            final quickNav = tab == _OverviewTab.all && active.length >= 8;
+            final query = quickNav
+                ? _agendaSearchController.text.trim().toLowerCase()
+                : '';
+            final agenda = <({String? header, EmiDetail? detail, int count})>[
               for (final entry in groups.entries)
-                if (entry.value.isNotEmpty) ...[
-                  (header: entry.key, detail: null),
-                  for (final item in entry.value) (header: null, detail: item),
+                if (!quickNav ||
+                    _selectedAgendaGroup == null ||
+                    _selectedAgendaGroup == entry.key) ...[
+                  for (final matches in [
+                    entry.value
+                        .where(
+                          (item) =>
+                              query.isEmpty ||
+                              item.emi.name.toLowerCase().contains(query) ||
+                              (item.emi.provider?.toLowerCase().contains(
+                                    query,
+                                  ) ??
+                                  false),
+                        )
+                        .toList(),
+                  ])
+                    if (matches.isNotEmpty) ...[
+                      (header: entry.key, detail: null, count: matches.length),
+                      for (final item in matches)
+                        (header: null, detail: item, count: 0),
+                    ],
                 ],
             ];
             final personalLeft = personal.fold<int>(
@@ -365,6 +473,7 @@ class _EmiOverviewScreenState extends ConsumerState<EmiOverviewScreen> {
                 incoming: false,
               ),
               _OverviewTab.friends => _signedAmount(friendLeft, incoming: true),
+              _OverviewTab.completed => 'Completed',
               _OverviewTab.all =>
                 '${_signedAmount(personalLeft, incoming: false)}  ${_signedAmount(friendLeft, incoming: true)}',
             };
@@ -445,7 +554,11 @@ class _EmiOverviewScreenState extends ConsumerState<EmiOverviewScreen> {
                                               color: _summaryScrolled
                                                   ? tab == _OverviewTab.personal
                                                         ? _expenseInk(context)
-                                                        : _incomeInk(context)
+                                                        : tab ==
+                                                              _OverviewTab
+                                                                  .friends
+                                                        ? _incomeInk(context)
+                                                        : colors.text
                                                   : colors.text,
                                               fontWeight: FontWeight.w800,
                                             ),
@@ -489,26 +602,96 @@ class _EmiOverviewScreenState extends ConsumerState<EmiOverviewScreen> {
                       slivers: [
                         SliverToBoxAdapter(
                           child: Padding(
-                            padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
+                            padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                if (active.isNotEmpty) ...[
+                                if (active.isNotEmpty &&
+                                    tab != _OverviewTab.completed) ...[
                                   _OverviewSummary(
                                     personal: personal,
                                     friends: friends,
                                     overdue: overdue,
                                     tab: tab,
                                   ),
-                                  const SizedBox(height: 12),
+                                  const SizedBox(height: 8),
                                   _EmiMonthlySchedule(details: current),
-                                  const SizedBox(height: 20),
+                                  const SizedBox(height: 12),
                                 ],
                               ],
                             ),
                           ),
                         ),
-                        if (current.isEmpty)
+                        if (tab == _OverviewTab.completed && completed.isEmpty)
+                          const SliverToBoxAdapter(
+                            child: Padding(
+                              padding: EdgeInsets.all(24),
+                              child: Text('Completed EMIs will appear here.'),
+                            ),
+                          )
+                        else if (tab == _OverviewTab.completed)
+                          SliverPadding(
+                            padding: const EdgeInsets.symmetric(horizontal: 20),
+                            sliver: SliverList.builder(
+                              itemCount: completed.length,
+                              itemBuilder: (context, index) {
+                                final detail = completed[index];
+                                final received =
+                                    detail.category ==
+                                    EmiCategory.givenToFriends;
+                                return ListTile(
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    vertical: 5,
+                                  ),
+                                  leading: CircleAvatar(
+                                    backgroundColor: _accentInk(
+                                      context,
+                                    ).withValues(alpha: .1),
+                                    child: Icon(
+                                      Icons.check_rounded,
+                                      color: _accentInk(context),
+                                    ),
+                                  ),
+                                  title: Text(
+                                    detail.emi.name,
+                                    style: TextStyle(
+                                      color: received
+                                          ? _incomeInk(context)
+                                          : _accentInk(context),
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                  subtitle: Text(
+                                    '${received ? 'Received in full' : 'Paid in full'}'
+                                    '${detail.emi.provider == null || detail.emi.provider!.isEmpty ? '' : ' · ${detail.emi.provider}'}',
+                                    style: TextStyle(color: colors.text2),
+                                  ),
+                                  trailing: AmountText(
+                                    detail.paidPaise,
+                                    style: TextStyle(
+                                      color: received
+                                          ? _incomeInk(context)
+                                          : _expenseInk(context),
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w800,
+                                      fontFeatures: const [
+                                        FontFeature.tabularFigures(),
+                                      ],
+                                    ),
+                                  ),
+                                  onTap: () => Navigator.push(
+                                    context,
+                                    MaterialPageRoute<void>(
+                                      builder: (_) => EmiAgreementDetailScreen(
+                                        detail.emi.id,
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                          )
+                        else if (current.isEmpty)
                           SliverToBoxAdapter(
                             child: Padding(
                               padding: const EdgeInsets.symmetric(
@@ -530,65 +713,180 @@ class _EmiOverviewScreenState extends ConsumerState<EmiOverviewScreen> {
                               child: Text('All agreements here are complete.'),
                             ),
                           )
-                        else
-                          SliverPadding(
-                            padding: const EdgeInsets.symmetric(horizontal: 20),
-                            sliver: SliverList.builder(
-                              itemCount: agenda.length,
-                              itemBuilder: (context, index) {
-                                final item = agenda[index];
-                                if (item.header != null) {
-                                  return Padding(
-                                    padding: const EdgeInsets.fromLTRB(
-                                      0,
-                                      18,
-                                      0,
-                                      8,
+                        else ...[
+                          if (quickNav)
+                            SliverToBoxAdapter(
+                              child: Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  20,
+                                  4,
+                                  20,
+                                  0,
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            '${active.length} active EMIs',
+                                            style: TextStyle(
+                                              color: colors.text,
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                        ),
+                                        IconButton(
+                                          tooltip: _agendaSearchOpen
+                                              ? 'Close EMI search'
+                                              : 'Search EMIs',
+                                          onPressed: () => setState(() {
+                                            _agendaSearchOpen =
+                                                !_agendaSearchOpen;
+                                            if (!_agendaSearchOpen) {
+                                              _agendaSearchController.clear();
+                                            }
+                                          }),
+                                          icon: Icon(
+                                            _agendaSearchOpen
+                                                ? Icons.close
+                                                : Icons.search,
+                                            color: colors.text,
+                                          ),
+                                        ),
+                                      ],
                                     ),
-                                    child: Text(
-                                      item.header!,
-                                      style: TextStyle(
-                                        color: item.header == 'Overdue'
-                                            ? Theme.of(
-                                                context,
-                                              ).colorScheme.error
-                                            : colors.text,
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.w700,
+                                    if (_agendaSearchOpen)
+                                      Padding(
+                                        padding: const EdgeInsets.only(
+                                          bottom: 8,
+                                        ),
+                                        child: TextField(
+                                          controller: _agendaSearchController,
+                                          onChanged: (_) => setState(() {}),
+                                          decoration: InputDecoration(
+                                            hintText: 'Search name or lender',
+                                            prefixIcon: const Icon(
+                                              Icons.search,
+                                            ),
+                                            filled: true,
+                                            fillColor: colors.surfaceAlt,
+                                            border: const OutlineInputBorder(
+                                              borderSide: BorderSide.none,
+                                            ),
+                                            isDense: true,
+                                          ),
+                                        ),
+                                      ),
+                                    SingleChildScrollView(
+                                      scrollDirection: Axis.horizontal,
+                                      child: Row(
+                                        children: [
+                                          for (final group in <String?>[
+                                            null,
+                                            ...groups.keys.where(
+                                              (key) => groups[key]!.isNotEmpty,
+                                            ),
+                                          ]) ...[
+                                            ChoiceChip(
+                                              label: Text(
+                                                group == null
+                                                    ? 'All ${active.length}'
+                                                    : '$group ${groups[group]!.length}',
+                                              ),
+                                              selected:
+                                                  _selectedAgendaGroup == group,
+                                              showCheckmark: false,
+                                              selectedColor: colors.text,
+                                              backgroundColor:
+                                                  colors.surfaceAlt,
+                                              side: BorderSide.none,
+                                              labelStyle: TextStyle(
+                                                color:
+                                                    _selectedAgendaGroup ==
+                                                        group
+                                                    ? colors.bg
+                                                    : colors.text,
+                                              ),
+                                              onSelected: (_) => setState(
+                                                () => _selectedAgendaGroup =
+                                                    group,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 8),
+                                          ],
+                                        ],
                                       ),
                                     ),
-                                  );
-                                }
-                                final detail = item.detail!;
-                                return _AgreementCard(
-                                  key: ValueKey(detail.emi.id),
-                                  detail: detail,
-                                  onActions: () => _showCardActions(detail),
-                                  onRemind:
-                                      detail.category ==
-                                          EmiCategory.givenToFriends
-                                      ? (buttonContext) => _remindFriendEmi(
-                                          buttonContext,
-                                          ref.read(financeRepositoryProvider),
-                                          detail,
-                                        )
-                                      : null,
-                                );
-                              },
-                            ),
-                          ),
-                        if (completed.isNotEmpty)
-                          SliverToBoxAdapter(
-                            child: Padding(
-                              padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
-                              child: _CompletedSection(
-                                key: PageStorageKey(
-                                  'emi-completed-${tab.name}',
+                                  ],
                                 ),
-                                details: completed,
                               ),
                             ),
-                          ),
+                          if (agenda.isEmpty)
+                            const SliverToBoxAdapter(
+                              child: Padding(
+                                padding: EdgeInsets.all(20),
+                                child: Text('No EMIs match this search.'),
+                              ),
+                            )
+                          else
+                            SliverPadding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 20,
+                              ),
+                              sliver: SliverList.builder(
+                                itemCount: agenda.length,
+                                itemBuilder: (context, index) {
+                                  final item = agenda[index];
+                                  if (item.header != null) {
+                                    return Padding(
+                                      padding: const EdgeInsets.fromLTRB(
+                                        0,
+                                        12,
+                                        0,
+                                        8,
+                                      ),
+                                      child: Text(
+                                        tab == _OverviewTab.all
+                                            ? '${item.header!} · ${item.count}'
+                                            : item.header!,
+                                        style: TextStyle(
+                                          color: item.header == 'Overdue'
+                                              ? Theme.of(
+                                                  context,
+                                                ).colorScheme.error
+                                              : colors.text,
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                    );
+                                  }
+                                  final detail = item.detail!;
+                                  return _AgreementCard(
+                                    key: ValueKey(detail.emi.id),
+                                    detail: detail,
+                                    onActions: () => _showCardActions(detail),
+                                    onLongPress: () => _showCardActions(
+                                      detail,
+                                      longPress: true,
+                                    ),
+                                    onRemind:
+                                        detail.category ==
+                                            EmiCategory.givenToFriends
+                                        ? (buttonContext) => _remindFriendEmi(
+                                            buttonContext,
+                                            ref.read(financeRepositoryProvider),
+                                            detail,
+                                          )
+                                        : null,
+                                  );
+                                },
+                              ),
+                            ),
+                        ],
                         SliverToBoxAdapter(
                           child: SizedBox(
                             height: NotchedNavigationMetrics.tabContentPadding(
@@ -617,49 +915,52 @@ class _CategoryTabs extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = AppTheme.homePaletteOf(context);
-    const labels = ['All', 'Personal', 'Given to others'];
+    const labels = ['All', 'Personal', 'Given to others', 'Completed'];
     return SizedBox(
       height: 44,
-      child: Row(
-        children: [
-          for (final (index, tab) in _OverviewTab.values.indexed)
-            Expanded(
-              child: Semantics(
-                selected: tab == value,
-                button: true,
-                child: InkWell(
-                  onTap: () => onChanged(tab),
-                  child: Container(
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      border: Border(
-                        bottom: BorderSide(
-                          color: tab == value ? colors.text : colors.line,
-                          width: tab == value ? 2 : 1,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            for (final (index, tab) in _OverviewTab.values.indexed)
+              SizedBox(
+                width: switch (tab) {
+                  _OverviewTab.all => 64,
+                  _OverviewTab.personal => 94,
+                  _OverviewTab.friends => 132,
+                  _OverviewTab.completed => 104,
+                },
+                child: Semantics(
+                  selected: tab == value,
+                  button: true,
+                  child: InkWell(
+                    onTap: () => onChanged(tab),
+                    child: Container(
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        border: Border(
+                          bottom: BorderSide(
+                            color: tab == value ? colors.text : colors.line,
+                            width: tab == value ? 2 : 1,
+                          ),
                         ),
                       ),
-                    ),
-                    child: FittedBox(
-                      fit: BoxFit.scaleDown,
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 5),
-                        child: Text(
-                          labels[index],
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: tab == value
-                                ? FontWeight.w700
-                                : FontWeight.w500,
-                            color: tab == value ? colors.text : colors.text2,
-                          ),
+                      child: Text(
+                        labels[index],
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: tab == value
+                              ? FontWeight.w700
+                              : FontWeight.w500,
+                          color: tab == value ? colors.text : colors.text2,
                         ),
                       ),
                     ),
                   ),
                 ),
               ),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -730,7 +1031,7 @@ class _OverviewSummary extends ConsumerWidget {
       children: [
         Container(
           width: double.infinity,
-          padding: const EdgeInsets.all(18),
+          padding: const EdgeInsets.all(16),
           decoration: _emiCard(context),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -756,16 +1057,6 @@ class _OverviewSummary extends ConsumerWidget {
                     ),
                 ],
               ),
-              if (tab == _OverviewTab.all) ...[
-                const SizedBox(height: 8),
-                Text(
-                  'Net ${friendTotal >= personalTotal ? '+' : '−'}${formatMoney((friendTotal - personalTotal).abs())}',
-                  style: TextStyle(
-                    color: colors.text2,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
               if (tab == _OverviewTab.personal && personalTotal > 0) ...[
                 const SizedBox(height: 12),
                 Wrap(
@@ -869,10 +1160,10 @@ class _OverviewSummary extends ConsumerWidget {
           ),
         ),
         if (nextPay != null || nextReceive != null) ...[
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(14),
             decoration: _emiCard(context),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1014,6 +1305,10 @@ class _EmiMonthlyScheduleState extends State<_EmiMonthlySchedule> {
     );
     double barHeight(int value) =>
         value == 0 || largest == 0 ? 0 : math.max(4, 36 * value / largest);
+    final halfHeight = math.max(
+      52.0,
+      MediaQuery.textScalerOf(context).scale(11) + 44,
+    );
     String monthTooltip(HomeMonth month) =>
         '${DateFormat('MMMM yyyy').format(month.start)}: ${[if (month.incoming > 0) '${formatMoney(month.incoming)} expected back', if (month.outgoing > 0) '${formatMoney(month.outgoing)} to pay', if (month.incoming == 0 && month.outgoing == 0) 'No installments due'].join(', ')}';
     if (months.every((month) => month.items.isEmpty)) {
@@ -1054,7 +1349,7 @@ class _EmiMonthlyScheduleState extends State<_EmiMonthlySchedule> {
                           children: [
                             if (hasIncoming || !hasOutgoing)
                               SizedBox(
-                                height: 52,
+                                height: halfHeight,
                                 child: Column(
                                   mainAxisAlignment: MainAxisAlignment.end,
                                   children: [
@@ -1086,7 +1381,7 @@ class _EmiMonthlyScheduleState extends State<_EmiMonthlySchedule> {
                               ),
                             if (!hasIncoming && hasOutgoing)
                               SizedBox(
-                                height: 52,
+                                height: halfHeight,
                                 child: Column(
                                   mainAxisAlignment: MainAxisAlignment.end,
                                   children: [
@@ -1114,7 +1409,7 @@ class _EmiMonthlyScheduleState extends State<_EmiMonthlySchedule> {
                             Container(height: 1, color: colors.line),
                             if (hasIncoming && hasOutgoing)
                               SizedBox(
-                                height: 52,
+                                height: halfHeight,
                                 child: Column(
                                   children: [
                                     Align(
@@ -1479,10 +1774,12 @@ class _AgreementCard extends StatelessWidget {
     super.key,
     required this.detail,
     required this.onActions,
+    required this.onLongPress,
     this.onRemind,
   });
   final EmiDetail detail;
   final VoidCallback onActions;
+  final VoidCallback onLongPress;
   final void Function(BuildContext)? onRemind;
 
   @override
@@ -1503,7 +1800,7 @@ class _AgreementCard extends StatelessWidget {
     return Material(
       color: colors.bg,
       child: InkWell(
-        onLongPress: onActions,
+        onLongPress: onLongPress,
         onTap: () => Navigator.push(
           context,
           MaterialPageRoute(
@@ -1511,7 +1808,7 @@ class _AgreementCard extends StatelessWidget {
           ),
         ),
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 11),
+          padding: const EdgeInsets.symmetric(vertical: 6),
           child: Column(
             children: [
               Row(
@@ -1539,16 +1836,46 @@ class _AgreementCard extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          detail.emi.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: colors.text,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w700,
-                          ),
+                        Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                detail.emi.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: colors.text,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                            if (detail.emi.notes?.trim().isNotEmpty ==
+                                true) ...[
+                              const SizedBox(width: 4),
+                              Icon(
+                                Icons.notes_outlined,
+                                size: 15,
+                                color: colors.text2,
+                                semanticLabel: 'Has notes',
+                              ),
+                            ],
+                          ],
                         ),
+                        if (detail.emi.provider?.trim().isNotEmpty == true)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Text(
+                              detail.emi.provider!.trim(),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: colors.text2,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
                       ],
                     ),
                   ),
@@ -1621,7 +1948,15 @@ class _AgreementCard extends StatelessWidget {
                                 : detail.emi.tenureMonths == 1
                                 ? 'One-time'
                                 : '${detail.paidInstallments}/${detail.emi.tenureMonths} paid',
-                            style: TextStyle(color: colors.text2, fontSize: 12),
+                            style: TextStyle(
+                              color: friend && detail.paidPaise > 0
+                                  ? _incomeInk(context)
+                                  : colors.text2,
+                              fontSize: 12,
+                              fontWeight: friend
+                                  ? FontWeight.w700
+                                  : FontWeight.w500,
+                            ),
                           ),
                         ),
                         const SizedBox(width: 8),
@@ -1629,8 +1964,8 @@ class _AgreementCard extends StatelessWidget {
                           '${formatMoney(detail.remainingBalancePaise)} left',
                           textAlign: TextAlign.right,
                           style: TextStyle(
-                            color: directionInk,
-                            fontSize: 12,
+                            color: colors.text,
+                            fontSize: 13,
                             fontWeight: FontWeight.w800,
                             fontFeatures: const [FontFeature.tabularFigures()],
                           ),
@@ -1652,25 +1987,8 @@ class _AgreementCard extends StatelessWidget {
                 Builder(
                   builder: (buttonContext) => Align(
                     alignment: Alignment.centerRight,
-                    child: OutlinedButton.icon(
+                    child: _EmiRemindButton(
                       onPressed: () => onRemind!(buttonContext),
-                      icon: const Icon(
-                        Icons.notifications_active_outlined,
-                        size: 18,
-                      ),
-                      label: const Text('Remind'),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: _incomeInk(context),
-                        backgroundColor: _incomeInk(
-                          context,
-                        ).withValues(alpha: .07),
-                        side: BorderSide(
-                          color: _incomeInk(context).withValues(alpha: .5),
-                        ),
-                        minimumSize: const Size(0, 44),
-                        shape: const StadiumBorder(),
-                        textStyle: const TextStyle(fontWeight: FontWeight.w700),
-                      ),
                     ),
                   ),
                 ),
@@ -1682,43 +2000,27 @@ class _AgreementCard extends StatelessWidget {
   }
 }
 
-class _CompletedSection extends StatelessWidget {
-  const _CompletedSection({super.key, required this.details});
-  final List<EmiDetail> details;
+class _EmiRemindButton extends StatelessWidget {
+  const _EmiRemindButton({required this.onPressed});
+
+  final VoidCallback onPressed;
+
   @override
   Widget build(BuildContext context) {
     final colors = AppTheme.homePaletteOf(context);
-    return ExpansionTile(
-      key: PageStorageKey('emi-completed-expansion-${details.first.emi.id}'),
-      tilePadding: EdgeInsets.zero,
-      title: Text(
-        'Completed (${details.length})',
-        style: TextStyle(
-          color: colors.text,
-          fontSize: 15,
-          fontWeight: FontWeight.w700,
-        ),
+    return OutlinedButton.icon(
+      onPressed: onPressed,
+      icon: Icon(Icons.send_outlined, size: 17, color: _incomeInk(context)),
+      label: const Text('Send reminder'),
+      style: OutlinedButton.styleFrom(
+        foregroundColor: colors.text,
+        backgroundColor: colors.surfaceAlt,
+        side: BorderSide(color: colors.line),
+        minimumSize: const Size(0, 44),
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        textStyle: const TextStyle(fontWeight: FontWeight.w700),
       ),
-      children: [
-        for (final detail in details)
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: Icon(Icons.check_circle_outline, color: colors.text2),
-            title: Text(detail.emi.name),
-            subtitle: Text(
-              detail.category == EmiCategory.personal
-                  ? 'Personal'
-                  : 'Given to Others',
-            ),
-            trailing: AmountText(detail.paidPaise),
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => EmiAgreementDetailScreen(detail.emi.id),
-              ),
-            ),
-          ),
-      ],
     );
   }
 }
@@ -1738,6 +2040,7 @@ class _EmptyCategory extends StatelessWidget {
         'Personal loans and credit-card installments appear here.',
       _OverviewTab.friends =>
         'Add an agreement to track repayments from someone else.',
+      _OverviewTab.completed => 'Completed EMIs will appear here.',
     };
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 28),
@@ -1914,8 +2217,10 @@ class EmiAgreementDetailScreen extends ConsumerWidget {
     final repository = ref.read(financeRepositoryProvider);
     await repository.deleteEmi(id);
     if (!context.mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
     Navigator.pop(context);
-    ScaffoldMessenger.of(context).showSnackBar(
+    showTimedSnackBar(
+      messenger,
       SnackBar(
         content: const Text('Moved to Deleted'),
         duration: const Duration(seconds: 6),
@@ -2035,6 +2340,38 @@ class EmiAgreementDetailScreen extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: 12),
+          if (detail.emi.notes?.trim().isNotEmpty == true) ...[
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.notes_outlined, size: 20, color: colors.text2),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Notes',
+                          style: TextStyle(
+                            color: colors.text,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          detail.emi.notes!.trim(),
+                          style: TextStyle(color: colors.text2, height: 1.4),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
           if (next != null)
             Container(
               width: double.infinity,
@@ -2082,17 +2419,12 @@ class EmiAgreementDetailScreen extends ConsumerWidget {
                     ],
                   ),
                   if (friend)
-                    OutlinedButton(
+                    _EmiRemindButton(
                       onPressed: () => _remindFriendEmi(
                         context,
                         ref.read(financeRepositoryProvider),
                         detail,
                       ),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: _incomeInk(context),
-                        side: BorderSide(color: _incomeInk(context)),
-                      ),
-                      child: const Text('Remind'),
                     ),
                 ],
               ),
@@ -2106,39 +2438,69 @@ class EmiAgreementDetailScreen extends ConsumerWidget {
               fontWeight: FontWeight.w800,
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 12),
           for (final installment in detail.installments) ...[
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: Icon(
-                installment.isPaid
-                    ? Icons.check_circle
-                    : (detail.paidByInstallment[installment.number] ?? 0) > 0
-                    ? Icons.brightness_2_outlined
-                    : Icons.radio_button_unchecked,
-                color: colors.text2,
-              ),
-              title: Text(
-                '${DateFormat('MMM yyyy').format(installment.dueDate)} · installment ${installment.number}',
-              ),
-              subtitle: Text(
-                '${DateFormat('d MMM yyyy').format(installment.dueDate)} · ${installment.isPaid ? 'Paid · ${_paidDueLabel(installment.dueDate)}' : _dueLabel(installment.dueDate)}'
-                '${(detail.paidByInstallment[installment.number] ?? 0) > 0 && !installment.isPaid ? '\n${formatMoney(detail.paidByInstallment[installment.number]!)} of ${formatMoney(detail.amountForInstallment(installment.number))} ${friend ? 'received' : 'paid'} · ${formatMoney(detail.unpaidAmountForInstallment(installment.number))} due' : ''}',
-                style: TextStyle(color: colors.text2, fontSize: 12),
-              ),
-              trailing: Text(
-                _signedAmount(
-                  detail.amountForInstallment(installment.number),
-                  incoming: friend,
-                ),
-                style: TextStyle(
-                  color: friend ? _incomeInk(context) : _expenseInk(context),
-                  fontWeight: FontWeight.w700,
-                  fontFeatures: const [FontFeature.tabularFigures()],
-                ),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  CircleAvatar(
+                    radius: 17,
+                    backgroundColor: colors.surfaceAlt,
+                    child: installment.isPaid
+                        ? Icon(
+                            Icons.check_rounded,
+                            size: 18,
+                            color: _incomeInk(context),
+                          )
+                        : Text(
+                            '${installment.number}',
+                            style: TextStyle(
+                              color: colors.text,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Installment ${installment.number} · ${DateFormat('MMM yyyy').format(installment.dueDate)}',
+                          style: TextStyle(
+                            color: colors.text,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          '${DateFormat('d MMM yyyy').format(installment.dueDate)} · ${installment.isPaid ? 'Paid · ${_paidDueLabel(installment.dueDate)}' : _dueLabel(installment.dueDate)}'
+                          '${(detail.paidByInstallment[installment.number] ?? 0) > 0 && !installment.isPaid ? '\n${formatMoney(detail.paidByInstallment[installment.number]!)} of ${formatMoney(detail.amountForInstallment(installment.number))} ${friend ? 'received' : 'paid'} · ${formatMoney(detail.unpaidAmountForInstallment(installment.number))} due' : ''}',
+                          style: TextStyle(color: colors.text2, fontSize: 12),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    _signedAmount(
+                      detail.amountForInstallment(installment.number),
+                      incoming: friend,
+                    ),
+                    style: TextStyle(
+                      color: friend
+                          ? _incomeInk(context)
+                          : _expenseInk(context),
+                      fontWeight: FontWeight.w800,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 4),
           ],
           const SizedBox(height: 26),
           Text(
@@ -2156,59 +2518,66 @@ class EmiAgreementDetailScreen extends ConsumerWidget {
               style: TextStyle(color: colors.text2, fontSize: 13),
             ),
           for (final payment in payments)
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: Text(DateFormat('d MMM yyyy').format(payment.paidOn)),
-              subtitle: Text(
-                'Installment ${payment.installmentNumber}',
-                style: TextStyle(color: colors.text2, fontSize: 12),
-              ),
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    _signedAmount(payment.amountPaise, incoming: friend),
-                    style: TextStyle(
-                      color: friend
-                          ? _incomeInk(context)
-                          : _expenseInk(context),
-                      fontWeight: FontWeight.w700,
-                      fontFeatures: const [FontFeature.tabularFigures()],
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(
+                  Icons.payments_outlined,
+                  color: _incomeInk(context),
+                ),
+                title: Text(DateFormat('d MMM yyyy').format(payment.paidOn)),
+                subtitle: Text(
+                  'Installment ${payment.installmentNumber}',
+                  style: TextStyle(color: colors.text2, fontSize: 12),
+                ),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _signedAmount(payment.amountPaise, incoming: friend),
+                      style: TextStyle(
+                        color: friend
+                            ? _incomeInk(context)
+                            : _expenseInk(context),
+                        fontWeight: FontWeight.w700,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
                     ),
-                  ),
-                  TextButton(
-                    child: const Text('Undo'),
-                    onPressed: () async {
-                      final confirmed = await showDialog<bool>(
-                        context: context,
-                        builder: (dialog) => AlertDialog(
-                          title: const Text('Undo payment?'),
-                          actions: [
-                            TextButton(
-                              onPressed: () => Navigator.pop(dialog, false),
-                              child: const Text('Keep'),
-                            ),
-                            TextButton(
-                              onPressed: () => Navigator.pop(dialog, true),
-                              child: const Text('Undo'),
-                            ),
-                          ],
-                        ),
-                      );
-                      if (confirmed != true || !context.mounted) return;
-                      final reverted = await ref
-                          .read(financeRepositoryProvider)
-                          .revertEmiPayment(id, payment.id);
-                      if (context.mounted && !reverted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Could not undo this payment'),
+                    TextButton(
+                      child: const Text('Undo'),
+                      onPressed: () async {
+                        final confirmed = await showDialog<bool>(
+                          context: context,
+                          builder: (dialog) => AlertDialog(
+                            title: const Text('Undo payment?'),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(dialog, false),
+                                child: const Text('Keep'),
+                              ),
+                              TextButton(
+                                onPressed: () => Navigator.pop(dialog, true),
+                                child: const Text('Undo'),
+                              ),
+                            ],
                           ),
                         );
-                      }
-                    },
-                  ),
-                ],
+                        if (confirmed != true || !context.mounted) return;
+                        final reverted = await ref
+                            .read(financeRepositoryProvider)
+                            .revertEmiPayment(id, payment.id);
+                        if (context.mounted && !reverted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Could not undo this payment'),
+                            ),
+                          );
+                        }
+                      },
+                    ),
+                  ],
+                ),
               ),
             ),
         ],
@@ -2390,28 +2759,79 @@ class _RecordPaymentSheetState extends ConsumerState<_RecordPaymentSheet> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            friend ? 'Record repayment received' : 'Record payment made',
+            friend ? 'Record money received' : 'Record installment paid',
             style: Theme.of(
               context,
             ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
           ),
-          const SizedBox(height: 5),
-          Text(
-            'Next installment · ${formatMoney(_stillDue)} left',
-            style: TextStyle(color: colors.text2, fontSize: 13),
+          const SizedBox(height: 14),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: _emiCard(context),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Installment ${widget.detail.nextUnpaidInstallment!.number}',
+                        style: TextStyle(
+                          color: colors.text,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      Text(
+                        'Due ${DateFormat('d MMM yyyy').format(widget.detail.nextUnpaidInstallment!.dueDate)}',
+                        style: TextStyle(color: colors.text2, fontSize: 13),
+                      ),
+                    ],
+                  ),
+                ),
+                Text(
+                  '${formatMoney(_stillDue)} left',
+                  style: TextStyle(
+                    color: colors.text,
+                    fontWeight: FontWeight.w800,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ],
+            ),
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 18),
           TextField(
             controller: _amount,
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            decoration: const InputDecoration(
-              labelText: 'Amount',
-              prefixText: '₹ ',
+            autofocus: false,
+            style: TextStyle(
+              color: colors.text,
+              fontSize: 24,
+              fontWeight: FontWeight.w800,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+            decoration: InputDecoration(
+              labelText: friend ? 'Amount received' : 'Amount paid',
+              prefixText: '${activeAmountFormatter.value.symbol} ',
+              filled: true,
+              fillColor: colors.surfaceAlt,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(14),
+                borderSide: BorderSide.none,
+              ),
             ),
           ),
           const SizedBox(height: 12),
-          TextButton.icon(
-            style: TextButton.styleFrom(foregroundColor: colors.text),
+          OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(
+              foregroundColor: colors.text,
+              side: BorderSide(color: colors.line),
+              minimumSize: const Size(0, 44),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+            ),
             onPressed: () async {
               final date = await showDatePicker(
                 context: context,
@@ -2439,6 +2859,10 @@ class _RecordPaymentSheetState extends ConsumerState<_RecordPaymentSheet> {
               style: FilledButton.styleFrom(
                 backgroundColor: colors.text,
                 foregroundColor: colors.bg,
+                minimumSize: const Size.fromHeight(52),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
               ),
               onPressed: _saving ? null : _save,
               child: Text(_saving ? 'Saving…' : 'Save payment'),

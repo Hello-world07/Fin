@@ -113,6 +113,8 @@ class EmiDetail {
     installmentPaise: emi.emiAmountPaise,
     tenure: emi.tenureMonths,
     annualInterestRate: emi.interestRate,
+    interestMethod: emi.interestMethod,
+    contractualEmi: emi.contractualEmi,
     paidInstallmentAmounts: [
       ...List<int>.generate(
         emi.initialPaidInstallments,
@@ -153,7 +155,9 @@ class EmiDetail {
   int get scheduledInstallmentPaise => emi.emiAmountPaise;
   int _scheduledAmount(int number) {
     if (number == emi.tenureMonths) {
-      final total = emi.interestRate == null || emi.interestRate == 0
+      final total =
+          (emi.interestRate == null || emi.interestRate == 0) &&
+              !emi.contractualEmi
           ? emi.principalPaise
           : emi.emiAmountPaise * emi.tenureMonths;
       return (total - emi.emiAmountPaise * (emi.tenureMonths - 1)).clamp(
@@ -1533,6 +1537,12 @@ class FinanceRepository {
     final interest = item.interestRate.present
         ? item.interestRate.value
         : existing?.interestRate;
+    final interestMethod = item.interestMethod.present
+        ? item.interestMethod.value
+        : existing?.interestMethod ?? EmiInterestMethod.reducing;
+    final contractualEmi = item.contractualEmi.present
+        ? item.contractualEmi.value
+        : existing?.contractualEmi ?? false;
     final initialPaid = item.initialPaidInstallments.present
         ? item.initialPaidInstallments.value
         : existing?.initialPaidInstallments ?? 0;
@@ -1541,7 +1551,13 @@ class FinanceRepository {
         'Already-paid installments must be between zero and the tenure.',
       );
     }
-    final total = interest == null || interest == 0
+    if (principal <= 0 ||
+        installment <= 0 ||
+        tenure <= 0 ||
+        (interest != null && (!interest.isFinite || interest < 0))) {
+      throw const FormatException('Invalid EMI amount, tenure, or interest.');
+    }
+    final total = (interest == null || interest == 0) && !contractualEmi
         ? principal
         : installment * tenure;
     final schedule = calculateEmiSchedule(
@@ -1549,6 +1565,8 @@ class FinanceRepository {
       installmentPaise: installment,
       tenure: tenure,
       annualInterestRate: interest,
+      interestMethod: interestMethod,
+      contractualEmi: contractualEmi,
       paidInstallmentAmounts: List<int>.generate(
         initialPaid.clamp(0, tenure),
         (index) => index + 1 == tenure
@@ -1556,7 +1574,7 @@ class FinanceRepository {
             : installment,
       ),
     );
-    if (!schedule.isConsistent) {
+    if (!schedule.isConsistent && !contractualEmi) {
       throw FormatException(
         schedule.validationMessage ?? 'Invalid EMI details',
       );
@@ -1577,6 +1595,8 @@ class FinanceRepository {
           installment != existing.emiAmountPaise ||
           tenure != existing.tenureMonths ||
           interest != existing.interestRate ||
+          interestMethod != existing.interestMethod ||
+          contractualEmi != existing.contractualEmi ||
           requestedStart.year != existing.startDate.year ||
           requestedStart.month != existing.startDate.month ||
           requestedStart.day != existing.startDate.day ||
@@ -1730,7 +1750,7 @@ class FinanceRepository {
           detail.amountForInstallment(installment) -
           (detail.paidByInstallment[installment] ?? 0);
       final paymentAmount = amountPaise ?? stillDue;
-      if (!detail.schedule.isConsistent ||
+      if ((!detail.schedule.isConsistent && !emi.contractualEmi) ||
           paymentAmount <= 0 ||
           paymentAmount > stillDue ||
           paymentAmount > detail.remainingBalancePaise) {
@@ -2357,6 +2377,11 @@ class FinanceRepository {
 
   Future<void> clearAllData() async {
     await db.transaction(() async {
+      await db.delete(db.cardConversionPayments).go();
+      await db.delete(db.cardEmiConversions).go();
+      await db.delete(db.cardLedgerEntries).go();
+      await db.delete(db.cardStatements).go();
+      await db.delete(db.creditCards).go();
       await db.delete(db.emiPayments).go();
       await db.delete(db.moneyRepayments).go();
       await db.delete(db.emis).go();

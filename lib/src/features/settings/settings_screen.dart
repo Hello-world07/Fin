@@ -152,299 +152,253 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final privacy = ref.watch(privacyModeProvider);
     final appearance = ref.watch(appThemeModeProvider);
 
-    return _LazySettingsList(
-      padding: const EdgeInsets.fromLTRB(20, 8, 20, 48),
-      children: [
-        if (widget.showHeading)
+    return Theme(
+      data: AppTheme.neutralControlTheme(context),
+      child: _LazySettingsList(
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 48),
+        children: [
+          if (widget.showHeading)
+            Text(
+              'Settings',
+              style: theme.textTheme.headlineSmall?.copyWith(
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          if (widget.showHeading) const SizedBox(height: 20),
           Text(
-            'Settings',
-            style: theme.textTheme.headlineSmall?.copyWith(
+            'DATA HEALTH',
+            style: theme.textTheme.labelMedium?.copyWith(
+              color: scheme.onSurfaceVariant,
               fontWeight: FontWeight.w800,
             ),
           ),
-        if (widget.showHeading) const SizedBox(height: 20),
-        Text(
-          'DATA HEALTH',
-          style: theme.textTheme.labelMedium?.copyWith(
-            color: scheme.onSurfaceVariant,
-            fontWeight: FontWeight.w800,
-          ),
-        ),
-        const SizedBox(height: 10),
-        Row(
-          children: [
-            Container(
-              width: 10,
-              height: 10,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: _backupColor(backup?.lastAt),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Container(
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: _backupColor(backup?.lastAt),
+                ),
               ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                _backupText(backup?.lastAt),
-                style: theme.textTheme.titleMedium,
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  _backupText(backup?.lastAt),
+                  style: theme.textTheme.titleMedium,
+                ),
               ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 20),
-        Row(
-          children: [
-            _CountFigure(counts?.emis, 'EMIs'),
-            _CountFigure(counts?.money, 'Money'),
-            _CountFigure(counts?.subscriptions, 'Subscriptions'),
-          ],
-        ),
-        const SizedBox(height: 20),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: FilledButton.icon(
-            onPressed: _busy ? null : _backUpNow,
-            icon: const Icon(Icons.backup_outlined),
-            label: const Text('Back up now'),
+            ],
           ),
-        ),
+          const SizedBox(height: 20),
+          Row(
+            children: [
+              _CountFigure(counts?.emis, 'EMIs'),
+              _CountFigure(counts?.money, 'Money'),
+              _CountFigure(counts?.subscriptions, 'Subscriptions'),
+            ],
+          ),
+          const SizedBox(height: 20),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton.icon(
+              onPressed: _busy ? null : _backUpNow,
+              icon: const Icon(Icons.backup_outlined),
+              label: const Text('Back up now'),
+            ),
+          ),
 
-        const SettingsSectionHeader('Security'),
-        SettingsRow(
-          icon: Icons.lock_outline,
-          title: 'App lock',
-          subtitle: lock.enabled ? 'PIN required to open FinKeep' : 'Off',
-          trailing: Switch.adaptive(
-            value: lock.enabled,
-            onChanged: _busy ? null : _toggleLock,
-          ),
-        ),
-        if (lock.enabled) ...[
+          const SettingsSectionHeader('Security'),
           SettingsRow(
-            icon: Icons.timer_outlined,
-            title: 'Auto-lock delay',
-            subtitle: 'After leaving FinKeep',
-            trailing: PopupMenuButton<AutoLockDelay>(
-              tooltip: 'Auto-lock delay',
-              initialValue: lock.delay,
-              onSelected: (value) =>
-                  _setLockOption('privacy.appLock.delay', value.name),
-              itemBuilder: (_) => AutoLockDelay.values
-                  .map(
-                    (value) =>
-                        PopupMenuItem(value: value, child: Text(value.label)),
-                  )
-                  .toList(),
-              child: Padding(
-                padding: const EdgeInsets.all(8),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(lock.delay.label),
-                    const Icon(Icons.arrow_drop_down),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          SettingsRow(
-            icon: Icons.fingerprint,
-            title: 'Unlock with fingerprint / face',
-            subtitle: biometricsAvailable
-                ? 'Use enrolled biometrics'
-                : 'No enrolled biometrics available',
+            icon: Icons.lock_outline,
+            title: 'App lock',
+            subtitle: lock.enabled ? 'PIN required to open FinKeep' : 'Off',
             trailing: Switch.adaptive(
-              value: lock.biometricEnabled && biometricsAvailable,
-              onChanged: _busy || !biometricsAvailable
-                  ? null
-                  : _toggleBiometrics,
+              value: lock.enabled,
+              onChanged: _busy ? null : _toggleLock,
             ),
           ),
-          if (lock.biometricEnabled && biometricsAvailable)
+          if (lock.enabled) ...[
             SettingsRow(
-              icon: Icons.touch_app_outlined,
-              title: 'Ask for fingerprint automatically',
-              subtitle: 'Off by default; PIN remains available',
-              trailing: Switch.adaptive(
-                value: lock.autoBiometric,
-                onChanged: (value) => _setLockOption(
-                  'privacy.appLock.autoBiometric',
-                  value.toString(),
+              icon: Icons.timer_outlined,
+              title: 'Auto-lock delay',
+              subtitle: 'After leaving FinKeep',
+              trailing: PopupMenuButton<AutoLockDelay>(
+                tooltip: 'Auto-lock delay',
+                initialValue: lock.delay,
+                onSelected: (value) =>
+                    _setLockOption('privacy.appLock.delay', value.name),
+                itemBuilder: (_) => AutoLockDelay.values
+                    .map(
+                      (value) =>
+                          PopupMenuItem(value: value, child: Text(value.label)),
+                    )
+                    .toList(),
+                child: Padding(
+                  padding: const EdgeInsets.all(8),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(lock.delay.label),
+                      const Icon(Icons.arrow_drop_down),
+                    ],
+                  ),
                 ),
               ),
             ),
-          SettingsRow(
-            icon: Icons.password_outlined,
-            title: 'Change PIN',
-            onTap: _busy ? null : _changePin,
-          ),
+            SettingsRow(
+              icon: Icons.fingerprint,
+              title: 'Unlock with fingerprint / face',
+              subtitle: biometricsAvailable
+                  ? 'Use enrolled biometrics'
+                  : 'No enrolled biometrics available',
+              trailing: Switch.adaptive(
+                value: lock.biometricEnabled && biometricsAvailable,
+                onChanged: _busy || !biometricsAvailable
+                    ? null
+                    : _toggleBiometrics,
+              ),
+            ),
+            if (lock.biometricEnabled && biometricsAvailable)
+              SettingsRow(
+                icon: Icons.touch_app_outlined,
+                title: 'Ask for fingerprint automatically',
+                subtitle: 'Off by default; PIN remains available',
+                trailing: Switch.adaptive(
+                  value: lock.autoBiometric,
+                  onChanged: (value) => _setLockOption(
+                    'privacy.appLock.autoBiometric',
+                    value.toString(),
+                  ),
+                ),
+              ),
+            SettingsRow(
+              icon: Icons.password_outlined,
+              title: 'Change PIN',
+              onTap: _busy ? null : _changePin,
+            ),
+            SettingsRow(
+              icon: Icons.visibility_off_outlined,
+              title: 'Hide in recent apps and block screenshots',
+              subtitle: 'Protect sensitive content on Android',
+              trailing: Switch.adaptive(
+                value: lock.secureScreen,
+                onChanged: _toggleSecureScreen,
+              ),
+            ),
+          ],
           SettingsRow(
             icon: Icons.visibility_off_outlined,
-            title: 'Hide in recent apps and block screenshots',
-            subtitle: 'Protect sensitive content on Android',
+            title: 'Privacy mode',
+            subtitle: 'Hide amounts throughout FinKeep',
             trailing: Switch.adaptive(
-              value: lock.secureScreen,
-              onChanged: _toggleSecureScreen,
+              value: privacy.enabled,
+              onChanged: (value) => ref
+                  .read(privacyModeProvider.notifier)
+                  .setEnabled(value, context: context),
             ),
           ),
-        ],
-        SettingsRow(
-          icon: Icons.visibility_off_outlined,
-          title: 'Privacy mode',
-          subtitle: 'Hide amounts throughout FinKeep',
-          trailing: Switch.adaptive(
-            value: privacy.enabled,
-            onChanged: (value) => ref
-                .read(privacyModeProvider.notifier)
-                .setEnabled(value, context: context),
-          ),
-        ),
-        SettingsRow(
-          icon: Icons.lock_clock_outlined,
-          title: 'Hide amounts when the app opens',
-          trailing: Switch.adaptive(
-            value: privacy.hideOnOpen,
-            onChanged: (value) =>
-                ref.read(privacyModeProvider.notifier).setHideOnOpen(value),
-          ),
-        ),
-        SettingsRow(
-          icon: Icons.verified_user_outlined,
-          title: 'Ask for PIN/fingerprint',
-          subtitle: 'PIN or fingerprint / face · 30-second grace',
-          trailing: Switch.adaptive(
-            value: privacy.requireUnlock,
-            onChanged: (value) => ref
-                .read(privacyModeProvider.notifier)
-                .setRequireUnlock(value, context),
-          ),
-        ),
-        if (privacy.requireUnlock)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-            child: SizedBox(
-              width: double.infinity,
-              child: SegmentedButton<PrivacyGateRule>(
-                segments: const [
-                  ButtonSegment(
-                    value: PrivacyGateRule.revealOnly,
-                    label: Text('Reveal only'),
-                  ),
-                  ButtonSegment(
-                    value: PrivacyGateRule.hideAndReveal,
-                    label: Text('Hide and reveal'),
-                  ),
-                ],
-                selected: {privacy.gateRule},
-                showSelectedIcon: false,
-                onSelectionChanged: (value) => ref
-                    .read(privacyModeProvider.notifier)
-                    .setGateRule(value.single),
-              ),
+          SettingsRow(
+            icon: Icons.lock_clock_outlined,
+            title: 'Hide amounts when the app opens',
+            trailing: Switch.adaptive(
+              value: privacy.hideOnOpen,
+              onChanged: (value) =>
+                  ref.read(privacyModeProvider.notifier).setHideOnOpen(value),
             ),
           ),
-
-        const SettingsSectionHeader('Backup & data'),
-        const BackupSettingsSection(),
-        SettingsRow(
-          icon: Icons.picture_as_pdf_outlined,
-          title: 'Export PDF report',
-          onTap: () => _run(
-            () => AppLockSession.instance.keepUnlocked(
-              () => ref.read(pdfExportProvider).shareExport(),
+          SettingsRow(
+            icon: Icons.verified_user_outlined,
+            title: 'Ask for PIN/fingerprint',
+            subtitle: 'PIN or fingerprint / face · 30-second grace',
+            trailing: Switch.adaptive(
+              value: privacy.requireUnlock,
+              onChanged: (value) => ref
+                  .read(privacyModeProvider.notifier)
+                  .setRequireUnlock(value, context),
             ),
           ),
-        ),
-        SettingsRow(
-          icon: Icons.table_view_outlined,
-          title: 'Export CSV',
-          subtitle: 'Separate EMI, Money and Subscription files',
-          onTap: () => _run(
-            () => AppLockSession.instance.keepUnlocked(
-              () => ref.read(csvExportProvider).shareExport(),
-            ),
-          ),
-        ),
-
-        SettingsRow(
-          icon: Icons.numbers_outlined,
-          title: 'Number format',
-          subtitle: '${amountFormat.region.label} · ${amountFormat.preview}',
-          onTap: () => showFinanceBottomSheet<void>(
-            context,
-            builder: (sheet) => FractionallySizedBox(
-              heightFactor: 0.78,
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-                children: [
-                  Text(
-                    'Number format',
-                    style: Theme.of(sheet).textTheme.titleLarge,
-                  ),
-                  const SizedBox(height: 12),
-                  for (final region in AmountRegion.values)
-                    ListTile(
-                      title: Text(region.label),
-                      subtitle: Text(
-                        AmountFormatter(
-                          region: region,
-                          symbol: amountFormat.symbol,
-                        ).preview,
-                      ),
-                      trailing: region == amountFormat.region
-                          ? const Icon(Icons.check)
-                          : null,
-                      onTap: () {
-                        ref
-                            .read(amountFormatProvider.notifier)
-                            .setRegion(region);
-                        Navigator.pop(sheet);
-                      },
+          if (privacy.requireUnlock)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+              child: SizedBox(
+                width: double.infinity,
+                child: SegmentedButton<PrivacyGateRule>(
+                  segments: const [
+                    ButtonSegment(
+                      value: PrivacyGateRule.revealOnly,
+                      label: Text('Reveal only'),
                     ),
-                ],
+                    ButtonSegment(
+                      value: PrivacyGateRule.hideAndReveal,
+                      label: Text('Hide and reveal'),
+                    ),
+                  ],
+                  selected: {privacy.gateRule},
+                  showSelectedIcon: false,
+                  onSelectionChanged: (value) => ref
+                      .read(privacyModeProvider.notifier)
+                      .setGateRule(value.single),
+                ),
+              ),
+            ),
+
+          const SettingsSectionHeader('Backup & data'),
+          const BackupSettingsSection(),
+          SettingsRow(
+            icon: Icons.picture_as_pdf_outlined,
+            title: 'Export PDF report',
+            onTap: () => _run(
+              () => AppLockSession.instance.keepUnlocked(
+                () => ref.read(pdfExportProvider).shareExport(),
               ),
             ),
           ),
-        ),
-        SettingsRow(
-          icon: Icons.currency_exchange_outlined,
-          title: 'Currency symbol',
-          subtitle:
-              '${amountFormat.symbol} · Symbol only. Amounts are not converted.',
-          onTap: () => showFinanceBottomSheet<void>(
-            context,
-            builder: (sheet) => SafeArea(
-              top: false,
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+          SettingsRow(
+            icon: Icons.table_view_outlined,
+            title: 'Export CSV',
+            subtitle: 'Separate EMI, Money and Subscription files',
+            onTap: () => _run(
+              () => AppLockSession.instance.keepUnlocked(
+                () => ref.read(csvExportProvider).shareExport(),
+              ),
+            ),
+          ),
+
+          SettingsRow(
+            icon: Icons.numbers_outlined,
+            title: 'Number format',
+            subtitle: '${amountFormat.region.label} · ${amountFormat.preview}',
+            onTap: () => showFinanceBottomSheet<void>(
+              context,
+              builder: (sheet) => FractionallySizedBox(
+                heightFactor: 0.78,
+                child: ListView(
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
                   children: [
                     Text(
-                      'Currency symbol',
+                      'Number format',
                       style: Theme.of(sheet).textTheme.titleLarge,
                     ),
-                    const SizedBox(height: 4),
-                    const Text('Symbol only. Amounts are not converted.'),
                     const SizedBox(height: 12),
-                    for (final symbol in const [
-                      '₹',
-                      r'$',
-                      '€',
-                      '£',
-                      'AED',
-                      r'S$',
-                      '¥',
-                      r'R$',
-                    ])
+                    for (final region in AmountRegion.values)
                       ListTile(
-                        title: Text(symbol),
-                        trailing: symbol == amountFormat.symbol
+                        title: Text(region.label),
+                        subtitle: Text(
+                          AmountFormatter(
+                            region: region,
+                            symbol: amountFormat.symbol,
+                          ).preview,
+                        ),
+                        trailing: region == amountFormat.region
                             ? const Icon(Icons.check)
                             : null,
                         onTap: () {
                           ref
                               .read(amountFormatProvider.notifier)
-                              .setSymbol(symbol);
+                              .setRegion(region);
                           Navigator.pop(sheet);
                         },
                       ),
@@ -453,109 +407,160 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ),
             ),
           ),
-        ),
-
-        const SettingsSectionHeader('Appearance'),
-        Row(
-          children: [
-            for (final mode in ThemeMode.values) ...[
-              if (mode != ThemeMode.system) const SizedBox(width: 10),
-              Expanded(
-                child: _AppearanceTile(
-                  mode: mode,
-                  selected: appearance == mode,
-                  onTap: () =>
-                      ref.read(appThemeModeProvider.notifier).setMode(mode),
+          SettingsRow(
+            icon: Icons.currency_exchange_outlined,
+            title: 'Currency symbol',
+            subtitle:
+                '${amountFormat.symbol} · Symbol only. Amounts are not converted.',
+            onTap: () => showFinanceBottomSheet<void>(
+              context,
+              builder: (sheet) => SafeArea(
+                top: false,
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Currency symbol',
+                        style: Theme.of(sheet).textTheme.titleLarge,
+                      ),
+                      const SizedBox(height: 4),
+                      const Text('Symbol only. Amounts are not converted.'),
+                      const SizedBox(height: 12),
+                      for (final symbol in const [
+                        '₹',
+                        r'$',
+                        '€',
+                        '£',
+                        'AED',
+                        r'S$',
+                        '¥',
+                        r'R$',
+                      ])
+                        ListTile(
+                          title: Text(symbol),
+                          trailing: symbol == amountFormat.symbol
+                              ? const Icon(Icons.check)
+                              : null,
+                          onTap: () {
+                            ref
+                                .read(amountFormatProvider.notifier)
+                                .setSymbol(symbol);
+                            Navigator.pop(sheet);
+                          },
+                        ),
+                    ],
+                  ),
                 ),
               ),
-            ],
-          ],
-        ),
-
-        const SettingsSectionHeader('Notifications'),
-        FutureBuilder<({bool enabled, int hour, int minute})>(
-          future: _dailyBrief,
-          builder: (context, snapshot) {
-            final setting = snapshot.data;
-            return SettingsRow(
-              icon: Icons.wb_sunny_outlined,
-              title: 'Morning brief',
-              subtitle: setting == null
-                  ? 'Loading'
-                  : 'Daily at ${TimeOfDay(hour: setting.hour, minute: setting.minute).format(context)}',
-              trailing: Switch(
-                value: setting?.enabled ?? false,
-                onChanged: setting == null
-                    ? null
-                    : (value) => _setDailyBrief(enabled: value),
-              ),
-              onTap: setting == null
-                  ? null
-                  : () async {
-                      final picked = await showTimePicker(
-                        context: context,
-                        initialTime: TimeOfDay(
-                          hour: setting.hour,
-                          minute: setting.minute,
-                        ),
-                      );
-                      if (picked != null && mounted) {
-                        await _setDailyBrief(time: picked);
-                      }
-                    },
-            );
-          },
-        ),
-        SettingsRow(
-          icon: Icons.history,
-          title: 'Activity history',
-          onTap: () => Navigator.of(context).push(
-            MaterialPageRoute<void>(builder: (_) => const ActivityScreen()),
-          ),
-        ),
-
-        const SettingsSectionHeader('Deleted'),
-        SettingsRow(
-          icon: Icons.delete_outline,
-          title: 'Recycle bin',
-          subtitle:
-              '${counts?.deleted ?? 0} deleted ${counts?.deleted == 1 ? 'item' : 'items'}',
-          onTap: _showDeleted,
-        ),
-
-        const SettingsSectionHeader('About'),
-        SettingsRow(
-          icon: Icons.info_outline,
-          title: 'FinKeep',
-          subtitle: 'Local-first personal finance',
-          onTap: _showAbout,
-        ),
-        SettingsRow(
-          icon: Icons.slideshow_outlined,
-          title: 'Replay intro',
-          onTap: () => Navigator.of(context).push(
-            MaterialPageRoute<void>(
-              builder: (_) => const IntroScreen(replay: true),
             ),
           ),
-        ),
-        SettingsRow(
-          icon: Icons.privacy_tip_outlined,
-          title: 'Privacy & data',
-          onTap: () => Navigator.of(context).push(
-            MaterialPageRoute<void>(builder: (_) => const PrivacyDataScreen()),
-          ),
-        ),
 
-        const SizedBox(height: 30),
-        SettingsRow(
-          icon: Icons.delete_forever_outlined,
-          title: 'Clear all data',
-          subtitle: 'Permanently remove records and deleted items',
-          destructive: true,
-          onTap: _confirmClearAll,
-        ),
-      ],
+          const SettingsSectionHeader('Appearance'),
+          Row(
+            children: [
+              for (final mode in ThemeMode.values) ...[
+                if (mode != ThemeMode.system) const SizedBox(width: 10),
+                Expanded(
+                  child: _AppearanceTile(
+                    mode: mode,
+                    selected: appearance == mode,
+                    onTap: () =>
+                        ref.read(appThemeModeProvider.notifier).setMode(mode),
+                  ),
+                ),
+              ],
+            ],
+          ),
+
+          const SettingsSectionHeader('Notifications'),
+          FutureBuilder<({bool enabled, int hour, int minute})>(
+            future: _dailyBrief,
+            builder: (context, snapshot) {
+              final setting = snapshot.data;
+              return SettingsRow(
+                icon: Icons.wb_sunny_outlined,
+                title: 'Morning brief',
+                subtitle: setting == null
+                    ? 'Loading'
+                    : 'Daily at ${TimeOfDay(hour: setting.hour, minute: setting.minute).format(context)}',
+                trailing: Switch(
+                  value: setting?.enabled ?? false,
+                  onChanged: setting == null
+                      ? null
+                      : (value) => _setDailyBrief(enabled: value),
+                ),
+                onTap: setting == null
+                    ? null
+                    : () async {
+                        final picked = await showTimePicker(
+                          context: context,
+                          initialTime: TimeOfDay(
+                            hour: setting.hour,
+                            minute: setting.minute,
+                          ),
+                        );
+                        if (picked != null && mounted) {
+                          await _setDailyBrief(time: picked);
+                        }
+                      },
+              );
+            },
+          ),
+          SettingsRow(
+            icon: Icons.history,
+            title: 'Activity history',
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => const ActivityScreen()),
+            ),
+          ),
+
+          const SettingsSectionHeader('Deleted'),
+          SettingsRow(
+            icon: Icons.delete_outline,
+            title: 'Recycle bin',
+            subtitle:
+                '${counts?.deleted ?? 0} deleted ${counts?.deleted == 1 ? 'item' : 'items'}',
+            onTap: _showDeleted,
+          ),
+
+          const SettingsSectionHeader('About'),
+          SettingsRow(
+            icon: Icons.info_outline,
+            title: 'FinKeep',
+            subtitle: 'Local-first personal finance',
+            onTap: _showAbout,
+          ),
+          SettingsRow(
+            icon: Icons.slideshow_outlined,
+            title: 'Replay intro',
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => const IntroScreen(replay: true),
+              ),
+            ),
+          ),
+          SettingsRow(
+            icon: Icons.privacy_tip_outlined,
+            title: 'Privacy & data',
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => const PrivacyDataScreen(),
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 30),
+          SettingsRow(
+            icon: Icons.delete_forever_outlined,
+            title: 'Clear all data',
+            subtitle: 'Permanently remove records and deleted items',
+            destructive: true,
+            onTap: _confirmClearAll,
+          ),
+        ],
+      ),
     );
   }
 
@@ -564,7 +569,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     if (lastAt == null) return scheme.error;
     final age = DateTime.now().difference(lastAt);
     if (age < const Duration(days: 7)) {
-      return AppTheme.colorsOf(context).receive;
+      return scheme.onSurface;
     }
     if (age < const Duration(days: 30)) return AppTheme.colorsOf(context).emi;
     return scheme.error;

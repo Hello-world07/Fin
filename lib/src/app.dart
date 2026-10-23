@@ -90,6 +90,25 @@ class AppShell extends ConsumerStatefulWidget {
 
 class _AppShellState extends ConsumerState<AppShell> {
   final _visitedTabs = <int>{0};
+  bool _dockVisible = true;
+  double _scrollTravel = 0;
+
+  bool _handleScroll(ScrollUpdateNotification notification) {
+    if (notification.metrics.axis != Axis.vertical ||
+        notification.dragDetails == null) {
+      return false;
+    }
+    final delta = notification.scrollDelta ?? 0;
+    if (delta == 0) return false;
+    if (_scrollTravel.sign != delta.sign) _scrollTravel = 0;
+    _scrollTravel += delta;
+    if (_scrollTravel.abs() >= 12) {
+      final visible = _scrollTravel < 0;
+      _scrollTravel = 0;
+      if (_dockVisible != visible) setState(() => _dockVisible = visible);
+    }
+    return false;
+  }
 
   Widget _screenFor(int index) => switch (index) {
     0 => const DashboardScreen(),
@@ -181,22 +200,45 @@ class _AppShellState extends ConsumerState<AppShell> {
     ref.watch(databaseProvider);
     final selected = ref.watch(shellIndexProvider);
     final index = selected >= 4 ? 0 : selected;
+    final dockMotion = MediaQuery.disableAnimationsOf(context)
+        ? Duration.zero
+        : const Duration(milliseconds: 200);
     _visitedTabs.add(index);
     return Scaffold(
       extendBody: true,
-      body: IndexedStack(
-        index: index,
-        children: [
-          for (var tab = 0; tab < 4; tab++)
-            _visitedTabs.contains(tab)
-                ? TickerMode(enabled: tab == index, child: _screenFor(tab))
-                : const SizedBox.shrink(),
-        ],
+      body: NotificationListener<ScrollUpdateNotification>(
+        onNotification: _handleScroll,
+        child: IndexedStack(
+          index: index,
+          children: [
+            for (var tab = 0; tab < 4; tab++)
+              _visitedTabs.contains(tab)
+                  ? TickerMode(enabled: tab == index, child: _screenFor(tab))
+                  : const SizedBox.shrink(),
+          ],
+        ),
       ),
-      bottomNavigationBar: NotchedNavigationBar(
-        selectedIndex: index,
-        onSelected: (value) =>
-            ref.read(shellIndexProvider.notifier).state = value,
+      bottomNavigationBar: AnimatedSlide(
+        offset: _dockVisible ? Offset.zero : const Offset(0, 1.25),
+        duration: dockMotion,
+        curve: Curves.easeOutCubic,
+        child: AnimatedOpacity(
+          opacity: _dockVisible ? 1 : 0,
+          duration: dockMotion,
+          child: IgnorePointer(
+            ignoring: !_dockVisible,
+            child: NotchedNavigationBar(
+              selectedIndex: index,
+              onSelected: (value) {
+                setState(() {
+                  _dockVisible = true;
+                  _scrollTravel = 0;
+                });
+                ref.read(shellIndexProvider.notifier).state = value;
+              },
+            ),
+          ),
+        ),
       ),
     );
   }

@@ -49,10 +49,10 @@ class SettingsRow extends StatelessWidget {
               radius: 22,
               backgroundColor: destructive
                   ? scheme.errorContainer
-                  : scheme.secondaryContainer,
+                  : scheme.surfaceContainerLow,
               child: Icon(
                 icon,
-                color: destructive ? scheme.error : scheme.onSecondaryContainer,
+                color: destructive ? scheme.error : scheme.onSurface,
               ),
             ),
             const SizedBox(width: 14),

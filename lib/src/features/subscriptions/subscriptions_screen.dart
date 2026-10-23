@@ -23,6 +23,7 @@ import '../../shared/finance_display_widgets.dart';
 import '../../shared/notched_navigation_bar.dart';
 import '../../shared/screen_header.dart';
 import '../../shared/calculator_sheet.dart';
+import '../../shared/timed_snackbar.dart';
 
 void openSubscriptionDetailSheet(BuildContext context, Subscription item) {
   openFinanceSheet(
@@ -72,9 +73,7 @@ class _SubscriptionsScreenState extends ConsumerState<SubscriptionsScreen> {
                 if (items.isEmpty) {
                   return ListView(
                     padding: EdgeInsets.only(
-                      bottom: NotchedNavigationMetrics.contentPadding(
-                        context,
-                      ),
+                      bottom: NotchedNavigationMetrics.contentPadding(context),
                     ),
                     children: [
                       EmptyState(
@@ -599,9 +598,11 @@ class _SubscriptionRow extends StatelessWidget {
         try {
           await repo.deleteSubscription(item.id);
           if (context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
+            showTimedSnackBar(
+              ScaffoldMessenger.of(context),
               SnackBar(
                 content: Text('${displayName(item.name)} deleted'),
+                duration: const Duration(seconds: 6),
                 action: SnackBarAction(
                   label: 'Undo',
                   onPressed: () async {
@@ -1069,9 +1070,11 @@ class _SubscriptionDetailSheet extends ConsumerWidget {
     await repo.deleteSubscription(item.id);
     if (context.mounted) Navigator.pop(context);
     if (hostContext.mounted) {
-      ScaffoldMessenger.of(hostContext).showSnackBar(
+      showTimedSnackBar(
+        ScaffoldMessenger.of(hostContext),
         SnackBar(
           content: Text('${displayName(item.name)} moved to Deleted'),
+          duration: const Duration(seconds: 6),
           action: SnackBarAction(
             label: 'Undo',
             onPressed: () => repo.restoreSubscription(item),

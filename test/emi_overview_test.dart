@@ -24,8 +24,9 @@ void main() {
     WidgetTester tester,
     ThemeMode mode, {
     double textScale = 1,
+    Size size = const Size(360, 800),
   }) async {
-    await tester.binding.setSurfaceSize(const Size(360, 800));
+    await tester.binding.setSurfaceSize(size);
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
@@ -61,7 +62,7 @@ void main() {
         find.text('Personal loans and credit-card installments appear here.'),
         findsOneWidget,
       );
-      await tester.tap(find.text('Given to Others'));
+      await tester.tap(find.text('Given to others'));
       await tester.pumpAndSettle();
       expect(
         find.text('Add an agreement to track repayments from someone else.'),
@@ -101,7 +102,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Bank loan'), findsWidgets);
     expect(find.text('Ravi'), findsNothing);
-    await tester.tap(find.text('Given to Others'));
+    await tester.ensureVisible(find.text('Given to others'));
+    await tester.tap(find.text('Given to others'));
     await tester.pumpAndSettle();
     expect(find.text('Ravi'), findsWidgets);
     expect(find.text('Bank loan'), findsNothing);
@@ -228,8 +230,9 @@ void main() {
     await pumpScreen(tester, ThemeMode.light);
     await tester.drag(find.byType(CustomScrollView), const Offset(0, -350));
     await tester.pumpAndSettle();
-    await tester.longPress(find.byType(Dismissible));
+    await tester.longPress(find.text('Actions loan').last);
     await tester.pumpAndSettle();
+    expect(find.text('View history'), findsOneWidget);
     expect(find.text('Edit'), findsOneWidget);
     expect(find.text('Move to Deleted'), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -265,7 +268,7 @@ void main() {
     expect(message, isNot(contains('late fee')));
   });
 
-  testWidgets('completed expansion does not read the scroll offset as a bool', (
+  testWidgets('completed agreements appear only in the Completed tab', (
     tester,
   ) async {
     for (var index = 0; index < 10; index++) {
@@ -296,20 +299,20 @@ void main() {
       ),
     );
     await pumpScreen(tester, ThemeMode.light);
-    await tester.scrollUntilVisible(
-      find.text('Completed (1)'),
-      300,
-      scrollable: find.byType(Scrollable).first,
-    );
-    await tester.tap(find.text('Completed (1)'));
+    expect(find.text('Paid loan'), findsNothing);
+    await tester.tap(find.text('Personal'));
     await tester.pumpAndSettle();
-    expect(find.text('Paid loan'), findsWidgets);
+    expect(find.text('Paid loan'), findsNothing);
+    await tester.ensureVisible(find.text('Completed'));
+    await tester.tap(find.text('Completed'));
+    await tester.pumpAndSettle();
+    expect(find.text('Paid loan'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(milliseconds: 1));
   });
 
-  testWidgets('right swipe confirms one payment and Undo restores it', (
+  testWidgets('Mark paid confirms one payment and Undo restores it', (
     tester,
   ) async {
     final id = await repository.saveEmi(
@@ -326,16 +329,23 @@ void main() {
     );
     await pumpScreen(tester, ThemeMode.light);
     await tester.scrollUntilVisible(
-      find.byType(Dismissible),
+      find.text('Bank swipe').last,
       200,
-      scrollable: find.byType(Scrollable).first,
+      scrollable: find
+          .descendant(
+            of: find.byType(CustomScrollView),
+            matching: find.byType(Scrollable),
+          )
+          .first,
     );
     await Scrollable.ensureVisible(
-      tester.element(find.byType(Dismissible)),
+      tester.element(find.text('Bank swipe').last),
       alignment: 0.5,
     );
     await tester.pumpAndSettle();
-    await tester.drag(find.byType(Dismissible), const Offset(240, 0));
+    await tester.tap(find.byTooltip('More actions').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Mark paid'));
     await tester.pumpAndSettle();
     expect(find.text('Mark installment paid?'), findsOneWidget);
     await tester.tap(find.text('Confirm'));
@@ -344,6 +354,90 @@ void main() {
     await tester.tap(find.text('Undo'));
     await tester.pumpAndSettle();
     expect((await repository.emiDetail(id)).paidInstallments, 0);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 1));
+  });
+
+  testWidgets('All keeps later EMIs reachable without expanding groups', (
+    tester,
+  ) async {
+    final due = DateTime(DateTime.now().year, DateTime.now().month + 1, 1);
+    for (var index = 1; index <= 9; index++) {
+      await repository.saveEmi(
+        EmisCompanion.insert(
+          name: 'Agreement $index',
+          principalPaise: 100000,
+          emiAmountPaise: 100000,
+          tenureMonths: 1,
+          startDate: due,
+          nextDueDate: due,
+          frequency: PaymentFrequency.monthly,
+          status: EmiStatus.active,
+        ),
+      );
+    }
+    await pumpScreen(tester, ThemeMode.light);
+    final list = find
+        .descendant(
+          of: find.byType(CustomScrollView),
+          matching: find.byType(Scrollable),
+        )
+        .first;
+    await tester.scrollUntilVisible(
+      find.text('Agreement 9'),
+      250,
+      scrollable: list,
+    );
+    expect(find.text('Agreement 9'), findsOneWidget);
+    expect(find.textContaining('Show all'), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 1));
+  });
+
+  testWidgets('EMI reminders stay scrollable on a short phone', (tester) async {
+    await pumpScreen(tester, ThemeMode.light, size: const Size(320, 568));
+    await tester.tap(find.byTooltip('EMI reminders'));
+    await tester.pumpAndSettle();
+    expect(find.text('EMI reminders'), findsOneWidget);
+    expect(find.text('Lead time'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 1));
+  });
+
+  testWidgets('saved EMI notes are visible without opening Edit', (
+    tester,
+  ) async {
+    await repository.saveEmi(
+      EmisCompanion.insert(
+        name: 'Note agreement',
+        principalPaise: 1200000,
+        emiAmountPaise: 100000,
+        tenureMonths: 12,
+        startDate: DateTime(DateTime.now().year, DateTime.now().month + 1, 1),
+        nextDueDate: DateTime(DateTime.now().year, DateTime.now().month + 1, 1),
+        frequency: PaymentFrequency.monthly,
+        status: EmiStatus.active,
+        notes: const Value('Reference ABC-123'),
+      ),
+    );
+    await pumpScreen(tester, ThemeMode.light);
+    await tester.scrollUntilVisible(
+      find.text('Note agreement').last,
+      250,
+      scrollable: find
+          .descendant(
+            of: find.byType(CustomScrollView),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    await tester.tap(find.text('Note agreement').last);
+    await tester.pumpAndSettle();
+    expect(find.text('Notes'), findsOneWidget);
+    expect(find.text('Reference ABC-123'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(milliseconds: 1));

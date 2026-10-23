@@ -251,12 +251,14 @@ class OptionTile extends StatelessWidget {
     required this.icon,
     required this.selected,
     required this.onTap,
+    this.selectedFill,
   });
 
   final String label;
   final IconData icon;
   final bool selected;
   final VoidCallback onTap;
+  final Color? selectedFill;
 
   @override
   Widget build(BuildContext context) {
@@ -272,7 +274,7 @@ class OptionTile extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 9),
         decoration: BoxDecoration(
           color: selected
-              ? financeSelectedFill(context)
+              ? selectedFill ?? financeSelectedFill(context)
               : financeFieldFill(context),
           borderRadius: BorderRadius.circular(14),
           border: Border.all(

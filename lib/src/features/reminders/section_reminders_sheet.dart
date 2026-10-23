@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/notifications.dart';
+import '../../core/app_theme.dart';
 import '../../core/providers.dart';
 import '../../domain/reminder_schedule.dart';
 import '../../shared/finance_bottom_sheet.dart';
@@ -36,21 +37,32 @@ class _SectionReminderButtonState extends ConsumerState<SectionReminderButton> {
       dimension: 44,
       child: IconButton(
         tooltip: '${_label(widget.type)} reminders',
-        onPressed: () {
-          WidgetsBinding.instance.addPostFrameCallback((_) async {
-            if (!mounted) return;
+        onPressed: () async {
+          if (widget.type == FinanceReminderType.emi) {
+            await showDialog<void>(
+              context: context,
+              builder: (dialog) => Dialog(
+                insetPadding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 24,
+                ),
+                child: _SectionReminderSheet(type: widget.type),
+              ),
+            );
+          } else {
             await showFinanceBottomSheet<void>(
               context,
               builder: (_) => _SectionReminderSheet(type: widget.type),
             );
-            if (mounted) setState(() => _settings = _load());
-          });
+          }
+          if (mounted) setState(() => _settings = _load());
         },
         icon: Stack(
           clipBehavior: Clip.none,
           children: [
             const Icon(Icons.notifications_outlined),
-            if (snapshot.data?.enabled == true)
+            if (widget.type != FinanceReminderType.emi &&
+                snapshot.data?.enabled == true)
               Positioned(
                 top: 0,
                 right: 0,
@@ -94,6 +106,7 @@ class _SectionReminderSheetState extends ConsumerState<_SectionReminderSheet> {
   ReminderPlanSettings? _settings;
   bool _keepBalance = true;
   bool _denied = false;
+  bool _leadExpanded = false;
 
   @override
   void initState() {
@@ -139,9 +152,317 @@ class _SectionReminderSheetState extends ConsumerState<_SectionReminderSheet> {
     }
   }
 
+  void _showBatteryTips(BuildContext context) => showDialog<void>(
+    context: context,
+    builder: (dialog) => AlertDialog(
+      title: const Text('Battery settings'),
+      content: const Text(
+        'Allow unrestricted battery use and autostart for FinKeep. On Realme/Oppo and Xiaomi, check app battery and autostart settings. On Samsung, remove FinKeep from sleeping apps.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialog),
+          child: const Text('Close'),
+        ),
+        TextButton(
+          onPressed: () {
+            Navigator.pop(dialog);
+            LocalReminderService().openBatterySettings();
+          },
+          child: const Text('Open settings'),
+        ),
+      ],
+    ),
+  );
+
   @override
   Widget build(BuildContext context) {
     final settings = _settings;
+    if (widget.type == FinanceReminderType.emi) {
+      final colors = AppTheme.homePaletteOf(context);
+      final theme = Theme.of(context);
+      final neutralTheme = AppTheme.neutralControlTheme(context);
+      return Theme(
+        data: neutralTheme,
+        child: SafeArea(
+          top: false,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(context).height * .66,
+            ),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 18),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: colors.surfaceAlt,
+                          borderRadius: BorderRadius.circular(11),
+                        ),
+                        child: Icon(
+                          Icons.notifications_outlined,
+                          color: colors.text,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'EMI reminders',
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                color: colors.text,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            Text(
+                              'Stay ahead of each installment',
+                              style: TextStyle(
+                                color: colors.text2,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  if (settings == null)
+                    const Center(child: CircularProgressIndicator())
+                  else ...[
+                    _ReminderSettingRow(
+                      title: 'Payment reminders',
+                      subtitle: 'Notify me before an installment is due',
+                      value: settings.enabled,
+                      onChanged: (value) =>
+                          _save(settings.copyWith(enabled: value)),
+                    ),
+                    const Divider(height: 1),
+                    _ReminderSettingRow(
+                      title: 'Auto-debit balance check',
+                      subtitle: '6 PM the day before, grouped by lender',
+                      value: _keepBalance,
+                      onChanged: settings.enabled ? _saveKeepBalance : null,
+                    ),
+                    if (_denied)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 12),
+                        child: ListTile(
+                          tileColor: colors.surfaceAlt,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          title: const Text('Notifications are turned off'),
+                          subtitle: const Text(
+                            'Allow access in Android settings',
+                          ),
+                          trailing: TextButton(
+                            onPressed: () =>
+                                LocalReminderService().openPermissionSettings(),
+                            child: const Text('Fix'),
+                          ),
+                        ),
+                      ),
+                    const SizedBox(height: 10),
+                    Text(
+                      'When to notify',
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        color: colors.text,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Choose a time that works for you',
+                      style: TextStyle(color: colors.text2, fontSize: 13),
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (final (label, hour) in [
+                          ('8 AM', 8),
+                          ('9 AM', 9),
+                          ('6 PM', 18),
+                        ])
+                          ChoiceChip(
+                            label: Text(label),
+                            selected:
+                                settings.hour == hour && settings.minute == 0,
+                            selectedColor: colors.text,
+                            backgroundColor: colors.surfaceAlt,
+                            showCheckmark: false,
+                            side: BorderSide.none,
+                            labelStyle: TextStyle(
+                              color:
+                                  settings.hour == hour && settings.minute == 0
+                                  ? colors.bg
+                                  : colors.text,
+                            ),
+                            onSelected: (_) =>
+                                _save(settings.copyWith(hour: hour, minute: 0)),
+                          ),
+                        ActionChip(
+                          backgroundColor: colors.surfaceAlt,
+                          side: BorderSide.none,
+                          labelStyle: TextStyle(color: colors.text),
+                          label: Text(
+                            settings.minute != 0 ||
+                                    ![8, 9, 18].contains(settings.hour)
+                                ? TimeOfDay(
+                                    hour: settings.hour,
+                                    minute: settings.minute,
+                                  ).format(context)
+                                : 'Custom',
+                          ),
+                          onPressed: () async {
+                            final time = await showTimePicker(
+                              context: context,
+                              builder: (_, child) =>
+                                  Theme(data: neutralTheme, child: child!),
+                              initialTime: TimeOfDay(
+                                hour: settings.hour,
+                                minute: settings.minute,
+                              ),
+                            );
+                            if (time != null && mounted) {
+                              await _save(
+                                settings.copyWith(
+                                  hour: time.hour,
+                                  minute: time.minute,
+                                ),
+                              );
+                            }
+                          },
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
+                      title: Text(
+                        'Lead time',
+                        style: TextStyle(
+                          color: colors.text,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      subtitle: Text(
+                        [
+                          for (final days in [7, 3, 1, 0])
+                            if (settings.leadDays.contains(days))
+                              days == 0 ? 'Due day' : '$days days before',
+                          if (settings.overdueNudge) 'Overdue nudge',
+                        ].join(' · '),
+                        maxLines: 2,
+                        style: TextStyle(color: colors.text2, fontSize: 12),
+                      ),
+                      trailing: Icon(
+                        _leadExpanded ? Icons.expand_less : Icons.expand_more,
+                        color: colors.text,
+                      ),
+                      onTap: () =>
+                          setState(() => _leadExpanded = !_leadExpanded),
+                    ),
+                    if (_leadExpanded) ...[
+                      for (final options in [
+                        [('7 days before', 7), ('3 days before', 3)],
+                        [('1 day before', 1), ('Due day', 0)],
+                      ])
+                        Row(
+                          children: [
+                            for (final (label, days) in options)
+                              Expanded(
+                                child: _ReminderChoice(
+                                  label: label,
+                                  selected: settings.leadDays.contains(days),
+                                  color: colors.text,
+                                  onTap: () {
+                                    final leads = {...settings.leadDays};
+                                    leads.contains(days)
+                                        ? leads.remove(days)
+                                        : leads.add(days);
+                                    _save(settings.copyWith(leadDays: leads));
+                                  },
+                                ),
+                              ),
+                          ],
+                        ),
+                      _ReminderChoice(
+                        label: 'Overdue nudge',
+                        selected: settings.overdueNudge,
+                        color: colors.text,
+                        onTap: () => _save(
+                          settings.copyWith(
+                            overdueNudge: !settings.overdueNudge,
+                          ),
+                        ),
+                      ),
+                    ],
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(
+                        Icons.notifications_active_outlined,
+                        color: colors.text,
+                      ),
+                      title: Text(
+                        'Send test reminder',
+                        style: TextStyle(
+                          color: colors.text,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      trailing: Icon(Icons.chevron_right, color: colors.text2),
+                      onTap: () async {
+                        if (await LocalReminderService().permissionGranted()) {
+                          await LocalReminderService().showTest();
+                        } else if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Allow notifications first.'),
+                            ),
+                          );
+                        }
+                      },
+                    ),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(
+                        Icons.battery_charging_full_outlined,
+                        color: colors.text,
+                      ),
+                      title: Text(
+                        'Reminders not arriving?',
+                        style: TextStyle(
+                          color: colors.text,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      subtitle: Text(
+                        'Check battery and autostart settings',
+                        style: TextStyle(color: colors.text2),
+                      ),
+                      trailing: Icon(Icons.chevron_right, color: colors.text2),
+                      onTap: () => _showBatteryTips(context),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
     return SafeArea(
       top: false,
       child: FractionallySizedBox(
@@ -267,28 +588,7 @@ class _SectionReminderSheetState extends ConsumerState<_SectionReminderSheet> {
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.battery_alert_outlined),
                 title: const Text('Not arriving? Battery tips'),
-                onTap: () => showDialog<void>(
-                  context: context,
-                  builder: (dialog) => AlertDialog(
-                    title: const Text('Battery settings'),
-                    content: const Text(
-                      'Allow unrestricted battery use and autostart for FinKeep. On Realme/Oppo and Xiaomi, check app battery and autostart settings. On Samsung, remove FinKeep from sleeping apps.',
-                    ),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(dialog),
-                        child: const Text('Close'),
-                      ),
-                      TextButton(
-                        onPressed: () {
-                          Navigator.pop(dialog);
-                          LocalReminderService().openBatterySettings();
-                        },
-                        child: const Text('Open settings'),
-                      ),
-                    ],
-                  ),
-                ),
+                onTap: () => _showBatteryTips(context),
               ),
             ],
           ],
@@ -296,4 +596,91 @@ class _SectionReminderSheetState extends ConsumerState<_SectionReminderSheet> {
       ),
     );
   }
+}
+
+class _ReminderSettingRow extends StatelessWidget {
+  const _ReminderSettingRow({
+    required this.title,
+    required this.subtitle,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String title;
+  final String subtitle;
+  final bool value;
+  final ValueChanged<bool>? onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppTheme.homePaletteOf(context);
+    return SwitchListTile.adaptive(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      title: Text(
+        title,
+        style: TextStyle(
+          color: colors.text,
+          fontSize: 14,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      subtitle: Text(
+        subtitle,
+        style: TextStyle(color: colors.text2, fontSize: 12),
+      ),
+      value: value,
+      onChanged: onChanged,
+    );
+  }
+}
+
+class _ReminderChoice extends StatelessWidget {
+  const _ReminderChoice({
+    required this.label,
+    required this.selected,
+    required this.color,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final Color color;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    label: label,
+    toggled: selected,
+    child: InkWell(
+      onTap: onTap,
+      child: SizedBox(
+        height: 44,
+        child: Row(
+          children: [
+            Icon(
+              selected
+                  ? Icons.check_box_rounded
+                  : Icons.check_box_outline_blank,
+              size: 20,
+              color: color,
+            ),
+            const SizedBox(width: 7),
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: color,
+                  fontSize: 12,
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
 }

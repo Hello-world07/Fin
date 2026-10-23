@@ -246,6 +246,10 @@ class _Header extends StatelessWidget {
           IconButton(
             tooltip: private ? 'Show amounts' : 'Hide amounts',
             constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+            style: IconButton.styleFrom(
+              backgroundColor: palette.surfaceAlt,
+              foregroundColor: palette.text,
+            ),
             onPressed: onPrivacy,
             icon: Icon(
               private
@@ -258,6 +262,10 @@ class _Header extends StatelessWidget {
           IconButton(
             tooltip: 'Settings',
             constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+            style: IconButton.styleFrom(
+              backgroundColor: palette.surfaceAlt,
+              foregroundColor: palette.text,
+            ),
             onPressed: onSettings,
             icon: const Icon(
               Icons.settings_outlined,
@@ -742,7 +750,12 @@ class _IncomeRecovery extends ConsumerWidget {
                   ),
                   AmountText(
                     data.friendPaid,
-                    style: TextStyle(fontSize: 12, color: colors.text2),
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                      color: colors.text,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
                   ),
                 ],
               ),
@@ -759,20 +772,20 @@ class _MonthlyProjection extends StatelessWidget {
 
   void _openMonth(BuildContext context, HomeMonth month) {
     final colors = AppTheme.homePaletteOf(context);
-    showModalBottomSheet<void>(
+    showDialog<void>(
       context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      backgroundColor: colors.surface,
-      builder: (sheetContext) => SafeArea(
-        child: SizedBox(
-          height: math.min(
-            MediaQuery.sizeOf(sheetContext).height * .72,
-            210.0 + month.items.length * 64.0,
+      builder: (sheetContext) => Dialog(
+        backgroundColor: colors.surface,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 32),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: 440,
+            maxHeight: MediaQuery.sizeOf(sheetContext).height * .74,
           ),
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+            padding: const EdgeInsets.all(20),
             child: Column(
+              mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
@@ -785,38 +798,49 @@ class _MonthlyProjection extends StatelessWidget {
                   style: TextStyle(fontSize: 13, color: colors.text2),
                 ),
                 const SizedBox(height: 12),
-                Wrap(
-                  spacing: 16,
-                  runSpacing: 4,
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
-                      mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(
-                          'Coming in  ',
+                          'Coming in',
                           style: TextStyle(color: colors.text2),
                         ),
-                        AmountText(
-                          month.incoming,
-                          style: TextStyle(
-                            color: colors.incoming.text,
-                            fontWeight: FontWeight.w700,
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Align(
+                            alignment: Alignment.centerRight,
+                            child: AmountText(
+                              month.incoming,
+                              maxLines: 1,
+                              style: TextStyle(
+                                color: colors.incoming.text,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
                           ),
                         ),
                       ],
                     ),
                     Row(
-                      mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(
-                          'Going out  ',
+                          'Going out',
                           style: TextStyle(color: colors.text2),
                         ),
-                        AmountText(
-                          month.outgoing,
-                          style: TextStyle(
-                            color: colors.out.text,
-                            fontWeight: FontWeight.w700,
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Align(
+                            alignment: Alignment.centerRight,
+                            child: AmountText(
+                              month.outgoing,
+                              maxLines: 1,
+                              style: TextStyle(
+                                color: colors.out.text,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
                           ),
                         ),
                       ],
@@ -824,29 +848,37 @@ class _MonthlyProjection extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 12),
-                Expanded(
-                  child: month.items.isEmpty
-                      ? Center(
-                          child: Text(
-                            'Nothing scheduled for this month',
-                            style: TextStyle(color: colors.text2),
-                          ),
-                        )
-                      : ListView.builder(
-                          itemCount: month.items.length,
-                          itemBuilder: (context, index) {
-                            final item = month.items[index];
-                            return FlowRow(
-                              item: item,
-                              today: data.today,
-                              onTap: () {
-                                Navigator.pop(sheetContext);
-                                _openDue(context, item, data);
-                              },
-                            );
+                if (month.items.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    child: Center(
+                      child: Text(
+                        'Nothing scheduled for this month',
+                        style: TextStyle(color: colors.text2),
+                      ),
+                    ),
+                  )
+                else
+                  SizedBox(
+                    height: math.min(
+                      month.items.length * 64.0,
+                      MediaQuery.sizeOf(sheetContext).height * .44,
+                    ),
+                    child: ListView.builder(
+                      itemCount: month.items.length,
+                      itemBuilder: (_, index) {
+                        final item = month.items[index];
+                        return FlowRow(
+                          item: item,
+                          today: data.today,
+                          onTap: () {
+                            Navigator.pop(sheetContext);
+                            _openDue(context, item, data);
                           },
-                        ),
-                ),
+                        );
+                      },
+                    ),
+                  ),
               ],
             ),
           ),

@@ -2,6 +2,10 @@ enum EmiStatus { active, dueSoon, overdue, completed, paused }
 
 enum EmiCategory { personal, givenToFriends }
 
+enum EmiInterestMethod { reducing, flat }
+
+enum EmiRatePeriod { annual, monthly }
+
 const friendRepaymentType = 'Friend repayment';
 
 bool isFriendRepaymentType(String? type) =>

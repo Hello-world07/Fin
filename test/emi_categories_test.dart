@@ -285,6 +285,16 @@ void main() {
         '(emi_id, amount_paise, paid_on, installment_number) '
         'VALUES (1, 100000, 1793491200, 1)',
       );
+      for (final column in [
+        'interest_method',
+        'interest_period',
+        'product_price_paise',
+        'down_payment_paise',
+        'fees_paise',
+        'contractual_emi',
+      ]) {
+        await original.customStatement('ALTER TABLE emis DROP COLUMN $column');
+      }
       await original.customStatement('PRAGMA user_version = 5');
       await original.close();
 
@@ -294,6 +304,9 @@ void main() {
         final payments = await migrated.select(migrated.emiPayments).get();
         expect(loan.name, 'Existing personal loan');
         expect(loan.type, 'Loan');
+        expect(loan.interestMethod, EmiInterestMethod.reducing);
+        expect(loan.interestPeriod, EmiRatePeriod.annual);
+        expect(loan.feesPaise, 0);
         expect(payments, hasLength(1));
         await migrated
             .into(migrated.emiPayments)

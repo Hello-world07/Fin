@@ -45,6 +45,9 @@ class EmiSchedule {
       : (paidPaise / totalRepaymentPaise).clamp(0.0, 1.0);
 }
 
+double annualizedEmiRate(double enteredRate, EmiRatePeriod period) =>
+    period == EmiRatePeriod.monthly ? enteredRate * 12 : enteredRate;
+
 List<EmiInstallment> buildEmiInstallments({
   required DateTime startDate,
   required int tenure,
@@ -160,6 +163,8 @@ EmiSchedule calculateEmiSchedule({
   required int installmentPaise,
   required int tenure,
   required double? annualInterestRate,
+  EmiInterestMethod interestMethod = EmiInterestMethod.reducing,
+  bool contractualEmi = false,
   Iterable<int> paidInstallmentAmounts = const [],
 }) {
   final interestRate = annualInterestRate ?? 0;
@@ -167,8 +172,11 @@ EmiSchedule calculateEmiSchedule({
     principalPaise: principalPaise,
     tenure: tenure,
     annualInterestRate: interestRate,
+    interestMethod: interestMethod,
   );
-  final total = interestRate == 0 ? principalPaise : installmentPaise * tenure;
+  final total = interestRate == 0 && !contractualEmi
+      ? principalPaise
+      : installmentPaise * tenure;
   final paid = paidInstallmentAmounts.fold<int>(0, (sum, value) => sum + value);
   final remaining = (total - paid).clamp(0, total);
   final roundingTolerancePaise = math.max(1, (100 / 2).round());
@@ -207,14 +215,40 @@ int expectedEmiInstallmentPaise({
   required int principalPaise,
   required int tenure,
   required double annualInterestRate,
+  EmiInterestMethod interestMethod = EmiInterestMethod.reducing,
 }) {
   if (principalPaise <= 0 || tenure <= 0) return 0;
   if (annualInterestRate <= 0) return (principalPaise / tenure).round();
+  if (interestMethod == EmiInterestMethod.flat) {
+    return (principalPaise * (1 + annualInterestRate * tenure / 1200) / tenure)
+        .round();
+  }
 
   final monthlyRate = annualInterestRate / 12 / 100;
   final factor = math.pow(1 + monthlyRate, tenure).toDouble();
   final emi = principalPaise * monthlyRate * factor / (factor - 1);
   return emi.round();
+}
+
+int estimatedPrincipalPaise({
+  required int installmentPaise,
+  required int tenure,
+  double? annualInterestRate,
+  EmiInterestMethod interestMethod = EmiInterestMethod.reducing,
+}) {
+  if (installmentPaise <= 0 || tenure <= 0) return 0;
+  final annualRate = annualInterestRate ?? 0;
+  if (!annualRate.isFinite || annualRate < 0) return 0;
+  if (annualRate == 0) return installmentPaise * tenure;
+  if (interestMethod == EmiInterestMethod.flat) {
+    return (installmentPaise * tenure / (1 + annualRate * tenure / 1200))
+        .round();
+  }
+  final monthlyRate = annualRate / 1200;
+  return (installmentPaise *
+          (1 - math.pow(1 + monthlyRate, -tenure)) /
+          monthlyRate)
+      .round();
 }
 
 String emiValidationMessage({

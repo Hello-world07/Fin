@@ -127,9 +127,19 @@ class LocalBackupService {
     'subscriptions',
     'settings',
     'activity_logs',
+    'credit_cards',
+    'card_statements',
+    'card_ledger_entries',
+    'card_emi_conversions',
+    'card_conversion_payments',
   ];
 
   static const _deleteOrder = [
+    'card_conversion_payments',
+    'card_emi_conversions',
+    'card_ledger_entries',
+    'card_statements',
+    'credit_cards',
     'activity_logs',
     'emi_payments',
     'money_repayments',
@@ -256,6 +266,30 @@ class LocalBackupService {
         }
       }
     }
+    if (document.schemaVersion < 7) {
+      final oldEmis = tables['emis'];
+      if (oldEmis is List) {
+        for (final row in oldEmis.whereType<Map<String, dynamic>>()) {
+          row.putIfAbsent('interest_method', () => 'reducing');
+          row.putIfAbsent('interest_period', () => 'annual');
+          row.putIfAbsent('product_price_paise', () => null);
+          row.putIfAbsent('down_payment_paise', () => null);
+          row.putIfAbsent('fees_paise', () => 0);
+          row.putIfAbsent('contractual_emi', () => 0);
+        }
+      }
+    }
+    if (document.schemaVersion < 8) {
+      for (final table in const [
+        'credit_cards',
+        'card_statements',
+        'card_ledger_entries',
+        'card_emi_conversions',
+        'card_conversion_payments',
+      ]) {
+        tables.putIfAbsent(table, () => <Map<String, dynamic>>[]);
+      }
+    }
     if (tables.keys.toSet().difference(_insertOrder.toSet()).isNotEmpty ||
         tables.length != _insertOrder.length) {
       throw const FormatException('The backup is missing or has unknown data.');
@@ -351,6 +385,10 @@ class LocalBackupService {
           number(row, 'initial_paid_installments') < 0 ||
           number(row, 'initial_paid_installments') >
               number(row, 'tenure_months') ||
+          number(row, 'fees_paise') < 0 ||
+          !{0, 1}.contains(number(row, 'contractual_emi')) ||
+          !validEnum(row['interest_method'], EmiInterestMethod.values) ||
+          !validEnum(row['interest_period'], EmiRatePeriod.values) ||
           !const {
             'Loan',
             'Phone/Product',
@@ -369,6 +407,16 @@ class LocalBackupService {
       final rate = row['interest_rate'];
       if (rate != null && (rate is! num || !rate.isFinite || rate < 0)) {
         throw const FormatException('Invalid EMI interest rate in backup.');
+      }
+      final price = row['product_price_paise'];
+      final downPayment = row['down_payment_paise'];
+      if ((price != null && number(row, 'product_price_paise') <= 0) ||
+          (downPayment != null && number(row, 'down_payment_paise') < 0) ||
+          (price != null &&
+              downPayment != null &&
+              number(row, 'down_payment_paise') >=
+                  number(row, 'product_price_paise'))) {
+        throw const FormatException('Invalid product EMI amounts in backup.');
       }
     }
     final emiPayments = rows('emi_payments');
@@ -448,6 +496,109 @@ class LocalBackupService {
         throw const FormatException('Invalid activity history in backup.');
       }
       dateValue(row, 'occurred_at');
+    }
+    final cards = rows('credit_cards');
+    uniqueIds(cards, 'credit_cards');
+    final cardIds = cards.map((row) => number(row, 'id')).toSet();
+    for (final row in cards) {
+      if ((row['name'] as String).trim().isEmpty ||
+          (row['issuer'] as String).trim().isEmpty) {
+        throw const FormatException('Invalid credit card in backup.');
+      }
+      dateValue(row, 'created_at');
+    }
+    final statements = rows('card_statements');
+    uniqueIds(statements, 'card_statements');
+    final statementById = {
+      for (final row in statements) number(row, 'id'): row,
+    };
+    for (final row in statements) {
+      if (!cardIds.contains(number(row, 'card_id')) ||
+          number(row, 'balance_paise') < 0 ||
+          number(row, 'minimum_due_paise') < 0 ||
+          number(row, 'minimum_due_paise') > number(row, 'balance_paise')) {
+        throw const FormatException('Invalid card statement in backup.');
+      }
+      dateValue(row, 'statement_date');
+      dateValue(row, 'due_date');
+    }
+    final entries = rows('card_ledger_entries');
+    uniqueIds(entries, 'card_ledger_entries');
+    final entryById = {for (final row in entries) number(row, 'id'): row};
+    final paidByStatement = <int, int>{};
+    for (final row in entries) {
+      final cardId = number(row, 'card_id');
+      final statementId = row['statement_id'] == null
+          ? null
+          : number(row, 'statement_id');
+      if (!cardIds.contains(cardId) ||
+          !const {
+            'purchase',
+            'refund',
+            'payment',
+            'interest',
+            'fuelFee',
+            'walletFee',
+            'annualFee',
+          }.contains(row['kind']) ||
+          number(row, 'amount_paise') <= 0 ||
+          (statementId != null &&
+              statementById[statementId]?['card_id'] != cardId) ||
+          (row['kind'] == 'payment' && statementId == null)) {
+        throw const FormatException('Invalid card ledger in backup.');
+      }
+      if (row['kind'] == 'payment') {
+        paidByStatement.update(
+          statementId!,
+          (sum) => sum + number(row, 'amount_paise'),
+          ifAbsent: () => number(row, 'amount_paise'),
+        );
+      }
+      dateValue(row, 'occurred_on');
+    }
+    for (final entry in paidByStatement.entries) {
+      if (entry.value > number(statementById[entry.key]!, 'balance_paise')) {
+        throw const FormatException('Card payments exceed statement balance.');
+      }
+    }
+    final conversions = rows('card_emi_conversions');
+    uniqueIds(conversions, 'card_emi_conversions');
+    final conversionById = {
+      for (final row in conversions) number(row, 'id'): row,
+    };
+    final convertedEntries = <int>{};
+    for (final row in conversions) {
+      final entryId = number(row, 'purchase_entry_id');
+      final purchase = entryById[entryId];
+      if (purchase == null ||
+          purchase['kind'] != 'purchase' ||
+          purchase['card_id'] != row['card_id'] ||
+          !convertedEntries.add(entryId) ||
+          number(row, 'principal_paise') != number(purchase, 'amount_paise') ||
+          number(row, 'monthly_emi_paise') <= 0 ||
+          number(row, 'tenure_months') <= 0) {
+        throw const FormatException('Invalid card conversion in backup.');
+      }
+      dateValue(row, 'first_due_date');
+    }
+    final conversionPayments = rows('card_conversion_payments');
+    uniqueIds(conversionPayments, 'card_conversion_payments');
+    final paidInstallmentsByConversion = <String>{};
+    for (final row in conversionPayments) {
+      final conversion = conversionById[number(row, 'conversion_id')];
+      final installment = number(row, 'installment_number');
+      if (conversion == null ||
+          installment < 1 ||
+          installment > number(conversion, 'tenure_months') ||
+          !paidInstallmentsByConversion.add(
+            '${row['conversion_id']}:$installment',
+          ) ||
+          number(row, 'amount_paise') <= 0) {
+        throw const FormatException(
+          'Invalid card conversion payment in backup.',
+        );
+      }
+      dateValue(row, 'paid_on');
     }
   }
 

@@ -18,6 +18,7 @@ import '../features/money/money_screen.dart';
 import '../features/subscriptions/subscriptions_screen.dart';
 import 'calculator_sheet.dart';
 import 'forms.dart';
+import 'timed_snackbar.dart';
 
 class NotchedNavigationMetrics {
   static const height = 64.0;
@@ -86,16 +87,16 @@ List<_MenuItem> _menuFor(int tab) => switch (tab) {
       label: 'Mark installment paid',
       icon: Icons.check_circle_outline,
     ),
-    (
-      action: _MenuAction.calculator,
-      label: 'Calculator',
-      icon: Icons.calculate_outlined,
-    ),
     (action: _MenuAction.editEmi, label: 'Edit EMI', icon: Icons.edit_outlined),
     (
       action: _MenuAction.deleteEmi,
       label: 'Delete EMI',
       icon: Icons.delete_outline,
+    ),
+    (
+      action: _MenuAction.calculator,
+      label: 'Calculator',
+      icon: Icons.calculate_outlined,
     ),
   ],
   2 => [
@@ -115,11 +116,6 @@ List<_MenuItem> _menuFor(int tab) => switch (tab) {
       icon: Icons.payments_outlined,
     ),
     (
-      action: _MenuAction.calculator,
-      label: 'Calculator',
-      icon: Icons.calculate_outlined,
-    ),
-    (
       action: _MenuAction.editMoney,
       label: 'Edit record',
       icon: Icons.edit_outlined,
@@ -128,6 +124,11 @@ List<_MenuItem> _menuFor(int tab) => switch (tab) {
       action: _MenuAction.deleteMoney,
       label: 'Delete record',
       icon: Icons.delete_outline,
+    ),
+    (
+      action: _MenuAction.calculator,
+      label: 'Calculator',
+      icon: Icons.calculate_outlined,
     ),
   ],
   3 => [
@@ -142,11 +143,6 @@ List<_MenuItem> _menuFor(int tab) => switch (tab) {
       icon: Icons.pause_circle_outline,
     ),
     (
-      action: _MenuAction.calculator,
-      label: 'Calculator',
-      icon: Icons.calculate_outlined,
-    ),
-    (
       action: _MenuAction.editSubscription,
       label: 'Edit subscription',
       icon: Icons.edit_outlined,
@@ -155,6 +151,11 @@ List<_MenuItem> _menuFor(int tab) => switch (tab) {
       action: _MenuAction.deleteSubscription,
       label: 'Delete subscription',
       icon: Icons.delete_outline,
+    ),
+    (
+      action: _MenuAction.calculator,
+      label: 'Calculator',
+      icon: Icons.calculate_outlined,
     ),
   ],
   _ => [
@@ -192,51 +193,158 @@ Future<void> showAddMenu(BuildContext context, {int tabIndex = 0}) async {
     context: context,
     showDragHandle: true,
     isScrollControlled: true,
-    builder: (sheetContext) => SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(switch (tabIndex) {
-              1 => 'EMIs & Loans',
-              2 => 'Money',
-              3 => 'Subscriptions',
-              _ => 'Add to FinKeep',
-            }, style: Theme.of(sheetContext).textTheme.titleMedium),
-            const SizedBox(height: 8),
-            for (final item in items) ...[
-              if (item.action == _MenuAction.editEmi ||
-                  item.action == _MenuAction.editMoney ||
-                  item.action == _MenuAction.editSubscription) ...[
-                const Divider(height: 20),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: Text(
-                      'Manage',
-                      style: Theme.of(sheetContext).textTheme.labelMedium,
-                    ),
+    builder: (sheetContext) {
+      final palette = AppTheme.homePaletteOf(sheetContext);
+      return SafeArea(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(sheetContext).height * .84,
+          ),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  switch (tabIndex) {
+                    1 => 'EMIs & Loans',
+                    2 => 'Money',
+                    3 => 'Subscriptions',
+                    _ => 'Add to FinKeep',
+                  },
+                  style: Theme.of(sheetContext).textTheme.titleLarge?.copyWith(
+                    color: palette.text,
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
+                const SizedBox(height: 4),
+                Text(
+                  'Choose an action',
+                  style: TextStyle(color: palette.text2),
+                ),
+                const SizedBox(height: 18),
+                for (final (index, item) in items.indexed) ...[
+                  if (index == 0 ||
+                      _addMenuGroup(items[index - 1].action) !=
+                          _addMenuGroup(item.action)) ...[
+                    if (index != 0) const SizedBox(height: 16),
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Text(
+                        _addMenuGroup(item.action).toUpperCase(),
+                        style: TextStyle(
+                          color: palette.text2,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: .8,
+                        ),
+                      ),
+                    ),
+                  ],
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Material(
+                      color: palette.surfaceAlt,
+                      borderRadius: BorderRadius.circular(14),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(14),
+                        onTap: () => Navigator.pop(sheetContext, item.action),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 10,
+                          ),
+                          child: Row(
+                            children: [
+                              SizedBox(
+                                width: 40,
+                                height: 40,
+                                child: Icon(
+                                  item.icon,
+                                  color: palette.text,
+                                  size: 23,
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      item.label,
+                                      style: TextStyle(
+                                        color: palette.text,
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 14,
+                                      ),
+                                    ),
+                                    Text(
+                                      _addMenuDescription(item.action),
+                                      style: TextStyle(
+                                        color: palette.text2,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Icon(
+                                Icons.chevron_right,
+                                color: palette.text2,
+                                size: 20,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ],
-              ListTile(
-                leading: Icon(item.icon),
-                title: Text(item.label),
-                onTap: () => Navigator.pop(sheetContext, item.action),
-              ),
-            ],
-          ],
+            ),
+          ),
         ),
-      ),
-    ),
+      );
+    },
   );
   if (choice == null || !context.mounted) return;
   WidgetsBinding.instance.addPostFrameCallback((_) {
     if (context.mounted) _runMenuAction(context, choice);
   });
 }
+
+String _addMenuGroup(_MenuAction action) => switch (action) {
+  _MenuAction.calculator => 'Tools',
+  _MenuAction.markEmiPaid ||
+  _MenuAction.editEmi ||
+  _MenuAction.deleteEmi ||
+  _MenuAction.repayment ||
+  _MenuAction.editMoney ||
+  _MenuAction.deleteMoney ||
+  _MenuAction.pauseSubscription ||
+  _MenuAction.editSubscription ||
+  _MenuAction.deleteSubscription => 'Manage',
+  _ => 'Create',
+};
+
+String _addMenuDescription(_MenuAction action) => switch (action) {
+  _MenuAction.personalEmi => 'Track a loan or card installment',
+  _MenuAction.friendEmi => 'Collect installments from someone',
+  _MenuAction.emi => 'Add a repayment schedule',
+  _MenuAction.moneyLent => 'Track money owed to you',
+  _MenuAction.moneyBorrowed => 'Track money you owe',
+  _MenuAction.subscription => 'Track a recurring payment',
+  _MenuAction.calculator => 'Estimate payments and totals',
+  _MenuAction.markEmiPaid || _MenuAction.repayment => 'Record a payment',
+  _MenuAction.editEmi ||
+  _MenuAction.editMoney ||
+  _MenuAction.editSubscription => 'Update an existing record',
+  _MenuAction.deleteEmi ||
+  _MenuAction.deleteMoney ||
+  _MenuAction.deleteSubscription => 'Move an item to Deleted',
+  _MenuAction.pauseSubscription => 'Change a subscription status',
+};
 
 Future<T?> _pickRecord<T>(
   BuildContext context,
@@ -307,7 +415,8 @@ Future<bool> _confirmDelete(BuildContext context, String name) async =>
     false;
 
 void _showUndo(BuildContext context, Future<void> Function() restore) {
-  ScaffoldMessenger.of(context).showSnackBar(
+  showTimedSnackBar(
+    ScaffoldMessenger.of(context),
     SnackBar(
       duration: const Duration(seconds: 6),
       content: const Text('Moved to Deleted'),

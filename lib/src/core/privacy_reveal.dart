@@ -45,17 +45,14 @@ class PrivacyRevealGate {
     return true;
   }
 
-  Future<bool> authorize(BuildContext context) async {
+  Future<bool> authorize(BuildContext context, {bool useGrace = true}) async {
     if (!requiresUnlock ||
-        (_authorizedUntil?.isAfter(DateTime.now()) ?? false)) {
+        (useGrace && (_authorizedUntil?.isAfter(DateTime.now()) ?? false))) {
       return true;
     }
     if (!await ensurePin(context) || !context.mounted) return false;
-    final allowed = await showModalBottomSheet<bool>(
+    final allowed = await showDialog<bool>(
       context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      showDragHandle: true,
       builder: (_) => const _PrivacyUnlockSheet(),
     );
     if (allowed == true) {
@@ -154,42 +151,61 @@ class _PrivacyUnlockSheetState extends State<_PrivacyUnlockSheet> {
   }
 
   @override
-  Widget build(BuildContext context) => FractionallySizedBox(
-    heightFactor: 0.78,
-    child: SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
-      child: Column(
-        children: [
-          Text('Unlock amounts', style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 14),
-          PinKeypad(
-            length: _length,
-            value: _entry,
-            enabled: !_busy,
-            onDigit: _digit,
-            onBackspace: () {
-              if (_entry.isNotEmpty) {
-                setState(() => _entry = _entry.substring(0, _entry.length - 1));
-              }
-            },
-          ),
-          if (_legacy)
-            TextButton(
-              onPressed: _entry.length >= 4 ? _verify : null,
-              child: const Text('Continue'),
-            ),
-          if (_error != null)
+  Widget build(BuildContext context) => Dialog(
+    child: ConstrainedBox(
+      constraints: BoxConstraints(
+        maxWidth: 400,
+        maxHeight: MediaQuery.sizeOf(context).height * .82,
+      ),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(18, 20, 18, 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
             Text(
-              _error!,
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
+              'Show amounts',
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
             ),
-          if (_biometric)
-            TextButton.icon(
-              onPressed: _busy ? null : _useBiometric,
-              icon: const Icon(Icons.fingerprint),
-              label: const Text('Use fingerprint / face'),
+            const SizedBox(height: 8),
+            Text(
+              'Enter your PIN or use your fingerprint',
+              style: Theme.of(context).textTheme.bodySmall,
+              textAlign: TextAlign.center,
             ),
-        ],
+            const SizedBox(height: 12),
+            PinKeypad(
+              length: _length,
+              value: _entry,
+              enabled: !_busy,
+              onDigit: _digit,
+              onBackspace: () {
+                if (_entry.isNotEmpty) {
+                  setState(
+                    () => _entry = _entry.substring(0, _entry.length - 1),
+                  );
+                }
+              },
+            ),
+            if (_legacy)
+              TextButton(
+                onPressed: _entry.length >= 4 ? _verify : null,
+                child: const Text('Continue'),
+              ),
+            if (_error != null)
+              Text(
+                _error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            if (_biometric)
+              TextButton.icon(
+                onPressed: _busy ? null : _useBiometric,
+                icon: const Icon(Icons.fingerprint),
+                label: const Text('Use fingerprint / face'),
+              ),
+          ],
+        ),
       ),
     ),
   );

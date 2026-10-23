@@ -180,7 +180,7 @@ class PrivacyModeController extends StateNotifier<PrivacySettings> {
     if (enabled != state.enabled &&
         state.requireUnlock &&
         (!enabled || state.gateRule == PrivacyGateRule.hideAndReveal) &&
-        !await PrivacyRevealGate.instance.authorize(context)) {
+        !await PrivacyRevealGate.instance.authorize(context, useGrace: false)) {
       return;
     }
     if (!mounted || !context.mounted) return;

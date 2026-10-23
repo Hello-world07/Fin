@@ -422,6 +422,40 @@ class AppTheme {
   static HomePalette homePaletteOf(BuildContext context) =>
       Theme.of(context).extension<HomePalette>() ?? lightHomePalette;
 
+  static ThemeData neutralControlTheme(BuildContext context) {
+    final theme = Theme.of(context);
+    final palette = homePaletteOf(context);
+    return theme.copyWith(
+      colorScheme: theme.colorScheme.copyWith(
+        primary: palette.text,
+        onPrimary: palette.bg,
+        primaryContainer: palette.surfaceAlt,
+        onPrimaryContainer: palette.text,
+      ),
+      switchTheme: SwitchThemeData(
+        thumbColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.selected)
+              ? palette.bg
+              : palette.text2,
+        ),
+        trackColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.selected)
+              ? palette.text
+              : palette.surfaceAlt,
+        ),
+        trackOutlineColor: WidgetStatePropertyAll(palette.line),
+      ),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          minimumSize: const Size(48, 48),
+          backgroundColor: palette.text,
+          foregroundColor: palette.bg,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ),
+      ),
+    );
+  }
+
   static Color heroTextOf(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark
       ? darkColors.text

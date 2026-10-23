@@ -24,6 +24,15 @@ class Emis extends Table {
   IntColumn get principalPaise => integer()();
   IntColumn get emiAmountPaise => integer()();
   RealColumn get interestRate => real().nullable()();
+  TextColumn get interestMethod =>
+      textEnum<EmiInterestMethod>().withDefault(const Constant('reducing'))();
+  TextColumn get interestPeriod =>
+      textEnum<EmiRatePeriod>().withDefault(const Constant('annual'))();
+  IntColumn get productPricePaise => integer().nullable()();
+  IntColumn get downPaymentPaise => integer().nullable()();
+  IntColumn get feesPaise => integer().withDefault(const Constant(0))();
+  BoolColumn get contractualEmi =>
+      boolean().withDefault(const Constant(false))();
   IntColumn get tenureMonths => integer()();
   DateTimeColumn get startDate => dateTime()();
   DateTimeColumn get nextDueDate => dateTime()();
@@ -107,6 +116,67 @@ class ActivityLogs extends Table {
   DateTimeColumn get occurredAt => dateTime().withDefault(currentDateAndTime)();
 }
 
+class CreditCards extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get name => text().withLength(min: 1, max: 90)();
+  TextColumn get issuer => text().withLength(min: 1, max: 90)();
+  TextColumn get lastFour => text().nullable()();
+  DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
+}
+
+class CardStatements extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  IntColumn get cardId =>
+      integer().references(CreditCards, #id, onDelete: KeyAction.cascade)();
+  DateTimeColumn get statementDate => dateTime()();
+  DateTimeColumn get dueDate => dateTime()();
+  IntColumn get balancePaise => integer()();
+  IntColumn get minimumDuePaise => integer()();
+}
+
+class CardLedgerEntries extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  IntColumn get cardId =>
+      integer().references(CreditCards, #id, onDelete: KeyAction.cascade)();
+  IntColumn get statementId => integer().nullable().references(
+    CardStatements,
+    #id,
+    onDelete: KeyAction.cascade,
+  )();
+  TextColumn get kind =>
+      text()(); // purchase, refund, payment, interest, fuelFee, walletFee, annualFee
+  TextColumn get description => text().withLength(min: 1, max: 120)();
+  IntColumn get amountPaise => integer()();
+  DateTimeColumn get occurredOn => dateTime()();
+}
+
+class CardEmiConversions extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  IntColumn get cardId =>
+      integer().references(CreditCards, #id, onDelete: KeyAction.cascade)();
+  IntColumn get purchaseEntryId => integer().references(
+    CardLedgerEntries,
+    #id,
+    onDelete: KeyAction.cascade,
+  )();
+  IntColumn get principalPaise => integer()();
+  IntColumn get monthlyEmiPaise => integer()();
+  IntColumn get tenureMonths => integer()();
+  DateTimeColumn get firstDueDate => dateTime()();
+}
+
+class CardConversionPayments extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  IntColumn get conversionId => integer().references(
+    CardEmiConversions,
+    #id,
+    onDelete: KeyAction.cascade,
+  )();
+  IntColumn get installmentNumber => integer()();
+  IntColumn get amountPaise => integer()();
+  DateTimeColumn get paidOn => dateTime()();
+}
+
 @DriftDatabase(
   tables: [
     PaymentMethods,
@@ -117,6 +187,11 @@ class ActivityLogs extends Table {
     Subscriptions,
     Settings,
     ActivityLogs,
+    CreditCards,
+    CardStatements,
+    CardLedgerEntries,
+    CardEmiConversions,
+    CardConversionPayments,
   ],
 )
 class AppDatabase extends _$AppDatabase {
@@ -125,13 +200,14 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.test(super.executor);
 
   @override
-  int get schemaVersion => 6;
+  int get schemaVersion => 8;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
     onCreate: (m) async {
       await m.createAll();
       await _createReadIndexes();
+      await _createCardIndexes();
       await batch((batch) {
         batch.insertAll(paymentMethods, [
           PaymentMethodsCompanion.insert(
@@ -188,6 +264,22 @@ class AppDatabase extends _$AppDatabase {
         await m.alterTable(TableMigration(emiPayments));
         await _createReadIndexes();
       }
+      if (from < 7) {
+        await m.addColumn(emis, emis.interestMethod);
+        await m.addColumn(emis, emis.interestPeriod);
+        await m.addColumn(emis, emis.productPricePaise);
+        await m.addColumn(emis, emis.downPaymentPaise);
+        await m.addColumn(emis, emis.feesPaise);
+        await m.addColumn(emis, emis.contractualEmi);
+      }
+      if (from < 8) {
+        await m.createTable(creditCards);
+        await m.createTable(cardStatements);
+        await m.createTable(cardLedgerEntries);
+        await m.createTable(cardEmiConversions);
+        await m.createTable(cardConversionPayments);
+        await _createCardIndexes();
+      }
     },
   );
 
@@ -201,6 +293,18 @@ class AppDatabase extends _$AppDatabase {
     ]) {
       await customStatement(statement);
     }
+  }
+
+  Future<void> _createCardIndexes() async {
+    await customStatement(
+      'CREATE INDEX IF NOT EXISTS card_statements_card_due_idx ON card_statements (card_id, due_date)',
+    );
+    await customStatement(
+      'CREATE INDEX IF NOT EXISTS card_ledger_card_date_idx ON card_ledger_entries (card_id, occurred_on)',
+    );
+    await customStatement(
+      'CREATE UNIQUE INDEX IF NOT EXISTS card_conversion_payment_once_idx ON card_conversion_payments (conversion_id, installment_number)',
+    );
   }
 }
 
