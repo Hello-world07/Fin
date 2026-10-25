@@ -28,15 +28,16 @@ class NotchedNavigationMetrics {
   static const fabHeight = 56.0;
   static const fabGap = 16.0;
 
-  static double contentPadding(BuildContext context, {bool hasFab = false}) =>
-      height +
-      bottomMargin +
-      _safeBottom(context) +
-      contentGap +
-      (hasFab ? fabHeight + fabGap : 0);
+  static double contentPadding(BuildContext context, {bool hasFab = false}) {
+    return height +
+        bottomMargin +
+        _safeBottom(context) +
+        contentGap +
+        (hasFab ? fabHeight + fabGap : 0);
+  }
 
   static double tabContentPadding(BuildContext context) =>
-      contentPadding(context, hasFab: true);
+      contentPadding(context);
 
   static const fabBottomPadding = height + bottomMargin;
 
@@ -47,6 +48,26 @@ class NotchedNavigationMetrics {
         ? windowInset
         : MediaQuery.viewPaddingOf(context).bottom;
   }
+}
+
+class NavigationDockVisibility extends InheritedWidget {
+  const NavigationDockVisibility({
+    super.key,
+    required this.visible,
+    required super.child,
+  });
+
+  final bool visible;
+
+  static bool of(BuildContext context) =>
+      context
+          .dependOnInheritedWidgetOfExactType<NavigationDockVisibility>()
+          ?.visible ??
+      true;
+
+  @override
+  bool updateShouldNotify(NavigationDockVisibility oldWidget) =>
+      visible != oldWidget.visible;
 }
 
 enum _MenuAction {
@@ -351,44 +372,124 @@ Future<T?> _pickRecord<T>(
   String title,
   List<T> items,
   String Function(T) name,
-  String Function(T) detail,
-) {
+  String Function(T) detail, {
+  bool centered = false,
+  IconData? actionIcon,
+}) {
   if (items.isEmpty) {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(const SnackBar(content: Text('Nothing to choose yet.')));
     return Future.value(null);
   }
-  return showModalBottomSheet<T>(
-    context: context,
-    showDragHandle: true,
-    isScrollControlled: true,
-    builder: (sheet) => SafeArea(
+  Widget picker(BuildContext sheet) {
+    final colors = AppTheme.homePaletteOf(sheet);
+    return SafeArea(
       child: ConstrainedBox(
         constraints: BoxConstraints(
-          maxHeight: MediaQuery.sizeOf(sheet).height * .75,
+          maxHeight: MediaQuery.sizeOf(sheet).height * .72,
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(title, style: Theme.of(sheet).textTheme.titleMedium),
-            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (actionIcon != null) ...[
+                    Icon(actionIcon, color: colors.text, size: 26),
+                    const SizedBox(height: 12),
+                  ],
+                  Text(
+                    title,
+                    style: Theme.of(sheet).textTheme.titleMedium?.copyWith(
+                      color: colors.text,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${items.length} available · Select one to continue',
+                    style: TextStyle(color: colors.text2, fontSize: 13),
+                  ),
+                ],
+              ),
+            ),
             Flexible(
-              child: ListView.builder(
+              child: ListView.separated(
                 shrinkWrap: true,
                 itemCount: items.length,
-                itemBuilder: (_, index) => ListTile(
-                  title: Text(name(items[index])),
-                  subtitle: Text(detail(items[index])),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => Navigator.pop(sheet, items[index]),
+                separatorBuilder: (_, _) => Padding(
+                  padding: const EdgeInsets.only(left: 72, right: 20),
+                  child: Divider(height: 1, color: colors.line),
                 ),
+                itemBuilder: (_, index) {
+                  final item = items[index];
+                  final label = name(item);
+                  return ListTile(
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 4,
+                    ),
+                    leading: CircleAvatar(
+                      radius: 20,
+                      backgroundColor: colors.surfaceAlt,
+                      child: Text(
+                        label.isEmpty ? '?' : label[0].toUpperCase(),
+                        style: TextStyle(
+                          color: colors.text,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    title: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: colors.text,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    subtitle: Text(
+                      detail(item),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: colors.text2),
+                    ),
+                    trailing: Icon(Icons.chevron_right, color: colors.text2),
+                    onTap: () => Navigator.pop(sheet, item),
+                  );
+                },
               ),
             ),
           ],
         ),
       ),
-    ),
+    );
+  }
+
+  if (centered) {
+    return showDialog<T>(
+      context: context,
+      builder: (dialog) => Dialog(
+        backgroundColor: AppTheme.homePaletteOf(dialog).surface,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 18),
+          child: picker(dialog),
+        ),
+      ),
+    );
+  }
+  return showModalBottomSheet<T>(
+    context: context,
+    showDragHandle: true,
+    isScrollControlled: true,
+    builder: picker,
   );
 }
 
@@ -411,6 +512,77 @@ Future<bool> _confirmDelete(BuildContext context, String name) async =>
           ),
         ],
       ),
+    ) ??
+    false;
+
+Future<bool> _confirmEmiDelete(BuildContext context, String name) async =>
+    await showDialog<bool>(
+      context: context,
+      builder: (dialog) {
+        final colors = AppTheme.homePaletteOf(dialog);
+        return Dialog(
+          backgroundColor: colors.surface,
+          insetPadding: const EdgeInsets.symmetric(horizontal: 24),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(22),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.delete_outline, size: 28, color: colors.out.text),
+                const SizedBox(height: 14),
+                Text(
+                  'Move EMI to Deleted?',
+                  style: TextStyle(
+                    color: colors.text,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  name,
+                  style: TextStyle(
+                    color: colors.text,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  'Its installment and payment history will be kept. You can restore it from Deleted.',
+                  style: TextStyle(color: colors.text2, fontSize: 13),
+                ),
+                const SizedBox(height: 24),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextButton(
+                        onPressed: () => Navigator.pop(dialog, false),
+                        child: const Text('Keep EMI'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: FilledButton(
+                        style: FilledButton.styleFrom(
+                          backgroundColor: colors.out.text,
+                          foregroundColor: colors.surface,
+                        ),
+                        onPressed: () => Navigator.pop(dialog, true),
+                        child: const Text('Move to Deleted'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     ) ??
     false;
 
@@ -465,8 +637,10 @@ Future<void> _runMenuAction(BuildContext context, _MenuAction action) async {
         final selected = await _pickRecord<EmiDetail>(
           context,
           action == _MenuAction.markEmiPaid
-              ? 'Choose an EMI to pay'
-              : 'Choose an EMI',
+              ? 'Mark an installment paid'
+              : action == _MenuAction.editEmi
+              ? 'Edit an EMI'
+              : 'Delete an EMI',
           details
               .where(
                 (item) =>
@@ -476,6 +650,12 @@ Future<void> _runMenuAction(BuildContext context, _MenuAction action) async {
               .toList(),
           (item) => item.emi.name,
           (item) => item.emi.provider ?? 'EMI',
+          centered: true,
+          actionIcon: action == _MenuAction.markEmiPaid
+              ? Icons.task_alt_outlined
+              : action == _MenuAction.editEmi
+              ? Icons.edit_outlined
+              : Icons.delete_outline,
         );
         if (selected == null || !context.mounted) return;
         if (action == _MenuAction.editEmi) {
@@ -489,7 +669,7 @@ Future<void> _runMenuAction(BuildContext context, _MenuAction action) async {
               builder: (_) => EmiAgreementDetailScreen(selected.emi.id),
             ),
           );
-        } else if (await _confirmDelete(context, selected.emi.name)) {
+        } else if (await _confirmEmiDelete(context, selected.emi.name)) {
           final repo = container.read(financeRepositoryProvider);
           await repo.deleteEmi(selected.emi.id);
           if (context.mounted) {

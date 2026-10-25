@@ -1097,12 +1097,84 @@ Future<void> openPersonalEmiIncomeInsight(
   WidgetRef ref,
   List<EmiDetail> items,
 ) async {
-  await _showEmiInsightSheet(
-    context,
-    'Income & EMIs',
-    _EmiIncomeCard(items: items),
-  );
+  await _showIncomePanel<void>(context, (_) => _EmiIncomeCard(items: items));
 }
+
+Future<T?> _showIncomePanel<T>(
+  BuildContext context,
+  WidgetBuilder content,
+) => showGeneralDialog<T>(
+  context: context,
+  barrierDismissible: true,
+  barrierLabel: 'Close income insight',
+  barrierColor: Theme.of(context).colorScheme.scrim.withValues(alpha: .28),
+  transitionDuration: const Duration(milliseconds: 220),
+  transitionBuilder: (context, animation, _, child) => FadeTransition(
+    opacity: animation,
+    child: SlideTransition(
+      position: Tween<Offset>(
+        begin: const Offset(0, -.35),
+        end: Offset.zero,
+      ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic)),
+      child: child,
+    ),
+  ),
+  pageBuilder: (panel, _, _) {
+    final palette = AppTheme.homePaletteOf(panel);
+    return SafeArea(
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(
+            16,
+            8,
+            16,
+            MediaQuery.viewInsetsOf(panel).bottom,
+          ),
+          child: Material(
+            color: palette.surface,
+            borderRadius: BorderRadius.circular(24),
+            clipBehavior: Clip.antiAlias,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: 440,
+                maxHeight:
+                    (MediaQuery.sizeOf(panel).height -
+                        MediaQuery.viewInsetsOf(panel).bottom) *
+                    .8,
+              ),
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Income & EMIs',
+                            style: Theme.of(panel).textTheme.titleLarge
+                                ?.copyWith(fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: 'Close',
+                          onPressed: () => Navigator.pop(panel),
+                          icon: const Icon(Icons.close),
+                        ),
+                      ],
+                    ),
+                    content(panel),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  },
+);
 
 class _EmiInsights extends ConsumerStatefulWidget {
   const _EmiInsights({required this.items, required this.colors});
@@ -1118,11 +1190,9 @@ class _EmiInsightsState extends ConsumerState<_EmiInsights> {
     final income = await ref.read(personalEmiIncomeProvider.future);
     if (!mounted) return;
     if (income == null) {
-      final value = await showModalBottomSheet<int>(
-        context: context,
-        isScrollControlled: true,
-        useSafeArea: true,
-        builder: (_) => const _IncomeAmountSheet(initialIncome: null),
+      final value = await _showIncomePanel<int>(
+        context,
+        (_) => const _IncomeAmountSheet(initialIncome: null),
       );
       if (!mounted || value == null) return;
       final db = ref.read(databaseProvider);
@@ -1135,10 +1205,9 @@ class _EmiInsightsState extends ConsumerState<_EmiInsights> {
             ),
           );
     } else {
-      await _showEmiInsightSheet(
+      await _showIncomePanel<void>(
         context,
-        'Income & EMIs',
-        _EmiIncomeCard(items: widget.items),
+        (_) => _EmiIncomeCard(items: widget.items),
       );
     }
   }
@@ -3535,55 +3604,73 @@ class _EmiIncomeCardState extends ConsumerState<_EmiIncomeCard> {
     final shareText = privacyAmountsHidden ? hiddenAmount : '${share ?? 0}%';
     final nextText = privacyAmountsHidden ? hiddenAmount : '${nextShare ?? 0}%';
     final palette = AppTheme.homePaletteOf(context);
-    Widget comparison(String prefix, int payment) => Text.rich(
-      TextSpan(
-        children: [
-          TextSpan(
-            text: prefix,
-            style: TextStyle(color: tokens.secondaryText),
+    Widget monthFigure(String month, String percent, int payment) => Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          month,
+          style: TextStyle(color: tokens.secondaryText, fontSize: 13),
+        ),
+        Text(
+          percent,
+          style: TextStyle(
+            color: tokens.text,
+            fontSize: 22,
+            fontWeight: FontWeight.w800,
           ),
-          TextSpan(
-            text: '${formatMoney(payment)} EMIs',
-            style: TextStyle(
-              color: palette.out.text,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          TextSpan(
-            text: ' of ${formatMoney(income!)} income',
-            style: TextStyle(color: tokens.secondaryText),
-          ),
-        ],
-      ),
+        ),
+        Text(
+          '${formatMoney(payment)} of ${formatMoney(income!)} income',
+          style: TextStyle(color: tokens.secondaryText, fontSize: 12),
+        ),
+      ],
     );
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: palette.surfaceAlt,
-        borderRadius: BorderRadius.circular(24),
-      ),
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              const Spacer(),
-              TextButton(
-                style: TextButton.styleFrom(foregroundColor: palette.owe.text),
+              Expanded(
+                child: Text(
+                  'Monthly income',
+                  style: TextStyle(
+                    color: tokens.text,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              TextButton.icon(
+                style: TextButton.styleFrom(foregroundColor: tokens.text),
                 onPressed: () {
                   _controller.text = income == null
                       ? ''
                       : NumberFormat.decimalPattern(
                           'en_IN',
                         ).format(income / 100);
-                  setState(() => _editing = !_editing);
+                  setState(() {
+                    _editing = !_editing;
+                    _error = null;
+                  });
                 },
-                child: Text(income == null ? 'Add income' : 'Edit income'),
+                icon: Icon(
+                  _editing ? Icons.close : Icons.edit_outlined,
+                  size: 18,
+                ),
+                label: Text(
+                  _editing
+                      ? 'Cancel'
+                      : income == null
+                      ? 'Add'
+                      : 'Edit',
+                ),
               ),
             ],
           ),
           if (_editing) ...[
+            const SizedBox(height: 12),
             TextField(
               controller: _controller,
               keyboardType: const TextInputType.numberWithOptions(
@@ -3592,10 +3679,13 @@ class _EmiIncomeCardState extends ConsumerState<_EmiIncomeCard> {
               textInputAction: TextInputAction.done,
               decoration: InputDecoration(
                 prefixText: '₹ ',
-                hintText: 'Monthly income',
+                labelText: 'Take-home income per month',
+                hintText: 'e.g. 60,000',
                 filled: true,
-                fillColor: tokens.surfaceContainer,
-                border: InputBorder.none,
+                fillColor: palette.surfaceAlt,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
               ),
               onSubmitted: (_) => _save(),
             ),
@@ -3604,61 +3694,59 @@ class _EmiIncomeCardState extends ConsumerState<_EmiIncomeCard> {
                 _error!,
                 style: TextStyle(color: Theme.of(context).colorScheme.error),
               ),
-            TextButton(
-              onPressed: _save,
-              style: TextButton.styleFrom(foregroundColor: palette.owe.text),
-              child: const Text('Save income'),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: _save,
+                style: FilledButton.styleFrom(
+                  backgroundColor: tokens.text,
+                  foregroundColor: palette.surface,
+                ),
+                icon: const Icon(Icons.check),
+                label: const Text('Save monthly income'),
+              ),
             ),
             if (income != null)
-              TextButton(
+              TextButton.icon(
                 onPressed: _remove,
-                style: TextButton.styleFrom(foregroundColor: palette.owe.text),
-                child: const Text('Remove income'),
+                style: TextButton.styleFrom(
+                  foregroundColor: tokens.secondaryText,
+                ),
+                icon: const Icon(Icons.delete_outline, size: 18),
+                label: const Text('Remove saved income'),
               ),
           ] else if (income == null)
             const Text('Add monthly income to see your EMI share.')
           else ...[
-            Row(
-              children: [
-                _IncomeRiskGauge(percent: riskShare),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        label,
-                        style: Theme.of(context).textTheme.titleMedium
-                            ?.copyWith(
-                              color: _incomeRiskColor(context, riskShare),
-                              fontWeight: FontWeight.w800,
-                            ),
-                      ),
-                      const SizedBox(height: 5),
-                      Text(
-                        'This month $shareText',
-                        style: Theme.of(context).textTheme.titleMedium
-                            ?.copyWith(
-                              color: tokens.text,
-                              fontWeight: FontWeight.w700,
-                            ),
-                      ),
-                      Text(
-                        'Next month $nextText',
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: tokens.secondaryText,
-                        ),
-                      ),
-                    ],
+            Center(
+              child: Column(
+                children: [
+                  _IncomeRiskGauge(percent: riskShare),
+                  const SizedBox(height: 4),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      color: _incomeRiskColor(context, riskShare),
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: monthFigure('This month', shareText, thisMonth),
                 ),
+                const SizedBox(width: 12),
+                Expanded(child: monthFigure('Next month', nextText, nextMonth)),
               ],
             ),
-            const SizedBox(height: 12),
-            comparison('This month · ', thisMonth),
-            const SizedBox(height: 3),
-            comparison('Next month · ', nextMonth),
-            const SizedBox(height: 4),
+            const SizedBox(height: 10),
             Text(
               'Risk level uses the higher of the two months.',
               style: Theme.of(
@@ -3711,17 +3799,34 @@ class _IncomeRiskGauge extends StatelessWidget {
           ? 'EMI income risk hidden'
           : 'EMI income risk, ${personalEmiIncomeZone(percent)}, $percent percent',
       child: SizedBox(
-        width: 130,
-        height: 78,
-        child: RepaintBoundary(
-          child: CustomPaint(
-            painter: _IncomeRiskPainter(
-              percent: privacyAmountsHidden ? null : percent,
-              zones: zones,
-              marker: tokens.text,
-              surface: tokens.surfaceContainer,
+        width: 150,
+        height: 94,
+        child: Stack(
+          alignment: Alignment.bottomCenter,
+          children: [
+            RepaintBoundary(
+              child: CustomPaint(
+                size: const Size(150, 94),
+                painter: _IncomeRiskPainter(
+                  percent: privacyAmountsHidden ? null : percent,
+                  zones: zones,
+                  marker: tokens.text,
+                  surface: tokens.surfaceContainer,
+                ),
+              ),
             ),
-          ),
+            Positioned(
+              bottom: 12,
+              child: Text(
+                privacyAmountsHidden ? hiddenAmount : '$percent%',
+                style: TextStyle(
+                  color: tokens.text,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -3815,12 +3920,7 @@ class _IncomeAmountSheetState extends State<_IncomeAmountSheet> {
 
   @override
   Widget build(BuildContext context) => Padding(
-    padding: EdgeInsets.fromLTRB(
-      20,
-      24,
-      20,
-      MediaQuery.viewInsetsOf(context).bottom + 20,
-    ),
+    padding: EdgeInsets.fromLTRB(20, 24, 20, 20),
     child: Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -5442,6 +5542,70 @@ class EmiFormSheet extends ConsumerStatefulWidget {
 }
 
 class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
+  int _formStep = 0;
+  final _formScrollController = ScrollController();
+
+  void _goToStep(int step) {
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _formStep = step;
+      _scheduleError = null;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _formScrollController.hasClients) {
+        _formScrollController.jumpTo(0);
+      }
+    });
+  }
+
+  String? _stepError(int step) {
+    if (step == 0) {
+      if (requiredText(_name.text) != null) return 'Enter an EMI name.';
+      final phone = _friendPhone.text.replaceAll(RegExp(r'\D'), '');
+      if (_isFriend && phone.isNotEmpty && phone.length < 10) {
+        return 'Enter a valid phone number.';
+      }
+      if (_isProduct) {
+        if (amountText(_productPrice.text) != null) {
+          return 'Enter the product price.';
+        }
+        if (_downPayment.text.trim().isNotEmpty &&
+            amountText(_downPayment.text) != null) {
+          return 'Enter a valid down payment.';
+        }
+      }
+    } else if (step == 1) {
+      if (amountText(_amount.text) != null) {
+        return 'Enter a valid installment amount.';
+      }
+      if (_positiveIntegerValidator(_tenure.text) != null) {
+        return 'Enter a valid number of installments.';
+      }
+      final paidError = _paidValidator(_paid.text);
+      if (paidError != null) return paidError;
+    } else if (step == 2) {
+      final rateError = _interestValidator(_interest.text);
+      if (rateError != null) return rateError;
+      if (_fees.text.trim().isNotEmpty && amountText(_fees.text) != null) {
+        return 'Enter a valid fee amount.';
+      }
+      if (_principal.text.trim().isNotEmpty &&
+          amountText(_principal.text) != null) {
+        return 'Enter a valid principal amount.';
+      }
+    }
+    return null;
+  }
+
+  void _continueForm() {
+    final error = _stepError(_formStep);
+    if (error != null) {
+      setState(() => _scheduleError = error);
+      return;
+    }
+    _goToStep(_formStep + 1);
+  }
+
   bool get _isFriend =>
       widget.category == EmiCategory.givenToFriends ||
       isFriendRepaymentType(widget.emi?.type);
@@ -5486,10 +5650,6 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
         '12',
   );
   late final _notes = TextEditingController(text: widget.emi?.notes ?? '');
-  late bool _showFinancingDetails =
-      _interest.text.trim().isNotEmpty || _fees.text.trim().isNotEmpty;
-  late bool _showPaymentDetails =
-      widget.emi?.paymentMethodId != null || _notes.text.trim().isNotEmpty;
   final _friendPhone = TextEditingController();
   late DateTime _agreementDate = widget.emi?.createdAt ?? DateTime.now();
   bool _friendTermsLocked = false;
@@ -5660,6 +5820,7 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
   @override
   void dispose() {
     _routeAnimation?.removeStatusListener(_onSheetAnimationStatus);
+    _formScrollController.dispose();
     _name.dispose();
     _provider.dispose();
     _principal.dispose();
@@ -5678,10 +5839,9 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
   @override
   Widget build(BuildContext context) {
     final palette = AppTheme.homePaletteOf(context);
-    final accent = palette.owe.text;
-    final onAccent = Theme.of(context).brightness == Brightness.dark
-        ? palette.bg
-        : palette.surface;
+    final formColors = AppTheme.colorsOf(context);
+    final accent = AppTheme.emiIdentityInkOf(context);
+    final onAccent = formColors.background;
     final previousNames = <String>[];
     if (widget.emi == null) {
       final previous = [...?ref.watch(allEmiDetailsProvider).valueOrNull]
@@ -5735,6 +5895,10 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
           onPrimary: onAccent,
           primaryContainer: accent.withValues(alpha: .12),
           onPrimaryContainer: accent,
+          onSurface: formColors.text,
+          onSurfaceVariant: formColors.secondaryText,
+          surface: formColors.surface,
+          surfaceContainer: formColors.surfaceContainer,
         ),
         chipTheme: Theme.of(context).chipTheme.copyWith(
           selectedColor: accent.withValues(alpha: .12),
@@ -5748,13 +5912,14 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
         ),
       ),
       child: SafeArea(
-        child: SizedBox(
-          height: availableHeight,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: availableHeight),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
             child: Form(
               key: _formKey,
               child: Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   Row(
                     children: [
@@ -5773,604 +5938,739 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
                     ],
                   ),
                   const SizedBox(height: 10),
-                  Expanded(
-                    child: ListView(
-                      padding: const EdgeInsets.only(bottom: 18),
-                      children: [
-                        _SelectorGroup(
-                          label: 'TYPE',
-                          child: SegmentedToggle<String>(
-                            segments: const [
-                              ButtonSegment(value: 'Loan', label: Text('Loan')),
-                              ButtonSegment(
-                                value: 'Phone/Product',
-                                label: Text('Phone / Product'),
-                              ),
-                              ButtonSegment(
-                                value: 'Credit Card',
-                                label: Text('Credit Card'),
-                              ),
-                            ],
-                            selected: {_type},
-                            selectedBackground: accent.withValues(alpha: .12),
-                            selectedForeground: accent,
-                            filled: true,
-                            onSelectionChanged: _friendTermsLocked
-                                ? null
-                                : (value) =>
-                                      setState(() => _type = value.first),
-                          ),
-                        ),
-                        if (_type == 'Credit Card') ...[
-                          const SizedBox(height: 8),
-                          Text(
-                            'This form tracks a fixed card EMI. Card statements, minimum dues and purchase conversions are not included in this repayment schedule.',
-                            style: Theme.of(context).textTheme.bodySmall
-                                ?.copyWith(color: palette.text2),
-                          ),
-                        ],
-                        const SizedBox(height: 14),
-                        _FieldLabel('NAME'),
-                        const SizedBox(height: 7),
-                        TextFormField(
-                          controller: _name,
-                          decoration: _filledDecoration(
-                            context,
-                            hint: _isFriend
-                                ? 'Person or agreement name'
-                                : 'Loan name',
-                            icon: _isFriend
-                                ? Icons.person_outline
-                                : Icons.account_balance_outlined,
-                          ),
-                          validator: requiredText,
-                        ),
-                        if (previousNames.isNotEmpty) ...[
-                          const SizedBox(height: 10),
-                          Text(
-                            'Recently used names',
-                            style: Theme.of(context).textTheme.bodySmall
-                                ?.copyWith(color: palette.text2),
-                          ),
-                          const SizedBox(height: 6),
-                          SizedBox(
-                            height: 38,
-                            child: ListView.separated(
-                              scrollDirection: Axis.horizontal,
-                              itemCount: previousNames.length,
-                              separatorBuilder: (_, _) =>
-                                  const SizedBox(width: 8),
-                              itemBuilder: (context, index) => ActionChip(
-                                label: Text(previousNames[index]),
-                                onPressed: () =>
-                                    _name.text = previousNames[index],
-                              ),
-                            ),
-                          ),
-                        ],
-                        if (_isFriend) ...[
-                          const SizedBox(height: 14),
-                          const _FieldLabel('PHONE NUMBER (OPTIONAL)'),
-                          const SizedBox(height: 7),
-                          TextFormField(
-                            controller: _friendPhone,
-                            keyboardType: TextInputType.phone,
-                            decoration: _filledDecoration(
-                              context,
-                              hint: 'Phone number',
-                              icon: Icons.phone_outlined,
-                            ),
-                            validator: (value) {
-                              final digits = (value ?? '').replaceAll(
-                                RegExp(r'\D'),
-                                '',
-                              );
-                              return digits.isEmpty || digits.length >= 10
-                                  ? null
-                                  : 'Enter a valid phone number';
-                            },
-                          ),
-                        ],
-                        const SizedBox(height: 14),
-                        _FieldLabel('LENDER'),
-                        const SizedBox(height: 8),
-                        SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: Row(
-                            children: [
-                              for (final provider in _knownProviders)
-                                Padding(
-                                  padding: const EdgeInsets.only(right: 8),
-                                  child: ChoiceChip(
-                                    label: Text(provider),
-                                    selected: _providerChoice == provider,
-                                    onSelected: _friendTermsLocked
-                                        ? null
-                                        : (_) => setState(
-                                            () => _providerChoice = provider,
-                                          ),
-                                  ),
-                                ),
-                              Padding(
-                                padding: const EdgeInsets.only(right: 8),
-                                child: ChoiceChip(
-                                  label: const Text('Other'),
-                                  selected: _providerChoice == 'Other',
-                                  onSelected: _friendTermsLocked
-                                      ? null
-                                      : (_) => setState(
-                                          () => _providerChoice = 'Other',
-                                        ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        if (_providerChoice == 'Other') ...[
-                          const SizedBox(height: 8),
-                          TextFormField(
-                            controller: _provider,
-                            enabled: !_friendTermsLocked,
-                            decoration: _filledDecoration(
-                              context,
-                              hint: 'Lender name',
-                            ),
-                          ),
-                        ],
-                        if (_isProduct) ...[
-                          const SizedBox(height: 14),
-                          _LabeledInput(
-                            label: 'PRODUCT PRICE',
-                            controller: _productPrice,
-                            enabled: !_friendTermsLocked,
-                            hint: 'Full purchase price',
-                            prefix: '${activeAmountFormatter.value.symbol} ',
-                            keyboardType: const TextInputType.numberWithOptions(
-                              decimal: true,
-                            ),
-                            validator: amountText,
-                          ),
-                          const SizedBox(height: 14),
-                          _LabeledInput(
-                            label: 'DOWN PAYMENT (OPTIONAL)',
-                            controller: _downPayment,
-                            enabled: !_friendTermsLocked,
-                            hint: 'Paid upfront',
-                            prefix: '${activeAmountFormatter.value.symbol} ',
-                            keyboardType: const TextInputType.numberWithOptions(
-                              decimal: true,
-                            ),
-                            validator: (value) => value?.trim().isEmpty == true
-                                ? null
-                                : amountText(value),
-                          ),
-                        ],
-                        const SizedBox(height: 14),
-                        IgnorePointer(
-                          ignoring: _friendTermsLocked,
-                          child: HeroAmountInput(
-                            controller: _amount,
-                            obscureAmount: privacyAmountsHidden,
-                            label: _isFriend
-                                ? 'INSTALLMENT TO RECEIVE'
-                                : 'MONTHLY EMI',
-                            validator: amountText,
-                            calculator: () =>
-                                _openAmountCalculator(_amount, 'Monthly EMI'),
-                          ),
-                        ),
-                        if (_type != 'Credit Card')
-                          SwitchListTile.adaptive(
-                            contentPadding: EdgeInsets.zero,
-                            title: const Text('Keep entered EMI'),
-                            subtitle: const Text(
-                              'Use the contract amount instead of recalculating it',
-                            ),
-                            value: _keepEnteredEmi,
-                            onChanged: _friendTermsLocked
-                                ? null
-                                : (value) {
-                                    setState(() => _keepEnteredEmi = value);
-                                    if (!value) _syncCalculatedEmi();
-                                  },
-                          ),
-                        ListenableBuilder(
-                          listenable: _summaryInputs,
-                          builder: (context, _) {
-                            final summary = _liveSummary();
-                            final tenure = int.tryParse(_tenure.text);
-                            if (summary == null || tenure == null) {
-                              return const SizedBox.shrink();
-                            }
-                            return Padding(
-                              padding: const EdgeInsets.only(top: 6),
-                              child: Text(
-                                '$tenure payments · ${formatMoney(summary.totalPaise)} total to ${_isFriend ? 'receive' : 'pay'}',
-                                style: Theme.of(context).textTheme.bodySmall
-                                    ?.copyWith(
-                                      color: palette.text,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                              ),
-                            );
-                          },
-                        ),
-                        const SizedBox(height: 14),
-                        _FieldLabel('TENURE'),
-                        const SizedBox(height: 8),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            for (final months in const ['6', '12', '24', '36'])
-                              ChoiceChip(
-                                label: Text(months),
-                                selected: _tenureChoice == months,
-                                onSelected: _friendTermsLocked
-                                    ? null
-                                    : (_) => setState(() {
-                                        _tenureChoice = months;
-                                        _tenure.text = months;
-                                      }),
-                              ),
-                            ChoiceChip(
-                              label: const Text('Custom'),
-                              selected: _tenureChoice == 'Custom',
-                              onSelected: _friendTermsLocked
-                                  ? null
-                                  : (_) => setState(
-                                      () => _tenureChoice = 'Custom',
-                                    ),
-                            ),
-                          ],
-                        ),
-                        if (_tenureChoice == 'Custom') ...[
-                          const SizedBox(height: 8),
-                          TextFormField(
-                            controller: _tenure,
-                            enabled: !_friendTermsLocked,
-                            keyboardType: TextInputType.number,
-                            decoration: _filledDecoration(
-                              context,
-                              hint: 'Number of payments',
-                            ),
-                            validator: _positiveIntegerValidator,
-                          ),
-                        ],
-                        const SizedBox(height: 14),
-                        InkWell(
-                          onTap: () => setState(
-                            () =>
-                                _showFinancingDetails = !_showFinancingDetails,
-                          ),
-                          borderRadius: BorderRadius.circular(12),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 10),
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    'Interest & fees',
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .titleSmall
-                                        ?.copyWith(fontWeight: FontWeight.w700),
-                                  ),
-                                ),
-                                Icon(
-                                  _showFinancingDetails
-                                      ? Icons.expand_less
-                                      : Icons.expand_more,
-                                  color: palette.text2,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        if (_showFinancingDetails) ...[
-                          _LabeledInput(
-                            label: 'INTEREST RATE (OPTIONAL)',
-                            controller: _interest,
-                            enabled: !_friendTermsLocked,
-                            hint: '0',
-                            suffix: '%',
-                            keyboardType: const TextInputType.numberWithOptions(
-                              decimal: true,
-                            ),
-                            validator: _interestValidator,
-                          ),
-                          if (_type != 'Credit Card') ...[
-                            const SizedBox(height: 8),
-                            SegmentedToggle<EmiRatePeriod>(
-                              segments: const [
-                                ButtonSegment(
-                                  value: EmiRatePeriod.annual,
-                                  label: Text('Per year'),
-                                ),
-                                ButtonSegment(
-                                  value: EmiRatePeriod.monthly,
-                                  label: Text('Per month'),
-                                ),
-                              ],
-                              selected: {_ratePeriod},
-                              selectedBackground: accent.withValues(alpha: .12),
-                              selectedForeground: accent,
-                              filled: true,
-                              onSelectionChanged: _friendTermsLocked
-                                  ? null
-                                  : (value) {
-                                      setState(() => _ratePeriod = value.first);
-                                      _syncCalculatedEmi();
-                                    },
-                            ),
-                            const SizedBox(height: 12),
-                            _SelectorGroup(
-                              label: 'INTEREST METHOD',
-                              child: SegmentedToggle<EmiInterestMethod>(
-                                segments: const [
-                                  ButtonSegment(
-                                    value: EmiInterestMethod.reducing,
-                                    label: Text('Reducing balance'),
-                                  ),
-                                  ButtonSegment(
-                                    value: EmiInterestMethod.flat,
-                                    label: Text('Flat rate'),
-                                  ),
-                                ],
-                                selected: {_interestMethod},
-                                selectedBackground: accent.withValues(
-                                  alpha: .12,
-                                ),
-                                selectedForeground: accent,
-                                filled: true,
-                                onSelectionChanged: _friendTermsLocked
-                                    ? null
-                                    : (value) {
-                                        setState(
-                                          () => _interestMethod = value.first,
-                                        );
-                                        _syncCalculatedEmi();
-                                      },
-                              ),
-                            ),
-                          ],
-                          if (_type != 'Credit Card') ...[
-                            const SizedBox(height: 14),
-                            _LabeledInput(
-                              label: 'FEES (OPTIONAL)',
-                              controller: _fees,
-                              enabled: !_friendTermsLocked,
-                              hint: 'Separate from EMI and principal',
-                              prefix: '${activeAmountFormatter.value.symbol} ',
-                              keyboardType:
-                                  const TextInputType.numberWithOptions(
-                                    decimal: true,
-                                  ),
-                              validator: (value) =>
-                                  value?.trim().isEmpty == true
-                                  ? null
-                                  : amountText(value),
-                            ),
-                          ],
-                        ],
-                        const SizedBox(height: 14),
-                        _LabeledInput(
-                          label: 'PRINCIPAL (OPTIONAL)',
-                          controller: _principal,
-                          enabled: !_friendTermsLocked,
-                          obscureAmount: privacyAmountsHidden,
-                          hint: 'Calculated if left blank',
-                          prefix: '${activeAmountFormatter.value.symbol} ',
-                          keyboardType: const TextInputType.numberWithOptions(
-                            decimal: true,
-                          ),
-                          validator: (value) => value?.trim().isEmpty == true
-                              ? null
-                              : amountText(value),
-                          calculator: () =>
-                              _openAmountCalculator(_principal, 'Principal'),
-                        ),
-                        ListenableBuilder(
-                          listenable: _summaryInputs,
-                          builder: (context, _) {
-                            if (_principal.text.trim().isNotEmpty) {
-                              return const SizedBox.shrink();
-                            }
-                            final estimate = _estimatedPrincipal();
-                            if (estimate == null || estimate <= 0) {
-                              return const SizedBox.shrink();
-                            }
-                            return Padding(
-                              padding: const EdgeInsets.only(top: 6),
-                              child: Text(
-                                '${_isProduct ? 'Price minus down payment' : 'Calculated principal'}: ${formatMoney(estimate)}${!_isProduct && _interest.text.trim().isEmpty ? ' · assumes 0% interest' : ''}',
-                                style: Theme.of(context).textTheme.bodySmall
-                                    ?.copyWith(color: palette.text2),
-                              ),
-                            );
-                          },
-                        ),
-                        const SizedBox(height: 14),
-                        _SelectorGroup(
-                          label: 'FREQUENCY',
-                          child: SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
-                            child: SegmentedToggle<PaymentFrequency>(
-                              segments: frequencySegments,
-                              selected: {_frequency},
-                              selectedBackground: accent.withValues(alpha: .12),
-                              selectedForeground: accent,
-                              filled: true,
-                              onSelectionChanged: _friendTermsLocked
-                                  ? null
-                                  : (value) => setState(
-                                      () => _frequency = value.first,
-                                    ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 14),
-                        if (_isFriend) ...[
-                          IgnorePointer(
-                            ignoring: _friendTermsLocked,
-                            child: DateTile(
-                              label: 'AGREEMENT DATE',
-                              value: _agreementDate,
-                              onChanged: (value) {
-                                if (value != null) {
-                                  setState(() => _agreementDate = value);
-                                }
-                              },
-                            ),
-                          ),
-                          const SizedBox(height: 14),
-                        ],
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
+                  Row(
+                    children: [
+                      for (final (index, label) in const [
+                        'Agreement',
+                        'Schedule',
+                        'Financing',
+                        'Review',
+                      ].indexed)
+                        Expanded(
+                          child: InkWell(
+                            onTap: () => _goToStep(index),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 8),
                               child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  _DateSelector(
-                                    value: _due,
-                                    onChanged: (value) {
-                                      if (!_friendTermsLocked) {
-                                        setState(() => _due = value);
-                                      }
-                                    },
+                                  Text(
+                                    '${index + 1}',
+                                    style: TextStyle(
+                                      color: _formStep == index
+                                          ? palette.text
+                                          : palette.text2,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                  Text(
+                                    label,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: _formStep == index
+                                          ? palette.text
+                                          : palette.text2,
+                                      fontSize: 11,
+                                      fontWeight: _formStep == index
+                                          ? FontWeight.w700
+                                          : FontWeight.w500,
+                                    ),
                                   ),
                                 ],
                               ),
                             ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: ListenableBuilder(
-                                listenable: _tenure,
+                          ),
+                        ),
+                    ],
+                  ),
+                  if (_scheduleError != null)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: _ValidationMessage(_scheduleError!),
+                    ),
+                  Flexible(
+                    fit: FlexFit.loose,
+                    child: ListView(
+                      controller: _formScrollController,
+                      shrinkWrap: true,
+                      padding: const EdgeInsets.only(bottom: 8),
+                      children: [
+                        Offstage(
+                          offstage: _formStep != 0,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _SelectorGroup(
+                                label: 'TYPE',
+                                child: SegmentedToggle<String>(
+                                  segments: const [
+                                    ButtonSegment(
+                                      value: 'Loan',
+                                      label: Text('Loan'),
+                                    ),
+                                    ButtonSegment(
+                                      value: 'Phone/Product',
+                                      label: Text('Phone / Product'),
+                                    ),
+                                    ButtonSegment(
+                                      value: 'Credit Card',
+                                      label: Text('Credit Card'),
+                                    ),
+                                  ],
+                                  selected: {_type},
+                                  selectedBackground: accent.withValues(
+                                    alpha: .12,
+                                  ),
+                                  selectedForeground: accent,
+                                  filled: true,
+                                  onSelectionChanged: _friendTermsLocked
+                                      ? null
+                                      : (value) =>
+                                            setState(() => _type = value.first),
+                                ),
+                              ),
+                              if (_type == 'Credit Card') ...[
+                                const SizedBox(height: 8),
+                                Text(
+                                  'This form tracks a fixed card EMI. Card statements, minimum dues and purchase conversions are not included in this repayment schedule.',
+                                  style: Theme.of(context).textTheme.bodySmall
+                                      ?.copyWith(color: palette.text2),
+                                ),
+                              ],
+                              const SizedBox(height: 14),
+                              _FieldLabel('NAME'),
+                              const SizedBox(height: 7),
+                              TextFormField(
+                                controller: _name,
+                                decoration: _filledDecoration(
+                                  context,
+                                  hint: _isFriend
+                                      ? 'Person or agreement name'
+                                      : 'Loan name',
+                                  icon: _isFriend
+                                      ? Icons.person_outline
+                                      : Icons.account_balance_outlined,
+                                ),
+                                validator: requiredText,
+                              ),
+                              if (previousNames.isNotEmpty) ...[
+                                const SizedBox(height: 10),
+                                Text(
+                                  'Recently used names',
+                                  style: Theme.of(context).textTheme.bodySmall
+                                      ?.copyWith(color: palette.text2),
+                                ),
+                                const SizedBox(height: 6),
+                                SizedBox(
+                                  height: 38,
+                                  child: ListView.separated(
+                                    scrollDirection: Axis.horizontal,
+                                    itemCount: previousNames.length,
+                                    separatorBuilder: (_, _) =>
+                                        const SizedBox(width: 8),
+                                    itemBuilder: (context, index) => ActionChip(
+                                      label: Text(previousNames[index]),
+                                      onPressed: () =>
+                                          _name.text = previousNames[index],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                              if (_isFriend) ...[
+                                const SizedBox(height: 14),
+                                const _FieldLabel('PHONE NUMBER (OPTIONAL)'),
+                                const SizedBox(height: 7),
+                                TextFormField(
+                                  controller: _friendPhone,
+                                  keyboardType: TextInputType.phone,
+                                  decoration: _filledDecoration(
+                                    context,
+                                    hint: 'Phone number',
+                                    icon: Icons.phone_outlined,
+                                  ),
+                                  validator: (value) {
+                                    final digits = (value ?? '').replaceAll(
+                                      RegExp(r'\D'),
+                                      '',
+                                    );
+                                    return digits.isEmpty || digits.length >= 10
+                                        ? null
+                                        : 'Enter a valid phone number';
+                                  },
+                                ),
+                              ],
+                              const SizedBox(height: 14),
+                              _FieldLabel('LENDER'),
+                              const SizedBox(height: 8),
+                              SingleChildScrollView(
+                                scrollDirection: Axis.horizontal,
+                                child: Row(
+                                  children: [
+                                    for (final provider in _knownProviders)
+                                      Padding(
+                                        padding: const EdgeInsets.only(
+                                          right: 8,
+                                        ),
+                                        child: ChoiceChip(
+                                          label: Text(provider),
+                                          selected: _providerChoice == provider,
+                                          onSelected: _friendTermsLocked
+                                              ? null
+                                              : (_) => setState(
+                                                  () => _providerChoice =
+                                                      provider,
+                                                ),
+                                        ),
+                                      ),
+                                    Padding(
+                                      padding: const EdgeInsets.only(right: 8),
+                                      child: ChoiceChip(
+                                        label: const Text('Other'),
+                                        selected: _providerChoice == 'Other',
+                                        onSelected: _friendTermsLocked
+                                            ? null
+                                            : (_) => setState(
+                                                () => _providerChoice = 'Other',
+                                              ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              if (_providerChoice == 'Other') ...[
+                                const SizedBox(height: 8),
+                                TextFormField(
+                                  controller: _provider,
+                                  enabled: !_friendTermsLocked,
+                                  decoration: _filledDecoration(
+                                    context,
+                                    hint: 'Lender name',
+                                  ),
+                                ),
+                              ],
+                              if (_isProduct) ...[
+                                const SizedBox(height: 14),
+                                _LabeledInput(
+                                  label: 'PRODUCT PRICE',
+                                  controller: _productPrice,
+                                  enabled: !_friendTermsLocked,
+                                  hint: 'Full purchase price',
+                                  prefix:
+                                      '${activeAmountFormatter.value.symbol} ',
+                                  keyboardType:
+                                      const TextInputType.numberWithOptions(
+                                        decimal: true,
+                                      ),
+                                  validator: amountText,
+                                ),
+                                const SizedBox(height: 14),
+                                _LabeledInput(
+                                  label: 'DOWN PAYMENT (OPTIONAL)',
+                                  controller: _downPayment,
+                                  enabled: !_friendTermsLocked,
+                                  hint: 'Paid upfront',
+                                  prefix:
+                                      '${activeAmountFormatter.value.symbol} ',
+                                  keyboardType:
+                                      const TextInputType.numberWithOptions(
+                                        decimal: true,
+                                      ),
+                                  validator: (value) =>
+                                      value?.trim().isEmpty == true
+                                      ? null
+                                      : amountText(value),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                        Offstage(
+                          offstage: _formStep != 1,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const SizedBox(height: 14),
+                              IgnorePointer(
+                                ignoring: _friendTermsLocked,
+                                child: HeroAmountInput(
+                                  controller: _amount,
+                                  obscureAmount: privacyAmountsHidden,
+                                  label: _isFriend
+                                      ? 'INSTALLMENT TO RECEIVE'
+                                      : 'MONTHLY EMI',
+                                  validator: amountText,
+                                  calculator: () => _openAmountCalculator(
+                                    _amount,
+                                    'Monthly EMI',
+                                  ),
+                                ),
+                              ),
+                              if (_type != 'Credit Card')
+                                SwitchListTile.adaptive(
+                                  contentPadding: EdgeInsets.zero,
+                                  title: const Text('Keep entered EMI'),
+                                  subtitle: const Text(
+                                    'Use the contract amount instead of recalculating it',
+                                  ),
+                                  value: _keepEnteredEmi,
+                                  onChanged: _friendTermsLocked
+                                      ? null
+                                      : (value) {
+                                          setState(
+                                            () => _keepEnteredEmi = value,
+                                          );
+                                          if (!value) _syncCalculatedEmi();
+                                        },
+                                ),
+                              ListenableBuilder(
+                                listenable: _summaryInputs,
                                 builder: (context, _) {
+                                  final summary = _liveSummary();
                                   final tenure = int.tryParse(_tenure.text);
-                                  return _LabeledInput(
-                                    label: 'EMIS ALREADY PAID',
-                                    controller: _paid,
-                                    enabled: !_friendTermsLocked,
-                                    hint: '0',
-                                    helperText: tenure == null || tenure <= 0
-                                        ? 'Number of installments already paid'
-                                        : 'Number of installments already paid (0–$tenure)',
-                                    keyboardType:
-                                        const TextInputType.numberWithOptions(),
-                                    autovalidateMode: AutovalidateMode.always,
-                                    validator: _paidValidator,
+                                  if (summary == null || tenure == null) {
+                                    return const SizedBox.shrink();
+                                  }
+                                  return Padding(
+                                    padding: const EdgeInsets.only(top: 6),
+                                    child: Text(
+                                      '$tenure payments · ${formatMoney(summary.totalPaise)} total to ${_isFriend ? 'receive' : 'pay'}',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodySmall
+                                          ?.copyWith(
+                                            color: palette.text,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                    ),
                                   );
                                 },
                               ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 14),
-                        InkWell(
-                          onTap: () => setState(
-                            () => _showPaymentDetails = !_showPaymentDetails,
-                          ),
-                          borderRadius: BorderRadius.circular(12),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 10),
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    'Payment method & notes',
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .titleSmall
-                                        ?.copyWith(fontWeight: FontWeight.w700),
+                              const SizedBox(height: 14),
+                              _FieldLabel('TENURE'),
+                              const SizedBox(height: 8),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: [
+                                  for (final months in const [
+                                    '6',
+                                    '12',
+                                    '24',
+                                    '36',
+                                  ])
+                                    ChoiceChip(
+                                      label: Text(months),
+                                      selected: _tenureChoice == months,
+                                      onSelected: _friendTermsLocked
+                                          ? null
+                                          : (_) => setState(() {
+                                              _tenureChoice = months;
+                                              _tenure.text = months;
+                                            }),
+                                    ),
+                                  ChoiceChip(
+                                    label: const Text('Custom'),
+                                    selected: _tenureChoice == 'Custom',
+                                    onSelected: _friendTermsLocked
+                                        ? null
+                                        : (_) => setState(
+                                            () => _tenureChoice = 'Custom',
+                                          ),
                                   ),
-                                ),
-                                Icon(
-                                  _showPaymentDetails
-                                      ? Icons.expand_less
-                                      : Icons.expand_more,
-                                  color: palette.text2,
+                                ],
+                              ),
+                              if (_tenureChoice == 'Custom') ...[
+                                const SizedBox(height: 8),
+                                TextFormField(
+                                  controller: _tenure,
+                                  enabled: !_friendTermsLocked,
+                                  keyboardType: TextInputType.number,
+                                  decoration: _filledDecoration(
+                                    context,
+                                    hint: 'Number of payments',
+                                  ),
+                                  validator: _positiveIntegerValidator,
                                 ),
                               ],
-                            ),
-                          ),
-                        ),
-                        if (_showPaymentDetails) ...[
-                          const _FieldLabel('PAYMENT METHOD'),
-                          const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              for (final option in _methodTiles)
-                                Expanded(
-                                  child: Padding(
-                                    padding: EdgeInsets.only(
-                                      right: option == _methodTiles.last
-                                          ? 0
-                                          : 8,
-                                    ),
-                                    child: _PaymentTile(
-                                      label: option.$1,
-                                      icon: option.$2,
-                                      selected:
-                                          selectedPaymentTile == option.$1,
-                                      selectedFill: accent.withValues(
-                                        alpha: .12,
-                                      ),
-                                      onTap: () => setState(() {
-                                        _selectedPaymentTile = option.$1;
-                                        _paymentMethodId = _methodIdForTile(
-                                          option.$1,
-                                          methods,
-                                        );
-                                      }),
-                                    ),
-                                  ),
-                                ),
                             ],
                           ),
-                          const SizedBox(height: 14),
-                          const _FieldLabel('NOTES'),
-                          const SizedBox(height: 7),
-                          TextFormField(
-                            controller: _notes,
-                            maxLines: 3,
-                            decoration: _filledDecoration(
-                              context,
-                              hint: 'Optional notes',
-                            ),
-                          ),
-                        ],
-                        ListenableBuilder(
-                          listenable: _summaryInputs,
-                          builder: (context, _) {
-                            final summary = _liveSummary();
-                            if (summary == null) return const SizedBox.shrink();
-                            return Padding(
-                              padding: const EdgeInsets.only(top: 20),
-                              child: _EmiSummaryCard(summary: summary),
-                            );
-                          },
                         ),
-                        if (_scheduleError != null) ...[
-                          const SizedBox(height: 16),
-                          _ValidationMessage(_scheduleError!),
-                        ],
+                        Offstage(
+                          offstage: _formStep != 2,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const SizedBox(height: 14),
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 10,
+                                ),
+                                child: Text(
+                                  'Interest & fees',
+                                  style: Theme.of(context).textTheme.titleSmall
+                                      ?.copyWith(
+                                        color: palette.text,
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                ),
+                              ),
+                              ...[
+                                _LabeledInput(
+                                  label: 'INTEREST RATE (OPTIONAL)',
+                                  controller: _interest,
+                                  enabled: !_friendTermsLocked,
+                                  hint: '0',
+                                  suffix: '%',
+                                  keyboardType:
+                                      const TextInputType.numberWithOptions(
+                                        decimal: true,
+                                      ),
+                                  validator: _interestValidator,
+                                ),
+                                if (_type != 'Credit Card') ...[
+                                  const SizedBox(height: 8),
+                                  SegmentedToggle<EmiRatePeriod>(
+                                    segments: const [
+                                      ButtonSegment(
+                                        value: EmiRatePeriod.annual,
+                                        label: Text('Per year'),
+                                      ),
+                                      ButtonSegment(
+                                        value: EmiRatePeriod.monthly,
+                                        label: Text('Per month'),
+                                      ),
+                                    ],
+                                    selected: {_ratePeriod},
+                                    selectedBackground: accent.withValues(
+                                      alpha: .12,
+                                    ),
+                                    selectedForeground: accent,
+                                    filled: true,
+                                    onSelectionChanged: _friendTermsLocked
+                                        ? null
+                                        : (value) {
+                                            setState(
+                                              () => _ratePeriod = value.first,
+                                            );
+                                            _syncCalculatedEmi();
+                                          },
+                                  ),
+                                  const SizedBox(height: 12),
+                                  _SelectorGroup(
+                                    label: 'INTEREST METHOD',
+                                    child: SegmentedToggle<EmiInterestMethod>(
+                                      segments: const [
+                                        ButtonSegment(
+                                          value: EmiInterestMethod.reducing,
+                                          label: Text('Reducing balance'),
+                                        ),
+                                        ButtonSegment(
+                                          value: EmiInterestMethod.flat,
+                                          label: Text('Flat rate'),
+                                        ),
+                                      ],
+                                      selected: {_interestMethod},
+                                      selectedBackground: accent.withValues(
+                                        alpha: .12,
+                                      ),
+                                      selectedForeground: accent,
+                                      filled: true,
+                                      onSelectionChanged: _friendTermsLocked
+                                          ? null
+                                          : (value) {
+                                              setState(
+                                                () => _interestMethod =
+                                                    value.first,
+                                              );
+                                              _syncCalculatedEmi();
+                                            },
+                                    ),
+                                  ),
+                                ],
+                                if (_type != 'Credit Card') ...[
+                                  const SizedBox(height: 14),
+                                  _LabeledInput(
+                                    label: 'FEES (OPTIONAL)',
+                                    controller: _fees,
+                                    enabled: !_friendTermsLocked,
+                                    hint: 'Separate from EMI and principal',
+                                    prefix:
+                                        '${activeAmountFormatter.value.symbol} ',
+                                    keyboardType:
+                                        const TextInputType.numberWithOptions(
+                                          decimal: true,
+                                        ),
+                                    validator: (value) =>
+                                        value?.trim().isEmpty == true
+                                        ? null
+                                        : amountText(value),
+                                  ),
+                                ],
+                              ],
+                              const SizedBox(height: 14),
+                              _LabeledInput(
+                                label: 'PRINCIPAL (OPTIONAL)',
+                                controller: _principal,
+                                enabled: !_friendTermsLocked,
+                                obscureAmount: privacyAmountsHidden,
+                                hint: 'Calculated if left blank',
+                                prefix:
+                                    '${activeAmountFormatter.value.symbol} ',
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
+                                      decimal: true,
+                                    ),
+                                validator: (value) =>
+                                    value?.trim().isEmpty == true
+                                    ? null
+                                    : amountText(value),
+                                calculator: () => _openAmountCalculator(
+                                  _principal,
+                                  'Principal',
+                                ),
+                              ),
+                              ListenableBuilder(
+                                listenable: _summaryInputs,
+                                builder: (context, _) {
+                                  if (_principal.text.trim().isNotEmpty) {
+                                    return const SizedBox.shrink();
+                                  }
+                                  final estimate = _estimatedPrincipal();
+                                  if (estimate == null || estimate <= 0) {
+                                    return const SizedBox.shrink();
+                                  }
+                                  return Padding(
+                                    padding: const EdgeInsets.only(top: 6),
+                                    child: Text(
+                                      '${_isProduct ? 'Price minus down payment' : 'Calculated principal'}: ${formatMoney(estimate)}${!_isProduct && _interest.text.trim().isEmpty ? ' · assumes 0% interest' : ''}',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodySmall
+                                          ?.copyWith(color: palette.text2),
+                                    ),
+                                  );
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
+                        Offstage(
+                          offstage: _formStep != 1,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const SizedBox(height: 14),
+                              _SelectorGroup(
+                                label: 'FREQUENCY',
+                                child: SingleChildScrollView(
+                                  scrollDirection: Axis.horizontal,
+                                  child: SegmentedToggle<PaymentFrequency>(
+                                    segments: frequencySegments,
+                                    selected: {_frequency},
+                                    selectedBackground: accent.withValues(
+                                      alpha: .12,
+                                    ),
+                                    selectedForeground: accent,
+                                    filled: true,
+                                    onSelectionChanged: _friendTermsLocked
+                                        ? null
+                                        : (value) => setState(
+                                            () => _frequency = value.first,
+                                          ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 14),
+                              if (_isFriend) ...[
+                                IgnorePointer(
+                                  ignoring: _friendTermsLocked,
+                                  child: DateTile(
+                                    label: 'AGREEMENT DATE',
+                                    value: _agreementDate,
+                                    onChanged: (value) {
+                                      if (value != null) {
+                                        setState(() => _agreementDate = value);
+                                      }
+                                    },
+                                  ),
+                                ),
+                                const SizedBox(height: 14),
+                              ],
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        _DateSelector(
+                                          value: _due,
+                                          onChanged: (value) {
+                                            if (!_friendTermsLocked) {
+                                              setState(() => _due = value);
+                                            }
+                                          },
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: ListenableBuilder(
+                                      listenable: _tenure,
+                                      builder: (context, _) {
+                                        final tenure = int.tryParse(
+                                          _tenure.text,
+                                        );
+                                        return _LabeledInput(
+                                          label: 'EMIS ALREADY PAID',
+                                          controller: _paid,
+                                          enabled: !_friendTermsLocked,
+                                          hint: '0',
+                                          helperText:
+                                              tenure == null || tenure <= 0
+                                              ? 'Number of installments already paid'
+                                              : 'Number of installments already paid (0–$tenure)',
+                                          keyboardType:
+                                              const TextInputType.numberWithOptions(),
+                                          autovalidateMode:
+                                              AutovalidateMode.always,
+                                          validator: _paidValidator,
+                                        );
+                                      },
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                        Offstage(
+                          offstage: _formStep != 3,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const SizedBox(height: 14),
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 10,
+                                ),
+                                child: Text(
+                                  'Payment method & notes',
+                                  style: Theme.of(context).textTheme.titleSmall
+                                      ?.copyWith(
+                                        color: palette.text,
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                ),
+                              ),
+                              ...[
+                                const _FieldLabel('PAYMENT METHOD'),
+                                const SizedBox(height: 8),
+                                Row(
+                                  children: [
+                                    for (final option in _methodTiles)
+                                      Expanded(
+                                        child: Padding(
+                                          padding: EdgeInsets.only(
+                                            right: option == _methodTiles.last
+                                                ? 0
+                                                : 8,
+                                          ),
+                                          child: _PaymentTile(
+                                            label: option.$1,
+                                            icon: option.$2,
+                                            selected:
+                                                selectedPaymentTile ==
+                                                option.$1,
+                                            selectedFill: accent.withValues(
+                                              alpha: .12,
+                                            ),
+                                            onTap: () => setState(() {
+                                              _selectedPaymentTile = option.$1;
+                                              _paymentMethodId =
+                                                  _methodIdForTile(
+                                                    option.$1,
+                                                    methods,
+                                                  );
+                                            }),
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                                const SizedBox(height: 14),
+                                const _FieldLabel('NOTES'),
+                                const SizedBox(height: 7),
+                                TextFormField(
+                                  controller: _notes,
+                                  maxLines: 3,
+                                  decoration: _filledDecoration(
+                                    context,
+                                    hint: 'Optional notes',
+                                  ),
+                                ),
+                              ],
+                              ListenableBuilder(
+                                listenable: _summaryInputs,
+                                builder: (context, _) {
+                                  final summary = _liveSummary();
+                                  if (summary == null) {
+                                    return const SizedBox.shrink();
+                                  }
+                                  return Padding(
+                                    padding: const EdgeInsets.only(top: 20),
+                                    child: _EmiSummaryCard(summary: summary),
+                                  );
+                                },
+                              ),
+                              if (_scheduleError != null) ...[
+                                const SizedBox(height: 16),
+                                _ValidationMessage(_scheduleError!),
+                              ],
+                            ],
+                          ),
+                        ),
                       ],
                     ),
                   ),
                   const SizedBox(height: 8),
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.icon(
-                      style: FilledButton.styleFrom(
-                        minimumSize: const Size.fromHeight(54),
-                        shape: const StadiumBorder(),
+                  Row(
+                    children: [
+                      if (_formStep > 0) ...[
+                        TextButton(
+                          onPressed: () => _goToStep(_formStep - 1),
+                          child: const Text('Back'),
+                        ),
+                        const SizedBox(width: 8),
+                      ],
+                      Expanded(
+                        child: FilledButton.icon(
+                          style: FilledButton.styleFrom(
+                            minimumSize: const Size.fromHeight(54),
+                            shape: const StadiumBorder(),
+                          ),
+                          onPressed: _saving
+                              ? null
+                              : _formStep == 3
+                              ? _save
+                              : _continueForm,
+                          icon: Icon(
+                            _formStep == 3
+                                ? Icons.save_outlined
+                                : Icons.arrow_forward,
+                          ),
+                          label: Text(
+                            _saving
+                                ? 'Saving...'
+                                : _formStep == 3
+                                ? 'Save EMI'
+                                : 'Continue',
+                          ),
+                        ),
                       ),
-                      onPressed: _saving ? null : _save,
-                      icon: const Icon(Icons.save_outlined),
-                      label: Text(_saving ? 'Saving...' : 'Save EMI'),
-                    ),
+                    ],
                   ),
                 ],
               ),
@@ -6491,10 +6791,17 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
 
   Future<void> _save() async {
     setState(() => _scheduleError = null);
+    for (var step = 0; step < 3; step++) {
+      final error = _stepError(step);
+      if (error != null) {
+        _goToStep(step);
+        setState(() => _scheduleError = error);
+        return;
+      }
+    }
     final interestError = _interestValidator(_interest.text);
     if (interestError != null) {
       setState(() {
-        _showFinancingDetails = true;
         _scheduleError = interestError;
       });
       return;
@@ -6791,7 +7098,14 @@ InputDecoration _filledDecoration(
   required String hint,
   IconData? icon,
 }) {
-  return financeFieldDecoration(context, hint: hint, icon: icon);
+  final formColors = AppTheme.colorsOf(context);
+  return financeFieldDecoration(context, hint: hint, icon: icon).copyWith(
+    fillColor: formColors.fieldFill,
+    hintStyle: TextStyle(color: formColors.secondaryText),
+    prefixIconColor: formColors.secondaryText,
+    prefixStyle: TextStyle(color: formColors.text),
+    suffixStyle: TextStyle(color: formColors.secondaryText),
+  );
 }
 
 class _FieldLabel extends StatelessWidget {
@@ -6847,11 +7161,12 @@ class _LabeledInput extends StatelessWidget {
     label: label,
     child: TextFormField(
       controller: controller,
+      style: TextStyle(color: AppTheme.homePaletteOf(context).text),
       enabled: enabled,
       obscureText: obscureAmount,
       keyboardType: keyboardType,
       autovalidateMode: autovalidateMode,
-      decoration: financeFieldDecoration(context, hint: hint).copyWith(
+      decoration: _filledDecoration(context, hint: hint).copyWith(
         helperText: helperText,
         helperMaxLines: helperText == null ? null : 3,
         errorMaxLines: helperText == null ? null : 3,

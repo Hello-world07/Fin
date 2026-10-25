@@ -339,7 +339,7 @@ TextStyle? _title(BuildContext context) =>
 TextStyle? _label(BuildContext context) => Theme.of(context)
     .textTheme
     .labelSmall
-    ?.copyWith(fontSize: 12, color: AppTheme.colorsOf(context).secondaryText);
+    ?.copyWith(fontSize: 13, color: AppTheme.colorsOf(context).secondaryText);
 
 class _FirstRun extends StatelessWidget {
   const _FirstRun();
@@ -718,7 +718,11 @@ class _IncomeRecovery extends ConsumerWidget {
                     ),
                     Text(
                       'Scheduled this month',
-                      style: TextStyle(fontSize: 12, color: colors.text2),
+                      style: TextStyle(
+                        fontSize: 13,
+                        height: 1.3,
+                        color: colors.text2,
+                      ),
                     ),
                   ],
                 ),
@@ -1003,9 +1007,6 @@ class _MoneyBalance extends StatelessWidget {
       decoration: BoxDecoration(
         color: card.surface,
         borderRadius: BorderRadius.circular(24),
-        border: Theme.of(context).brightness == Brightness.dark
-            ? Border.all(color: card.border.withValues(alpha: .75))
-            : null,
       ),
       child: Padding(
         padding: const EdgeInsets.all(20),
@@ -1353,6 +1354,9 @@ class _ForecastState extends State<_Forecast>
                 for (var i = 0; i < weeks.length; i++)
                   Expanded(
                     child: Semantics(
+                      key: ValueKey(
+                        'forecast-week-${weeks[i].start.year}-${weeks[i].start.month}-${weeks[i].start.day}',
+                      ),
                       button: true,
                       label:
                           '${formatWeekRange(weeks[i].start, today: widget.data.today)}, '
@@ -1516,12 +1520,20 @@ class _ForecastWeekColumn extends StatelessWidget {
                     bottom: lowerHeight,
                     child: Center(
                       child: Container(
-                        width: 24,
+                        width: 2,
                         height: inHeight,
-                        decoration: BoxDecoration(
-                          color: incoming.graphic,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
+                        color: incoming.graphic.withValues(alpha: .55),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: lowerHeight + inHeight - 6,
+                    child: Center(
+                      child: CircleAvatar(
+                        radius: 6,
+                        backgroundColor: incoming.graphic,
                       ),
                     ),
                   ),
@@ -1533,12 +1545,22 @@ class _ForecastWeekColumn extends StatelessWidget {
                     top: upperHeight,
                     child: Center(
                       child: Container(
-                        width: 24,
+                        width: 2,
                         height: outHeight,
-                        decoration: BoxDecoration(
-                          color: selected ? card.redBar : card.mutedRedBar,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
+                        color: card.redBar.withValues(alpha: .55),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    top: upperHeight + outHeight - 6,
+                    child: Center(
+                      child: CircleAvatar(
+                        radius: 6,
+                        backgroundColor: selected
+                            ? card.redBar
+                            : card.mutedRedBar,
                       ),
                     ),
                   ),
@@ -2824,102 +2846,139 @@ void _showBreakdown(
   String title, {
   HomeOverview? data,
 }) {
-  showModalBottomSheet<void>(
+  showGeneralDialog<void>(
     context: context,
-    showDragHandle: true,
-    isScrollControlled: true,
-    backgroundColor: AppTheme.homePaletteOf(context).surface,
-    builder: (sheetContext) => SafeArea(
-      child: Padding(
-        padding: EdgeInsets.fromLTRB(
-          20,
-          0,
-          20,
-          16 + MediaQuery.viewPaddingOf(context).bottom,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(title, style: _title(context)),
-            const SizedBox(height: 12),
-            ConstrainedBox(
+    barrierDismissible: true,
+    barrierLabel: 'Close week details',
+    barrierColor: Theme.of(context).colorScheme.scrim.withValues(alpha: .28),
+    transitionDuration: const Duration(milliseconds: 240),
+    transitionBuilder: (context, animation, _, child) => SlideTransition(
+      position: Tween<Offset>(
+        begin: const Offset(1, 0),
+        end: Offset.zero,
+      ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic)),
+      child: child,
+    ),
+    pageBuilder: (sheetContext, _, _) => SafeArea(
+      child: Align(
+        alignment: Alignment.topRight,
+        child: Padding(
+          padding: const EdgeInsets.only(top: 12),
+          child: Material(
+            color: AppTheme.homePaletteOf(sheetContext).surface,
+            borderRadius: const BorderRadius.horizontal(
+              left: Radius.circular(24),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: ConstrainedBox(
               constraints: BoxConstraints(
-                maxHeight: MediaQuery.sizeOf(context).height * .55,
+                maxWidth: math.min(
+                  MediaQuery.sizeOf(sheetContext).width - 24,
+                  430,
+                ),
               ),
-              child: ListView.builder(
-                shrinkWrap: true,
-                itemCount: items.length,
-                itemBuilder: (_, index) {
-                  final item = items[index];
-                  return FlowRow(
-                    item: item,
-                    today: data?.today ?? DateTime.now(),
-                    onTap: () {
-                      if (data == null) return;
-                      Navigator.of(sheetContext).pop();
-                      _openDue(context, item, data);
-                    },
-                  );
-                },
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(20, 16, 20, 20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(title, style: _title(sheetContext)),
+                        ),
+                        IconButton(
+                          tooltip: 'Close',
+                          onPressed: () => Navigator.pop(sheetContext),
+                          icon: const Icon(Icons.close),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxHeight: MediaQuery.sizeOf(context).height * .55,
+                      ),
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: items.length,
+                        itemBuilder: (_, index) {
+                          final item = items[index];
+                          return FlowRow(
+                            item: item,
+                            today: data?.today ?? DateTime.now(),
+                            onTap: () {
+                              if (data == null) return;
+                              Navigator.of(sheetContext).pop();
+                              _openDue(context, item, data);
+                            },
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'In',
+                            style: TextStyle(
+                              color: AppTheme.homePaletteOf(
+                                context,
+                              ).incoming.text,
+                            ),
+                          ),
+                        ),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: _SignedAmount(
+                            items
+                                .where((e) => e.incoming)
+                                .fold(0, (n, e) => n + e.amount),
+                          ),
+                        ),
+                      ],
+                    ),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Out',
+                            style: TextStyle(
+                              color: AppTheme.homePaletteOf(context).out.text,
+                            ),
+                          ),
+                        ),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: _SignedAmount(
+                            -items
+                                .where((e) => !e.incoming)
+                                .fold(0, (n, e) => n + e.amount),
+                          ),
+                        ),
+                      ],
+                    ),
+                    Row(
+                      children: [
+                        const Expanded(child: Text('Net')),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: _SignedAmount(
+                            items.fold<int>(
+                              0,
+                              (n, e) => n + (e.incoming ? e.amount : -e.amount),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'In',
-                    style: TextStyle(
-                      color: AppTheme.homePaletteOf(context).incoming.text,
-                    ),
-                  ),
-                ),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: _SignedAmount(
-                    items
-                        .where((e) => e.incoming)
-                        .fold(0, (n, e) => n + e.amount),
-                  ),
-                ),
-              ],
-            ),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'Out',
-                    style: TextStyle(
-                      color: AppTheme.homePaletteOf(context).out.text,
-                    ),
-                  ),
-                ),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: _SignedAmount(
-                    -items
-                        .where((e) => !e.incoming)
-                        .fold(0, (n, e) => n + e.amount),
-                  ),
-                ),
-              ],
-            ),
-            Row(
-              children: [
-                const Expanded(child: Text('Net')),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: _SignedAmount(
-                    items.fold<int>(
-                      0,
-                      (n, e) => n + (e.incoming ? e.amount : -e.amount),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ],
+          ),
         ),
       ),
     ),

@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -72,10 +73,10 @@ class EmiOverviewScreen extends ConsumerStatefulWidget {
   const EmiOverviewScreen({super.key});
 
   @override
-  ConsumerState<EmiOverviewScreen> createState() => _EmiOverviewScreenState();
+  ConsumerState<EmiOverviewScreen> createState() => EmiOverviewScreenState();
 }
 
-class _EmiOverviewScreenState extends ConsumerState<EmiOverviewScreen> {
+class EmiOverviewScreenState extends ConsumerState<EmiOverviewScreen> {
   double _tabSwipeDistance = 0;
   final _scrollController = ScrollController();
   final _agendaSearchController = TextEditingController();
@@ -117,6 +118,20 @@ class _EmiOverviewScreenState extends ConsumerState<EmiOverviewScreen> {
       _OverviewTab.friends => EmiCategory.givenToFriends,
       _OverviewTab.completed => null,
     };
+  }
+
+  bool goBackWithinEmis() {
+    final category = ref.read(emiOverviewCategoryProvider);
+    final current = _completedTab && category == null
+        ? _OverviewTab.completed
+        : switch (category) {
+            null => _OverviewTab.all,
+            EmiCategory.personal => _OverviewTab.personal,
+            EmiCategory.givenToFriends => _OverviewTab.friends,
+          };
+    if (current == _OverviewTab.all) return false;
+    _selectTab(_OverviewTab.values[current.index - 1]);
+    return true;
   }
 
   Future<void> _showCardActions(
@@ -639,7 +654,18 @@ class _EmiOverviewScreenState extends ConsumerState<EmiOverviewScreen> {
                                 final received =
                                     detail.category ==
                                     EmiCategory.givenToFriends;
+                                final lastPayment = detail.payments.isEmpty
+                                    ? null
+                                    : detail.payments.reduce(
+                                        (latest, payment) =>
+                                            payment.paidOn.isAfter(
+                                              latest.paidOn,
+                                            )
+                                            ? payment
+                                            : latest,
+                                      );
                                 return ListTile(
+                                  isThreeLine: true,
                                   contentPadding: const EdgeInsets.symmetric(
                                     vertical: 5,
                                   ),
@@ -654,6 +680,8 @@ class _EmiOverviewScreenState extends ConsumerState<EmiOverviewScreen> {
                                   ),
                                   title: Text(
                                     detail.emi.name,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
                                     style: TextStyle(
                                       color: received
                                           ? _incomeInk(context)
@@ -661,10 +689,28 @@ class _EmiOverviewScreenState extends ConsumerState<EmiOverviewScreen> {
                                       fontWeight: FontWeight.w800,
                                     ),
                                   ),
-                                  subtitle: Text(
-                                    '${received ? 'Received in full' : 'Paid in full'}'
-                                    '${detail.emi.provider == null || detail.emi.provider!.isEmpty ? '' : ' · ${detail.emi.provider}'}',
-                                    style: TextStyle(color: colors.text2),
+                                  subtitle: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        '${received ? 'Received in full' : 'Paid in full'}'
+                                        '${detail.emi.provider == null || detail.emi.provider!.isEmpty ? '' : ' · ${detail.emi.provider}'}',
+                                        style: TextStyle(color: colors.text2),
+                                      ),
+                                      Text(
+                                        lastPayment == null
+                                            ? 'Completion date not recorded'
+                                            : 'Completed ${DateFormat('d MMM yyyy').format(lastPayment.paidOn)}',
+                                        style: TextStyle(color: colors.text2),
+                                      ),
+                                      Text(
+                                        lastPayment == null
+                                            ? 'Last payment not recorded'
+                                            : 'Last payment ${formatMoney(lastPayment.amountPaise)}',
+                                        style: TextStyle(color: colors.text2),
+                                      ),
+                                    ],
                                   ),
                                   trailing: AmountText(
                                     detail.paidPaise,
@@ -1279,6 +1325,76 @@ class _EmiMonthlySchedule extends StatefulWidget {
   State<_EmiMonthlySchedule> createState() => _EmiMonthlyScheduleState();
 }
 
+class _EmiLoadPainter extends CustomPainter {
+  const _EmiLoadPainter({
+    required this.incoming,
+    required this.outgoing,
+    required this.maximum,
+    required this.selected,
+    required this.incomingInk,
+    required this.outgoingInk,
+  });
+
+  final List<int> incoming, outgoing;
+  final int maximum, selected;
+  final Color incomingInk, outgoingInk;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (maximum <= 0 || incoming.isEmpty) return;
+    void draw(List<int> values, Color ink) {
+      if (values.every((value) => value == 0)) return;
+      final slot = size.width / values.length;
+      Offset point(int index) => Offset(
+        slot * (index + .5),
+        size.height - 10 - (size.height - 24) * values[index] / maximum,
+      );
+      final line = Path()..moveTo(point(0).dx, point(0).dy);
+      for (var index = 1; index < values.length; index++) {
+        line.lineTo(point(index).dx, point(index).dy);
+      }
+      canvas.drawPath(
+        line,
+        Paint()
+          ..color = ink
+          ..strokeWidth = 2.5
+          ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.round
+          ..style = PaintingStyle.stroke,
+      );
+      for (var index = 0; index < values.length; index++) {
+        canvas.drawCircle(
+          point(index),
+          index == selected ? 6 : 4,
+          Paint()..color = ink,
+        );
+        if (index == selected) {
+          canvas.drawCircle(
+            point(index),
+            8,
+            Paint()
+              ..color = ink.withValues(alpha: .45)
+              ..strokeWidth = 1.5
+              ..style = PaintingStyle.stroke,
+          );
+        }
+      }
+    }
+
+    draw(outgoing, outgoingInk);
+    draw(incoming, incomingInk);
+  }
+
+  @override
+  bool shouldRepaint(covariant _EmiLoadPainter old) =>
+      maximum != old.maximum ||
+      selected != old.selected ||
+      incomingInk != old.incomingInk ||
+      outgoingInk != old.outgoingInk ||
+      !listEquals(incoming, old.incoming) ||
+      !listEquals(outgoing, old.outgoing);
+}
+
 class _EmiMonthlyScheduleState extends State<_EmiMonthlySchedule> {
   DateTime? _selectedMonth;
 
@@ -1303,165 +1419,132 @@ class _EmiMonthlyScheduleState extends State<_EmiMonthlySchedule> {
       (value, month) =>
           math.max(value, math.max(month.incoming, month.outgoing)),
     );
-    double barHeight(int value) =>
-        value == 0 || largest == 0 ? 0 : math.max(4, 36 * value / largest);
-    final halfHeight = math.max(
-      52.0,
-      MediaQuery.textScalerOf(context).scale(11) + 44,
-    );
     String monthTooltip(HomeMonth month) =>
         '${DateFormat('MMMM yyyy').format(month.start)}: ${[if (month.incoming > 0) '${formatMoney(month.incoming)} expected back', if (month.outgoing > 0) '${formatMoney(month.outgoing)} to pay', if (month.incoming == 0 && month.outgoing == 0) 'No installments due'].join(', ')}';
     if (months.every((month) => month.items.isEmpty)) {
       return const SizedBox.shrink();
     }
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: _emiCard(context),
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Next 6 months',
-            style: TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w800,
-              color: colors.text,
-            ),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Next 6 months',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                    color: colors.text,
+                  ),
+                ),
+              ),
+              Text(
+                'Tap chart',
+                style: TextStyle(color: colors.text2, fontSize: 12),
+              ),
+              Icon(Icons.chevron_right, size: 18, color: colors.text2),
+            ],
           ),
           const SizedBox(height: 10),
-          RepaintBoundary(
-            child: Row(
+          SizedBox(
+            height: 108,
+            child: Stack(
               children: [
-                for (final month in months)
-                  Expanded(
-                    child: InkWell(
-                      key: ValueKey(
-                        'emi-month-${month.start.year}-${month.start.month}',
-                      ),
-                      onTap: () {
-                        setState(() => _selectedMonth = month.start);
-                        _showMonth(context, month);
-                      },
-                      child: Tooltip(
-                        message: monthTooltip(month),
-                        child: Column(
-                          children: [
-                            if (hasIncoming || !hasOutgoing)
-                              SizedBox(
-                                height: halfHeight,
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.end,
-                                  children: [
-                                    if (month.incoming > 0)
-                                      Text(
-                                        '+${_chartAmount(month.incoming)}',
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: TextStyle(
-                                          color: _incomeInk(context),
-                                          fontSize: 11,
-                                        ),
-                                      ),
-                                    Align(
-                                      alignment: Alignment.bottomCenter,
-                                      child: Container(
-                                        width: 13,
-                                        height: barHeight(month.incoming),
-                                        decoration: BoxDecoration(
-                                          color: _incomeInk(context),
-                                          borderRadius: BorderRadius.circular(
-                                            6,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            if (!hasIncoming && hasOutgoing)
-                              SizedBox(
-                                height: halfHeight,
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.end,
-                                  children: [
-                                    if (month.outgoing > 0)
-                                      Text(
-                                        '−${_chartAmount(month.outgoing)}',
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: TextStyle(
-                                          color: _expenseInk(context),
-                                          fontSize: 11,
-                                        ),
-                                      ),
-                                    Container(
-                                      width: 13,
-                                      height: barHeight(month.outgoing),
-                                      decoration: BoxDecoration(
-                                        color: _expenseInk(context),
-                                        borderRadius: BorderRadius.circular(6),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            Container(height: 1, color: colors.line),
-                            if (hasIncoming && hasOutgoing)
-                              SizedBox(
-                                height: halfHeight,
-                                child: Column(
-                                  children: [
-                                    Align(
-                                      alignment: Alignment.topCenter,
-                                      child: Container(
-                                        width: 13,
-                                        height: barHeight(month.outgoing),
-                                        decoration: BoxDecoration(
-                                          color: _expenseInk(context),
-                                          borderRadius: BorderRadius.circular(
-                                            6,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                    if (month.outgoing > 0)
-                                      Text(
-                                        '−${_chartAmount(month.outgoing)}',
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: TextStyle(
-                                          color: _expenseInk(context),
-                                          fontSize: 11,
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                              ),
-                            const SizedBox(height: 3),
-                            Text(
-                              DateFormat('MMM').format(month.start),
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: colors.text2,
-                              ),
-                            ),
-                            if (_selectedMonth?.year == month.start.year &&
-                                _selectedMonth?.month == month.start.month)
-                              Container(
-                                height: 2,
-                                width: 20,
-                                color: _accentInk(context),
-                              )
-                            else
-                              const SizedBox(height: 2),
-                          ],
+                Positioned.fill(
+                  child: RepaintBoundary(
+                    key: const ValueKey('emi-month-load-chart'),
+                    child: CustomPaint(
+                      painter: _EmiLoadPainter(
+                        incoming: [for (final month in months) month.incoming],
+                        outgoing: [for (final month in months) month.outgoing],
+                        maximum: largest,
+                        selected: months.indexWhere(
+                          (month) =>
+                              month.start.year == _selectedMonth?.year &&
+                              month.start.month == _selectedMonth?.month,
                         ),
+                        incomingInk: _incomeInk(context),
+                        outgoingInk: _expenseInk(context),
                       ),
                     ),
                   ),
+                ),
+                Row(
+                  children: [
+                    for (final month in months)
+                      Expanded(
+                        child: Tooltip(
+                          message: monthTooltip(month),
+                          child: InkWell(
+                            key: ValueKey(
+                              'emi-month-${month.start.year}-${month.start.month}',
+                            ),
+                            onTap: () {
+                              setState(() => _selectedMonth = month.start);
+                              _showMonth(context, month);
+                            },
+                            child: const SizedBox.expand(),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
               ],
             ),
+          ),
+          const SizedBox(height: 6),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (final month in months)
+                Expanded(
+                  child: Column(
+                    children: [
+                      Text(
+                        DateFormat(
+                          month.start.month == 1 ? 'MMM yy' : 'MMM',
+                        ).format(month.start),
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: colors.text2,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      if (month.incoming > 0)
+                        Text(
+                          '+${_chartAmount(month.incoming)}',
+                          maxLines: 1,
+                          style: TextStyle(
+                            color: _incomeInk(context),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      if (month.outgoing > 0)
+                        Text(
+                          '−${_chartAmount(month.outgoing)}',
+                          maxLines: 1,
+                          style: TextStyle(
+                            color: _expenseInk(context),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      if (month.incoming == 0 && month.outgoing == 0)
+                        Text(
+                          '—',
+                          style: TextStyle(color: colors.text2, fontSize: 12),
+                        ),
+                    ],
+                  ),
+                ),
+            ],
           ),
           const SizedBox(height: 6),
           if (hasIncoming && hasOutgoing)
@@ -1870,9 +1953,11 @@ class _AgreementCard extends StatelessWidget {
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                color: colors.text2,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
+                                color: AppTheme.homePaletteOf(
+                                  context,
+                                ).emiTone.text,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
                               ),
                             ),
                           ),
@@ -1895,13 +1980,39 @@ class _AgreementCard extends StatelessWidget {
                       ),
                     ),
                   ),
-                  IconButton(
-                    onPressed: onActions,
-                    tooltip: 'More actions',
-                    icon: Icon(Icons.more_horiz, color: colors.text),
-                    constraints: const BoxConstraints(
-                      minWidth: 48,
-                      minHeight: 48,
+                  Tooltip(
+                    message: 'More actions',
+                    child: Semantics(
+                      button: true,
+                      label: 'More actions for ${detail.emi.name}',
+                      child: InkWell(
+                        onTap: onActions,
+                        borderRadius: BorderRadius.circular(8),
+                        child: SizedBox(
+                          width: 48,
+                          height: 48,
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.more_horiz,
+                                  size: 22,
+                                  color: colors.text,
+                                ),
+                                Text(
+                                  'More',
+                                  style: TextStyle(
+                                    color: colors.text2,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
                     ),
                   ),
                 ],
@@ -2008,12 +2119,13 @@ class _EmiRemindButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = AppTheme.homePaletteOf(context);
+    final reminderInk = AppTheme.emiIdentityInkOf(context);
     return OutlinedButton.icon(
       onPressed: onPressed,
-      icon: Icon(Icons.send_outlined, size: 17, color: _incomeInk(context)),
+      icon: Icon(Icons.send_outlined, size: 17, color: reminderInk),
       label: const Text('Send reminder'),
       style: OutlinedButton.styleFrom(
-        foregroundColor: colors.text,
+        foregroundColor: reminderInk,
         backgroundColor: colors.surfaceAlt,
         side: BorderSide(color: colors.line),
         minimumSize: const Size(0, 44),
@@ -2152,26 +2264,68 @@ class EmiAgreementDetailScreen extends ConsumerWidget {
     final friend = detail.category == EmiCategory.givenToFriends;
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (dialog) => AlertDialog(
-        title: Text(
-          friend ? 'Record full repayment?' : 'Pay off the full balance?',
-        ),
-        content: Text(
-          'This records ${formatMoney(detail.remainingBalancePaise)} '
-          'against every remaining installment of ${detail.emi.name}. '
-          'Existing partial payments stay in the history.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialog, false),
-            child: const Text('Cancel'),
+      builder: (dialog) {
+        final colors = AppTheme.homePaletteOf(dialog);
+        return Dialog(
+          backgroundColor: colors.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
           ),
-          TextButton(
-            onPressed: () => Navigator.pop(dialog, true),
-            child: const Text('Confirm'),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.task_alt_outlined, color: colors.text, size: 28),
+                const SizedBox(height: 12),
+                Text(
+                  friend ? 'Record full repayment' : 'Pay off balance',
+                  style: TextStyle(
+                    color: colors.text,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  formatMoney(detail.remainingBalancePaise),
+                  style: TextStyle(
+                    color: colors.text,
+                    fontSize: 30,
+                    fontWeight: FontWeight.w800,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  'This records the remaining balance across every unpaid installment of ${detail.emi.name}. Existing partial payments stay in the history.',
+                  style: TextStyle(color: colors.text2, height: 1.4),
+                ),
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: colors.text,
+                      foregroundColor: colors.bg,
+                    ),
+                    onPressed: () => Navigator.pop(dialog, true),
+                    child: Text(friend ? 'Record full amount' : 'Pay off now'),
+                  ),
+                ),
+                SizedBox(
+                  width: double.infinity,
+                  child: TextButton(
+                    onPressed: () => Navigator.pop(dialog, false),
+                    child: const Text('Keep schedule'),
+                  ),
+                ),
+              ],
+            ),
           ),
-        ],
-      ),
+        );
+      },
     );
     if (confirmed != true || !context.mounted) return;
     final settled = await ref
@@ -2293,30 +2447,64 @@ class EmiAgreementDetailScreen extends ConsumerWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  friend
-                      ? 'Given to others'
-                      : detail.emi.provider ?? 'Personal loan',
-                  style: TextStyle(color: colors.text2, fontSize: 13),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  friend ? 'Still to receive' : 'Still to pay',
-                  style: TextStyle(
-                    color: _accentInk(context),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  _signedAmount(detail.remainingBalancePaise, incoming: friend),
-                  style: TextStyle(
-                    color: friend ? _incomeInk(context) : _expenseInk(context),
-                    fontSize: 35,
-                    fontWeight: FontWeight.w800,
-                    fontFeatures: const [FontFeature.tabularFigures()],
-                  ),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            friend
+                                ? 'Given to others'
+                                : detail.emi.provider ?? 'Personal loan',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: _accentInk(context),
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            friend ? 'Still to receive' : 'Still to pay',
+                            style: TextStyle(
+                              color: _accentInk(context),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 3),
+                          FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              _signedAmount(
+                                detail.remainingBalancePaise,
+                                incoming: friend,
+                              ),
+                              style: TextStyle(
+                                color: friend
+                                    ? _incomeInk(context)
+                                    : _expenseInk(context),
+                                fontSize: 35,
+                                fontWeight: FontWeight.w800,
+                                fontFeatures: const [
+                                  FontFeature.tabularFigures(),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    _ScheduleProgressArc(
+                      progress: detail.progress,
+                      incoming: friend,
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 16),
                 Wrap(
@@ -2339,35 +2527,35 @@ class EmiAgreementDetailScreen extends ConsumerWidget {
               ],
             ),
           ),
+          _PaymentTimingChart(detail: detail),
           const SizedBox(height: 12),
           if (detail.emi.notes?.trim().isNotEmpty == true) ...[
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 8),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(Icons.notes_outlined, size: 20, color: colors.text2),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Notes',
-                          style: TextStyle(
-                            color: colors.text,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        const SizedBox(height: 3),
-                        Text(
-                          detail.emi.notes!.trim(),
-                          style: TextStyle(color: colors.text2, height: 1.4),
-                        ),
-                      ],
-                    ),
+              child: Container(
+                padding: const EdgeInsets.only(left: 12),
+                decoration: BoxDecoration(
+                  border: Border(
+                    left: BorderSide(color: colors.text2, width: 2),
                   ),
-                ],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Your note',
+                      style: TextStyle(
+                        color: colors.text,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      detail.emi.notes!.trim(),
+                      style: TextStyle(color: colors.text2, height: 1.4),
+                    ),
+                  ],
+                ),
               ),
             ),
             const SizedBox(height: 12),
@@ -2389,7 +2577,7 @@ class EmiAgreementDetailScreen extends ConsumerWidget {
                             Text(
                               'Next installment · ${DateFormat('d MMM yyyy').format(next.dueDate)}',
                               style: TextStyle(
-                                color: colors.text,
+                                color: _accentInk(context),
                                 fontWeight: FontWeight.w700,
                               ),
                             ),
@@ -2479,7 +2667,15 @@ class EmiAgreementDetailScreen extends ConsumerWidget {
                         Text(
                           '${DateFormat('d MMM yyyy').format(installment.dueDate)} · ${installment.isPaid ? 'Paid · ${_paidDueLabel(installment.dueDate)}' : _dueLabel(installment.dueDate)}'
                           '${(detail.paidByInstallment[installment.number] ?? 0) > 0 && !installment.isPaid ? '\n${formatMoney(detail.paidByInstallment[installment.number]!)} of ${formatMoney(detail.amountForInstallment(installment.number))} ${friend ? 'received' : 'paid'} · ${formatMoney(detail.unpaidAmountForInstallment(installment.number))} due' : ''}',
-                          style: TextStyle(color: colors.text2, fontSize: 12),
+                          style: TextStyle(
+                            color: installment.isPaid
+                                ? colors.text2
+                                : _accentInk(context),
+                            fontSize: 12,
+                            fontWeight: installment.isPaid
+                                ? FontWeight.w500
+                                : FontWeight.w700,
+                          ),
                         ),
                       ],
                     ),
@@ -2522,62 +2718,102 @@ class EmiAgreementDetailScreen extends ConsumerWidget {
               padding: const EdgeInsets.symmetric(vertical: 4),
               child: ListTile(
                 contentPadding: EdgeInsets.zero,
-                leading: Icon(
-                  Icons.payments_outlined,
-                  color: _incomeInk(context),
+                leading: Icon(Icons.payments_outlined, color: colors.text2),
+                title: Text(
+                  'Paid ${DateFormat('d MMM yyyy').format(payment.paidOn)}',
                 ),
-                title: Text(DateFormat('d MMM yyyy').format(payment.paidOn)),
                 subtitle: Text(
-                  'Installment ${payment.installmentNumber}',
+                  'Installment ${payment.installmentNumber} · Tap for details',
                   style: TextStyle(color: colors.text2, fontSize: 12),
                 ),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      _signedAmount(payment.amountPaise, incoming: friend),
-                      style: TextStyle(
-                        color: friend
-                            ? _incomeInk(context)
-                            : _expenseInk(context),
-                        fontWeight: FontWeight.w700,
-                        fontFeatures: const [FontFeature.tabularFigures()],
-                      ),
-                    ),
-                    TextButton(
-                      child: const Text('Undo'),
-                      onPressed: () async {
-                        final confirmed = await showDialog<bool>(
-                          context: context,
-                          builder: (dialog) => AlertDialog(
-                            title: const Text('Undo payment?'),
-                            actions: [
-                              TextButton(
-                                onPressed: () => Navigator.pop(dialog, false),
-                                child: const Text('Keep'),
-                              ),
-                              TextButton(
-                                onPressed: () => Navigator.pop(dialog, true),
-                                child: const Text('Undo'),
-                              ),
-                            ],
-                          ),
-                        );
-                        if (confirmed != true || !context.mounted) return;
-                        final reverted = await ref
-                            .read(financeRepositoryProvider)
-                            .revertEmiPayment(id, payment.id);
-                        if (context.mounted && !reverted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Could not undo this payment'),
-                            ),
-                          );
-                        }
-                      },
-                    ),
-                  ],
+                trailing: Text(
+                  _signedAmount(payment.amountPaise, incoming: friend),
+                  style: TextStyle(
+                    color: friend ? _incomeInk(context) : _expenseInk(context),
+                    fontWeight: FontWeight.w700,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
                 ),
+                onTap: () async {
+                  final hasTime =
+                      payment.paidOn.hour != 0 || payment.paidOn.minute != 0;
+                  final undo = await showDialog<bool>(
+                    context: context,
+                    builder: (dialog) => AlertDialog(
+                      title: const Text('Payment details'),
+                      content: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _signedAmount(
+                              payment.amountPaise,
+                              incoming: friend,
+                            ),
+                            style: TextStyle(
+                              color: colors.text,
+                              fontSize: 24,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Text('Installment ${payment.installmentNumber}'),
+                          Text(
+                            'Paid on ${DateFormat('d MMM yyyy').format(payment.paidOn)}',
+                          ),
+                          Text(
+                            hasTime
+                                ? DateFormat('h:mm a').format(payment.paidOn)
+                                : 'Time not recorded',
+                          ),
+                          if (payment.notes?.trim().isNotEmpty == true) ...[
+                            const SizedBox(height: 12),
+                            Text(payment.notes!.trim()),
+                          ],
+                        ],
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(dialog, false),
+                          child: const Text('Close'),
+                        ),
+                        if (detail.emi.status != EmiStatus.completed)
+                          TextButton(
+                            onPressed: () => Navigator.pop(dialog, true),
+                            child: const Text('Undo payment'),
+                          ),
+                      ],
+                    ),
+                  );
+                  if (undo != true || !context.mounted) return;
+                  final confirmed = await showDialog<bool>(
+                    context: context,
+                    builder: (dialog) => AlertDialog(
+                      title: const Text('Undo payment?'),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(dialog, false),
+                          child: const Text('Keep'),
+                        ),
+                        TextButton(
+                          onPressed: () => Navigator.pop(dialog, true),
+                          child: const Text('Undo'),
+                        ),
+                      ],
+                    ),
+                  );
+                  if (confirmed != true || !context.mounted) return;
+                  final reverted = await ref
+                      .read(financeRepositoryProvider)
+                      .revertEmiPayment(id, payment.id);
+                  if (context.mounted && !reverted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Could not undo this payment'),
+                      ),
+                    );
+                  }
+                },
               ),
             ),
         ],
@@ -2629,6 +2865,276 @@ class EmiAgreementDetailScreen extends ConsumerWidget {
             ),
     );
   }
+}
+
+class _PaymentTimingChart extends StatefulWidget {
+  const _PaymentTimingChart({required this.detail});
+
+  final EmiDetail detail;
+
+  @override
+  State<_PaymentTimingChart> createState() => _PaymentTimingChartState();
+}
+
+class _PaymentTimingChartState extends State<_PaymentTimingChart> {
+  int? _selected;
+
+  @override
+  Widget build(BuildContext context) {
+    final completed = <({int number, int daysLate})>[];
+    for (final installment in widget.detail.installments) {
+      final payments =
+          widget.detail.payments
+              .where(
+                (payment) => payment.installmentNumber == installment.number,
+              )
+              .toList()
+            ..sort((a, b) => a.paidOn.compareTo(b.paidOn));
+      var paid = 0;
+      for (final payment in payments) {
+        paid += payment.amountPaise;
+        if (paid >= widget.detail.amountForInstallment(installment.number)) {
+          completed.add((
+            number: installment.number,
+            daysLate: dateOnly(
+              payment.paidOn,
+            ).difference(dateOnly(installment.dueDate)).inDays,
+          ));
+          break;
+        }
+      }
+    }
+    if (completed.length < 2) return const SizedBox.shrink();
+    final recent = completed.length <= 8
+        ? completed
+        : completed.sublist(completed.length - 8);
+    final selected = (_selected ?? recent.length - 1).clamp(
+      0,
+      recent.length - 1,
+    );
+    final onTime = completed.where((item) => item.daysLate <= 0).length;
+    final colors = AppTheme.homePaletteOf(context);
+    final current = recent[selected];
+    final timing = current.daysLate == 0
+        ? 'on the due date'
+        : current.daysLate < 0
+        ? '${-current.daysLate} days early'
+        : '${current.daysLate} days late';
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Payment timing',
+            style: TextStyle(
+              color: colors.text,
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            '$onTime of ${completed.length} installments ${widget.detail.category == EmiCategory.givenToFriends ? 'received' : 'paid'} on time',
+            style: TextStyle(
+              color: colors.text2,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            height: 72,
+            child: LayoutBuilder(
+              builder: (context, constraints) => GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTapDown: (tap) => setState(
+                  () => _selected =
+                      (tap.localPosition.dx /
+                              constraints.maxWidth *
+                              recent.length)
+                          .floor()
+                          .clamp(0, recent.length - 1),
+                ),
+                child: RepaintBoundary(
+                  child: CustomPaint(
+                    key: const ValueKey('emi-payment-timing-chart'),
+                    size: Size(constraints.maxWidth, 72),
+                    painter: _PaymentTimingPainter(
+                      daysLate: [for (final item in recent) item.daysLate],
+                      selected: selected,
+                      onTime: AppTheme.emiIdentityInkOf(context),
+                      late: colors.out.text,
+                      line: colors.text2,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Installment ${current.number}: $timing',
+            style: TextStyle(
+              color: current.daysLate > 0 ? colors.out.text : colors.text2,
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PaymentTimingPainter extends CustomPainter {
+  const _PaymentTimingPainter({
+    required this.daysLate,
+    required this.selected,
+    required this.onTime,
+    required this.late,
+    required this.line,
+  });
+
+  final List<int> daysLate;
+  final int selected;
+  final Color onTime, late, line;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final maximum = math.max(
+      1,
+      daysLate.map((day) => day.abs()).reduce(math.max),
+    );
+    final slot = size.width / daysLate.length;
+    Offset point(int index) => Offset(
+      slot * (index + .5),
+      size.height / 2 + daysLate[index] / maximum * 25,
+    );
+    final path = Path()..moveTo(point(0).dx, point(0).dy);
+    for (var index = 1; index < daysLate.length; index++) {
+      path.lineTo(point(index).dx, point(index).dy);
+    }
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = line.withValues(alpha: .55)
+        ..strokeWidth = 1.5
+        ..style = PaintingStyle.stroke,
+    );
+    for (var index = 0; index < daysLate.length; index++) {
+      canvas.drawCircle(
+        point(index),
+        index == selected ? 6 : 4,
+        Paint()..color = daysLate[index] > 0 ? late : onTime,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _PaymentTimingPainter old) =>
+      selected != old.selected ||
+      onTime != old.onTime ||
+      late != old.late ||
+      line != old.line ||
+      !listEquals(daysLate, old.daysLate);
+}
+
+class _ScheduleProgressArc extends StatelessWidget {
+  const _ScheduleProgressArc({required this.progress, required this.incoming});
+
+  final double progress;
+  final bool incoming;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppTheme.homePaletteOf(context);
+    final percent = (progress.clamp(0.0, 1.0) * 100).round();
+    final ink = incoming ? _incomeInk(context) : _expenseInk(context);
+    return Semantics(
+      label:
+          '$percent percent of scheduled amount '
+          '${incoming ? 'received' : 'paid'}',
+      child: SizedBox(
+        width: 82,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 76,
+              height: 76,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  RepaintBoundary(
+                    child: CustomPaint(
+                      size: const Size.square(76),
+                      painter: _ScheduleProgressPainter(
+                        progress: progress,
+                        track: colors.line,
+                        ink: ink,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    '$percent%',
+                    style: TextStyle(
+                      color: colors.text,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Text(
+              incoming ? 'received' : 'paid',
+              style: TextStyle(color: colors.text2, fontSize: 12),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ScheduleProgressPainter extends CustomPainter {
+  const _ScheduleProgressPainter({
+    required this.progress,
+    required this.track,
+    required this.ink,
+  });
+
+  final double progress;
+  final Color track;
+  final Color ink;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const start = math.pi * 0.75;
+    const sweep = math.pi * 1.5;
+    final rect = Offset.zero & size;
+    final arc = rect.deflate(5);
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 7
+      ..strokeCap = StrokeCap.round;
+    canvas.drawArc(arc, start, sweep, false, paint..color = track);
+    if (progress > 0) {
+      canvas.drawArc(
+        arc,
+        start,
+        sweep * progress.clamp(0.0, 1.0),
+        false,
+        paint..color = ink,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _ScheduleProgressPainter old) =>
+      progress != old.progress || track != old.track || ink != old.ink;
 }
 
 class _DetailFigure extends StatelessWidget {

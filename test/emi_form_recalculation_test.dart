@@ -43,6 +43,8 @@ void main() {
           matching: find.byType(Scrollable),
         )
         .first;
+    await tester.tap(find.text('Financing'));
+    await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
       find.text('Per month'),
       160,
@@ -54,6 +56,8 @@ void main() {
         )
         .onSelectionChanged!({EmiRatePeriod.monthly});
     await tester.pump();
+    await tester.tap(find.text('Schedule'));
+    await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
       find.byType(HeroAmountInput),
       -160,
@@ -68,6 +72,8 @@ void main() {
           .text,
       '13090.91',
     );
+    await tester.tap(find.text('Financing'));
+    await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
       find.text('Flat rate'),
       120,
@@ -79,6 +85,8 @@ void main() {
         )
         .onSelectionChanged!({EmiInterestMethod.flat});
     await tester.pump();
+    await tester.tap(find.text('Schedule'));
+    await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
       find.byType(HeroAmountInput),
       -160,
@@ -129,12 +137,16 @@ void main() {
             matching: find.byType(Scrollable),
           )
           .first;
+      await tester.tap(find.text('Schedule'));
+      await tester.pumpAndSettle();
       tester
           .widget<SwitchListTile>(
             find.byType(SwitchListTile, skipOffstage: false),
           )
           .onChanged!(true);
       await tester.pump();
+      await tester.tap(find.text('Financing'));
+      await tester.pumpAndSettle();
       await tester.scrollUntilVisible(
         find.text('Per month'),
         130,
@@ -146,6 +158,8 @@ void main() {
           )
           .onSelectionChanged!({EmiRatePeriod.monthly});
       await tester.pump();
+      await tester.tap(find.text('Schedule'));
+      await tester.pumpAndSettle();
       await tester.scrollUntilVisible(
         find.byType(HeroAmountInput),
         -160,

@@ -11,6 +11,40 @@ import 'package:personal_finance/src/shared/finance_form_widgets.dart';
 import 'package:personal_finance/src/shared/notched_navigation_bar.dart';
 
 void main() {
+  testWidgets('EMI form stages fit a small screen at larger text scale', (
+    tester,
+  ) async {
+    final db = AppDatabase.test(NativeDatabase.memory());
+    addTearDown(db.close);
+    await tester.binding.setSurfaceSize(const Size(320, 568));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          databaseProvider.overrideWithValue(db),
+          financeRepositoryProvider.overrideWithValue(FinanceRepository(db)),
+        ],
+        child: MaterialApp(
+          theme: AppTheme.light(),
+          home: MediaQuery(
+            data: const MediaQueryData(
+              size: Size(320, 568),
+              textScaler: TextScaler.linear(1.3),
+            ),
+            child: const Scaffold(body: EmiFormSheet()),
+          ),
+        ),
+      ),
+    );
+    for (final stage in ['Schedule', 'Financing', 'Review', 'Agreement']) {
+      await tester.tap(find.text(stage));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    }
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 1));
+  });
+
   testWidgets('EMI add menu opens the chosen form without a second chooser', (
     tester,
   ) async {
@@ -60,18 +94,24 @@ void main() {
       scrollable: formScroll,
     );
     expect(find.text('LENDER'), findsOneWidget);
+    await tester.tap(find.text('Schedule'));
+    await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
       find.text('INSTALLMENT TO RECEIVE'),
       180,
       scrollable: formScroll,
     );
     expect(find.text('INSTALLMENT TO RECEIVE'), findsOneWidget);
+    await tester.tap(find.text('Financing'));
+    await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
       find.text('PRINCIPAL (OPTIONAL)'),
       180,
       scrollable: formScroll,
     );
     expect(find.text('PRINCIPAL (OPTIONAL)'), findsOneWidget);
+    await tester.tap(find.text('Schedule'));
+    await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
       find.text('AGREEMENT DATE'),
       180,
@@ -110,6 +150,8 @@ void main() {
           matching: find.byType(Scrollable),
         )
         .first;
+    await tester.tap(find.text('Schedule'));
+    await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
       find.text('EMIS ALREADY PAID'),
       180,
@@ -180,28 +222,32 @@ void main() {
           matching: find.byType(Scrollable),
         )
         .first;
+    expect(find.text('PRODUCT PRICE'), findsOneWidget);
+    expect(find.text('DOWN PAYMENT (OPTIONAL)'), findsOneWidget);
+    await tester.tap(find.text('Financing'));
+    await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
       find.text('Interest & fees'),
       60,
       scrollable: formScroll,
     );
-    tester
-        .widget<InkWell>(
-          find.ancestor(
-            of: find.text('Interest & fees'),
-            matching: find.byType(InkWell),
-          ),
-        )
-        .onTap!();
-    await tester.pump();
-    await tester.drag(formScroll, const Offset(0, 1500));
-    await tester.pump();
     for (final label in [
-      'PRODUCT PRICE',
-      'DOWN PAYMENT (OPTIONAL)',
+      'INTEREST RATE (OPTIONAL)',
       'INTEREST METHOD',
       'FEES (OPTIONAL)',
     ]) {
+      if (!tester.any(find.text(label))) {
+        await tester.scrollUntilVisible(
+          find.text(label),
+          60,
+          scrollable: formScroll,
+        );
+      }
+      expect(find.text(label), findsOneWidget);
+    }
+    await tester.tap(find.text('Review'));
+    await tester.pumpAndSettle();
+    for (final label in ['PAYMENT METHOD', 'NOTES']) {
       if (!tester.any(find.text(label))) {
         await tester.scrollUntilVisible(
           find.text(label),

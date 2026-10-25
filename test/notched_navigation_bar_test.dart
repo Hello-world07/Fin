@@ -3,6 +3,32 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:personal_finance/src/shared/notched_navigation_bar.dart';
 
 void main() {
+  testWidgets('dock clearance stays stable while visibility changes', (
+    tester,
+  ) async {
+    Future<double> paddingFor(bool visible) async {
+      var padding = 0.0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: NavigationDockVisibility(
+            visible: visible,
+            child: Builder(
+              builder: (context) {
+                padding = NotchedNavigationMetrics.tabContentPadding(context);
+                return const SizedBox.shrink();
+              },
+            ),
+          ),
+        ),
+      );
+      return padding;
+    }
+
+    final visiblePadding = await paddingFor(true);
+    final hiddenPadding = await paddingFor(false);
+    expect(hiddenPadding, visiblePadding);
+  });
+
   for (final (width, bottomInset) in [(360.0, 24.0), (412.0, 48.0)]) {
     testWidgets(
       'notched bar fits ${width.toInt()}dp with ${bottomInset.toInt()}dp inset',
@@ -29,10 +55,8 @@ void main() {
                   extendBody: true,
                   body: Builder(
                     builder: (context) {
-                      contentPadding = NotchedNavigationMetrics.contentPadding(
-                        context,
-                        hasFab: true,
-                      );
+                      contentPadding =
+                          NotchedNavigationMetrics.tabContentPadding(context);
                       return const SizedBox.expand();
                     },
                   ),
@@ -48,17 +72,17 @@ void main() {
         );
 
         expect(tester.takeException(), isNull);
-        expect(contentPadding, 172 + bottomInset);
+        expect(contentPadding, 92 + bottomInset);
         expect(NotchedNavigationMetrics.fabBottomPadding, 76);
-        expect(find.text('Home'), findsOneWidget);
-        expect(find.text('EMIs'), findsOneWidget);
-        expect(find.text('Money'), findsOneWidget);
-        expect(find.text('Subs'), findsOneWidget);
-        await tester.tap(find.text('Subs'));
+        expect(find.byTooltip('Home'), findsOneWidget);
+        expect(find.byTooltip('EMIs'), findsOneWidget);
+        expect(find.byTooltip('Money'), findsOneWidget);
+        expect(find.byTooltip('Bills'), findsOneWidget);
+        await tester.tap(find.byTooltip('Bills'));
         await tester.pumpAndSettle();
         expect(selected, 3);
         expect(tester.takeException(), isNull);
-        await tester.tap(find.byIcon(Icons.auto_awesome_rounded));
+        await tester.tap(find.byTooltip('Ask FinKeep'));
         await tester.pumpAndSettle();
         expect(asks, 1);
       },
@@ -85,7 +109,7 @@ void main() {
         ),
       ),
     );
-    await tester.tap(find.text('EMIs'));
+    await tester.tap(find.byTooltip('EMIs'));
     await tester.pump();
     expect(selected, 1);
     expect(tester.takeException(), isNull);

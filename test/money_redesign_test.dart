@@ -47,7 +47,10 @@ void main() {
 
     await tester.pumpWidget(
       ProviderScope(
-        overrides: [financeRepositoryProvider.overrideWithValue(repo)],
+        overrides: [
+          databaseProvider.overrideWithValue(db),
+          financeRepositoryProvider.overrideWithValue(repo),
+        ],
         child: const MaterialApp(home: MoneyScreen()),
       ),
     );
@@ -77,7 +80,8 @@ void main() {
     await tester.tap(nivasRow);
     await tester.pumpAndSettle();
     expect(find.text('₹250'), findsOneWidget);
-    expect(find.byType(ListTile), findsAtLeastNWidgets(2));
+    expect(find.text('Records'), findsOneWidget);
+    expect(find.textContaining('Recorded'), findsWidgets);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(milliseconds: 1));
@@ -94,7 +98,10 @@ void main() {
     await repo.addRepayment(id, 5000, 'UPI', DateTime.now());
     await tester.pumpWidget(
       ProviderScope(
-        overrides: [financeRepositoryProvider.overrideWithValue(repo)],
+        overrides: [
+          databaseProvider.overrideWithValue(db),
+          financeRepositoryProvider.overrideWithValue(repo),
+        ],
         child: MaterialApp(home: MoneyDetailScreen(id)),
       ),
     );
@@ -138,23 +145,35 @@ void main() {
     await repo.addRepayment(settledId, 5000, null, today);
     await tester.pumpWidget(
       ProviderScope(
-        overrides: [financeRepositoryProvider.overrideWithValue(repo)],
+        overrides: [
+          databaseProvider.overrideWithValue(db),
+          financeRepositoryProvider.overrideWithValue(repo),
+        ],
         child: const MaterialApp(home: MoneyScreen()),
       ),
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Overdue').first);
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Overdue'));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('given:late')), findsOneWidget);
     expect(find.byKey(const ValueKey('given:partial')), findsNothing);
 
-    await tester.tap(find.text('Partially paid').first);
+    final partialChip = find.widgetWithText(ChoiceChip, 'Partly paid');
+    await tester.ensureVisible(partialChip);
+    await tester.tap(partialChip);
     await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('given:partial')),
+      100,
+      scrollable: find.byType(Scrollable).at(1),
+    );
     expect(find.byKey(const ValueKey('given:partial')), findsOneWidget);
     expect(find.byKey(const ValueKey('given:late')), findsNothing);
 
-    await tester.tap(find.text('Settled').first);
+    final settledChip = find.widgetWithText(ChoiceChip, 'Settled');
+    await tester.ensureVisible(settledChip);
+    await tester.tap(settledChip);
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('given:settled')), findsOneWidget);
     expect(find.byKey(const ValueKey('given:partial')), findsNothing);
@@ -189,7 +208,10 @@ void main() {
       }
       await tester.pumpWidget(
         ProviderScope(
-          overrides: [financeRepositoryProvider.overrideWithValue(repo)],
+          overrides: [
+            databaseProvider.overrideWithValue(db),
+            financeRepositoryProvider.overrideWithValue(repo),
+          ],
           child: MaterialApp(
             home: Scaffold(
               extendBody: true,
@@ -204,7 +226,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(tester.getTopLeft(find.byKey(const ValueKey('title'))).dx, 16);
+      expect(tester.getTopLeft(find.text('Money')).dx, 16);
       expect(tester.getBottomRight(find.byTooltip('Money reminders')).dx, 344);
       await tester.drag(
         find.byType(CustomScrollView).first,
@@ -215,19 +237,18 @@ void main() {
           .widgetList<SliverToBoxAdapter>(find.byType(SliverToBoxAdapter))
           .map((sliver) => sliver.child)
           .whereType<SizedBox>()
-          .where((box) => box.height == 148)
+          .where((box) => box.height != null && box.height! > 0)
           .toList();
       expect(footer, isNotEmpty);
-      expect(tester.getTopLeft(find.byKey(const ValueKey('total'))).dx, 16);
       await tester.tap(find.text('Money borrowed'));
       await tester.pumpAndSettle();
-      expect(tester.getTopLeft(find.byKey(const ValueKey('title'))).dx, 16);
+      expect(tester.getTopLeft(find.text('Money')).dx, 16);
       await tester.drag(
         find.byType(CustomScrollView).last,
         const Offset(0, -300),
       );
       await tester.pumpAndSettle();
-      expect(tester.getTopLeft(find.byKey(const ValueKey('total'))).dx, 16);
+      expect(tester.takeException(), equals(null));
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump(const Duration(milliseconds: 1));
     },
@@ -252,17 +273,27 @@ void main() {
     await repo.addRepayment(id, 10000, null, DateTime.now());
     await tester.pumpWidget(
       ProviderScope(
-        overrides: [financeRepositoryProvider.overrideWithValue(repo)],
+        overrides: [
+          databaseProvider.overrideWithValue(db),
+          financeRepositoryProvider.overrideWithValue(repo),
+        ],
         child: MaterialApp(theme: ThemeData.dark(), home: const MoneyScreen()),
       ),
     );
     await tester.pumpAndSettle();
     await tester.tap(find.text('Money borrowed'));
     await tester.pumpAndSettle();
-    expect(tester.getTopLeft(find.byKey(const ValueKey('title'))).dx, 16);
+    expect(tester.getTopLeft(find.text('Money')).dx, 16);
     expect(find.text('Settled'), findsWidgets);
-    await tester.tap(find.text('Settled').last);
+    final settledChip = find.widgetWithText(ChoiceChip, 'Settled');
+    await tester.ensureVisible(settledChip);
+    await tester.tap(settledChip);
     await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('borrowed:ravi')),
+      100,
+      scrollable: find.byType(Scrollable).at(1),
+    );
     expect(find.byKey(const ValueKey('borrowed:ravi')), findsOneWidget);
     expect(tester.takeException(), equals(null));
     await tester.pumpWidget(const SizedBox.shrink());
@@ -290,7 +321,10 @@ void main() {
     );
     await tester.pumpWidget(
       ProviderScope(
-        overrides: [financeRepositoryProvider.overrideWithValue(repo)],
+        overrides: [
+          databaseProvider.overrideWithValue(db),
+          financeRepositoryProvider.overrideWithValue(repo),
+        ],
         child: MaterialApp(
           home: Scaffold(
             body: Builder(

@@ -262,6 +262,11 @@ class NetCardPalette {
 
 class AppTheme {
   static const fontFamily = 'Plus Jakarta Sans';
+  static const emiIdentityFill = Color(0xFF715169);
+  static Color emiIdentityInkOf(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark
+      ? const Color(0xFFD8BCD3)
+      : emiIdentityFill;
   static const motionDuration = Duration(milliseconds: 225);
   static const seed = Color(0xFF059669);
   static const heroStart = Color(0xFF0B3D3A);
@@ -321,8 +326,8 @@ class AppTheme {
     surfaceHigh: Color(0xFF18231F),
     outline: Color(0xFF24312C),
     text: Color(0xFFE8EEEB),
-    secondaryText: Color(0xFF9AA7A1),
-    mutedText: Color(0xFF7F8E88),
+    secondaryText: Color(0xFFB7C3BD),
+    mutedText: Color(0xFFA2AFA9),
     fieldFill: Color(0xFF1C2622),
     selectedFill: Color(0xFF12372A),
     receive: Color(0xFF4ADE80),
@@ -361,8 +366,8 @@ class AppTheme {
     surfaceAlt: Color(0xFF1A2338),
     line: Color(0xFF243049),
     text: Color(0xFFF2F5FA),
-    text2: Color(0xFFA9B4C8),
-    text3: Color(0xFF8491A8),
+    text2: Color(0xFFBDC7D9),
+    text3: Color(0xFFA2AEC3),
     brand: Color(0xFF60A5FA),
     onBrand: Color(0xFF071F3D),
     incoming: AppTone(Color(0xFF93C5FD), Color(0xFF60A5FA), Color(0xFF172B48)),

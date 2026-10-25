@@ -83,6 +83,28 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text(DateFormat('MMMM yyyy').format(month)), findsOneWidget);
       expect(tester.takeException(), isNull, reason: 'after month sheet');
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.text('Next 5 weeks'),
+        -260,
+        scrollable: find.byType(Scrollable).first,
+      );
+      final forecastWeek = find.byWidgetPredicate(
+        (widget) =>
+            widget is Semantics &&
+            widget.key is ValueKey<String> &&
+            (widget.key! as ValueKey<String>).value.startsWith(
+              'forecast-week-',
+            ),
+      );
+      expect(forecastWeek, findsNWidgets(5));
+      await tester.ensureVisible(forecastWeek.first);
+      await tester.pumpAndSettle();
+      await tester.tap(forecastWeek.first);
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('Close'), findsOneWidget);
+      expect(tester.takeException(), isNull, reason: 'after week flyout');
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump(const Duration(milliseconds: 1));
     });

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:personal_finance/src/core/providers.dart';
+import 'package:personal_finance/src/core/app_theme.dart';
 import 'package:personal_finance/src/data/database.dart';
 import 'package:personal_finance/src/data/repositories.dart';
 import 'package:personal_finance/src/domain/enums.dart';
@@ -19,6 +20,61 @@ void main() {
   });
 
   tearDown(() => database.close());
+
+  testWidgets('Money keeps settled people in their filter and swipes tabs', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(360, 640);
+    addTearDown(tester.view.reset);
+    final today = DateTime.now();
+    final settledId = await repository.saveMoneyRecord(
+      MoneyRecordsCompanion.insert(
+        personName: 'Settled person',
+        direction: MoneyDirection.given,
+        amountPaise: 10000,
+        recordDate: today,
+        status: MoneyStatus.active,
+      ),
+    );
+    await repository.addRepayment(settledId, 10000, null, today);
+    await repository.saveMoneyRecord(
+      MoneyRecordsCompanion.insert(
+        personName: 'Open person',
+        direction: MoneyDirection.given,
+        amountPaise: 20000,
+        recordDate: today,
+        status: MoneyStatus.active,
+      ),
+    );
+    await repository.saveMoneyRecord(
+      MoneyRecordsCompanion.insert(
+        personName: 'Borrowed person',
+        direction: MoneyDirection.borrowed,
+        amountPaise: 30000,
+        recordDate: today,
+        status: MoneyStatus.active,
+      ),
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          databaseProvider.overrideWithValue(database),
+          financeRepositoryProvider.overrideWithValue(repository),
+        ],
+        child: MaterialApp(theme: AppTheme.dark(), home: const MoneyScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('given:settled person')), findsNothing);
+    expect(find.text('Money given'), findsOneWidget);
+    await tester.drag(find.byType(PageView), const Offset(-300, 0));
+    await tester.pumpAndSettle();
+    expect(find.text('Money borrowed'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 1));
+  });
 
   testWidgets('overpayment stays on the repayment form with a clear warning', (
     tester,

@@ -90,6 +90,7 @@ class AppShell extends ConsumerStatefulWidget {
 
 class _AppShellState extends ConsumerState<AppShell> {
   final _visitedTabs = <int>{0};
+  final _emiOverviewKey = GlobalKey<EmiOverviewScreenState>();
   bool _dockVisible = true;
   double _scrollTravel = 0;
 
@@ -100,6 +101,18 @@ class _AppShellState extends ConsumerState<AppShell> {
     }
     final delta = notification.scrollDelta ?? 0;
     if (delta == 0) return false;
+    final clearance = NotchedNavigationMetrics.tabContentPadding(context);
+    if (notification.metrics.maxScrollExtent <= clearance + 24 ||
+        (delta > 0 && notification.metrics.extentAfter <= 4)) {
+      _scrollTravel = 0;
+      if (!_dockVisible) setState(() => _dockVisible = true);
+      return false;
+    }
+    if (delta < 0 && !_dockVisible) {
+      _scrollTravel = 0;
+      setState(() => _dockVisible = true);
+      return false;
+    }
     if (_scrollTravel.sign != delta.sign) _scrollTravel = 0;
     _scrollTravel += delta;
     if (_scrollTravel.abs() >= 12) {
@@ -112,7 +125,7 @@ class _AppShellState extends ConsumerState<AppShell> {
 
   Widget _screenFor(int index) => switch (index) {
     0 => const DashboardScreen(),
-    1 => const EmiOverviewScreen(),
+    1 => EmiOverviewScreen(key: _emiOverviewKey),
     2 => const MoneyScreen(),
     _ => const SubscriptionsScreen(),
   };
@@ -198,44 +211,73 @@ class _AppShellState extends ConsumerState<AppShell> {
   @override
   Widget build(BuildContext context) {
     ref.watch(databaseProvider);
+    ref.listen(emiOverviewCategoryProvider, (_, _) {
+      if (!_dockVisible) {
+        setState(() {
+          _dockVisible = true;
+          _scrollTravel = 0;
+        });
+      }
+    });
     final selected = ref.watch(shellIndexProvider);
     final index = selected >= 4 ? 0 : selected;
     final dockMotion = MediaQuery.disableAnimationsOf(context)
         ? Duration.zero
         : const Duration(milliseconds: 200);
     _visitedTabs.add(index);
-    return Scaffold(
-      extendBody: true,
-      body: NotificationListener<ScrollUpdateNotification>(
-        onNotification: _handleScroll,
-        child: IndexedStack(
-          index: index,
-          children: [
-            for (var tab = 0; tab < 4; tab++)
-              _visitedTabs.contains(tab)
-                  ? TickerMode(enabled: tab == index, child: _screenFor(tab))
-                  : const SizedBox.shrink(),
-          ],
+    return PopScope(
+      canPop: index == 0,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop || index == 0) return;
+        if (index == 1 &&
+            _emiOverviewKey.currentState?.goBackWithinEmis() == true) {
+          return;
+        }
+        ref.read(shellIndexProvider.notifier).state = 0;
+        setState(() {
+          _dockVisible = true;
+          _scrollTravel = 0;
+        });
+      },
+      child: Scaffold(
+        extendBody: true,
+        body: NavigationDockVisibility(
+          visible: _dockVisible,
+          child: NotificationListener<ScrollUpdateNotification>(
+            onNotification: _handleScroll,
+            child: IndexedStack(
+              index: index,
+              children: [
+                for (var tab = 0; tab < 4; tab++)
+                  _visitedTabs.contains(tab)
+                      ? TickerMode(
+                          enabled: tab == index,
+                          child: _screenFor(tab),
+                        )
+                      : const SizedBox.shrink(),
+              ],
+            ),
+          ),
         ),
-      ),
-      bottomNavigationBar: AnimatedSlide(
-        offset: _dockVisible ? Offset.zero : const Offset(0, 1.25),
-        duration: dockMotion,
-        curve: Curves.easeOutCubic,
-        child: AnimatedOpacity(
-          opacity: _dockVisible ? 1 : 0,
+        bottomNavigationBar: AnimatedSlide(
+          offset: _dockVisible ? Offset.zero : const Offset(0, 1.25),
           duration: dockMotion,
-          child: IgnorePointer(
-            ignoring: !_dockVisible,
-            child: NotchedNavigationBar(
-              selectedIndex: index,
-              onSelected: (value) {
-                setState(() {
-                  _dockVisible = true;
-                  _scrollTravel = 0;
-                });
-                ref.read(shellIndexProvider.notifier).state = value;
-              },
+          curve: Curves.easeOutCubic,
+          child: AnimatedOpacity(
+            opacity: _dockVisible ? 1 : 0,
+            duration: dockMotion,
+            child: IgnorePointer(
+              ignoring: !_dockVisible,
+              child: NotchedNavigationBar(
+                selectedIndex: index,
+                onSelected: (value) {
+                  setState(() {
+                    _dockVisible = true;
+                    _scrollTravel = 0;
+                  });
+                  ref.read(shellIndexProvider.notifier).state = value;
+                },
+              ),
             ),
           ),
         ),

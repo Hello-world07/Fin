@@ -24,7 +24,6 @@ import '../../shared/forms.dart';
 import '../../shared/finance_form_widgets.dart';
 import '../../shared/finance_display_widgets.dart';
 import '../../shared/notched_navigation_bar.dart';
-import '../assistant/ask_finkeep_sheet.dart';
 
 class MoneyScreen extends ConsumerStatefulWidget {
   const MoneyScreen({super.key});
@@ -46,15 +45,17 @@ String _moneyReminderMessage(MoneyRecordDetail detail, {int? amountPaise}) {
   final amount = NumberFormat.currency(
     locale: 'en_IN',
     symbol: '₹',
-    decimalDigits: (amountPaise ?? detail.summary.remainingAmountPaise) % 100 == 0 ? 0 : 2,
+    decimalDigits:
+        (amountPaise ?? detail.summary.remainingAmountPaise) % 100 == 0 ? 0 : 2,
   ).format((amountPaise ?? detail.summary.remainingAmountPaise) / 100);
   final date = record.dueDate == null
       ? null
       : DateFormat('dd MMM').format(record.dueDate!);
-  final overdue = record.dueDate != null &&
-      DateUtils.dateOnly(record.dueDate!).isBefore(
-        DateUtils.dateOnly(DateTime.now()),
-      );
+  final overdue =
+      record.dueDate != null &&
+      DateUtils.dateOnly(
+        record.dueDate!,
+      ).isBefore(DateUtils.dateOnly(DateTime.now()));
   final name = displayName(record.personName);
   if (overdue) {
     return 'Hi $name, $amount was due on $date. Could you please send it today? Thank you!';
@@ -66,9 +67,10 @@ String _moneyReminderMessage(MoneyRecordDetail detail, {int? amountPaise}) {
 }
 
 Future<String?> _savedMoneyPhone(AppDatabase db, String name) async {
-  final row = await (db.select(db.settings)
-        ..where((setting) => setting.key.equals(_moneyPhoneKey(name))))
-      .getSingleOrNull();
+  final row =
+      await (db.select(db.settings)
+            ..where((setting) => setting.key.equals(_moneyPhoneKey(name))))
+          .getSingleOrNull();
   return row?.value;
 }
 
@@ -83,22 +85,22 @@ String _whatsAppDigits(String phone) {
 
 Future<void> _shareMoneyReminder(
   BuildContext context,
-  MoneyRecordDetail detail,
-  {int? amountPaise}
-) async {
+  MoneyRecordDetail detail, {
+  int? amountPaise,
+}) async {
   final db = ProviderScope.containerOf(context).read(databaseProvider);
   final phone = await _savedMoneyPhone(db, detail.record.personName);
   if (!context.mounted) return;
   if (phone == null || _whatsAppDigits(phone).length < 11) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Add a phone number for ${displayName(detail.record.personName)}'),
+        content: Text(
+          'Add a phone number for ${displayName(detail.record.personName)}',
+        ),
         action: SnackBarAction(
           label: 'Edit',
-          onPressed: () => openFinanceSheet(
-            context,
-            MoneyFormSheet(record: detail.record),
-          ),
+          onPressed: () =>
+              openFinanceSheet(context, MoneyFormSheet(record: detail.record)),
         ),
       ),
     );
@@ -118,12 +120,16 @@ Future<void> _shareMoneyReminder(
         leftApp = true;
       } else if (state == AppLifecycleState.resumed && leftApp) {
         listener?.dispose();
-        unawaited(db.into(db.settings).insertOnConflictUpdate(
-          SettingsCompanion.insert(
-            key: _moneyRemindedKey(detail.record.id),
-            value: DateTime.now().toIso8601String(),
-          ),
-        ));
+        unawaited(
+          db
+              .into(db.settings)
+              .insertOnConflictUpdate(
+                SettingsCompanion.insert(
+                  key: _moneyRemindedKey(detail.record.id),
+                  value: DateTime.now().toIso8601String(),
+                ),
+              ),
+        );
       }
     },
   );
@@ -144,7 +150,8 @@ Future<void> _shareMoneyReminder(
           Row(
             children: [
               TextButton(
-                onPressed: () => Clipboard.setData(ClipboardData(text: message)),
+                onPressed: () =>
+                    Clipboard.setData(ClipboardData(text: message)),
                 child: const Text('Copy message'),
               ),
               TextButton(
@@ -164,9 +171,9 @@ Future<void> _shareMoneyReminder(
 
 Future<void> shareMoneyReminder(
   BuildContext context,
-  MoneyRecordDetail detail,
-  {int? amountPaise}
-) => _shareMoneyReminder(context, detail, amountPaise: amountPaise);
+  MoneyRecordDetail detail, {
+  int? amountPaise,
+}) => _shareMoneyReminder(context, detail, amountPaise: amountPaise);
 
 String? _moneyAmountText(String? value) {
   final error = amountText(value);
@@ -294,10 +301,7 @@ Color _moneyBorder(BuildContext context) =>
     Theme.of(context).brightness == Brightness.dark
     ? AppTheme.colorsOf(context).outline
     : const Color(0xFFE6ECE9);
-Color _moneyAccent(BuildContext context) =>
-    Theme.of(context).brightness == Brightness.dark
-    ? Theme.of(context).colorScheme.primary
-    : const Color(0xFF0F6B5C);
+Color _moneyAccent(BuildContext context) => AppTheme.emiIdentityInkOf(context);
 
 DueListGroup _moneyDueGroup(DateTime? due, DateTime today) {
   if (due == null) return DueListGroup.nextMonthAndBeyond;
@@ -363,10 +367,7 @@ class _MoneyVisualData {
     0,
     (sum, person) => sum + person.total,
   );
-  late final int repaid = people.fold(
-    0,
-    (sum, person) => sum + person.repaid,
-  );
+  late final int repaid = people.fold(0, (sum, person) => sum + person.repaid);
   late final int outstanding = originalTotal - repaid;
   late final List<_PersonBalance> overduePeople = people
       .where((person) => person.overdue)
@@ -383,7 +384,8 @@ class _MoneyVisualData {
       );
     return {
       for (var index = 0; index < ordered.length; index++)
-        ordered[index].name.toLowerCase(): switch (ordered[index].name.toLowerCase()) {
+        ordered[index].name.toLowerCase(): switch (ordered[index].name
+            .toLowerCase()) {
           'sandeep' => const Color(0xFF4338CA),
           'laxman' => const Color(0xFF7E22CE),
           'jeevan' => const Color(0xFFBE185D),
@@ -465,16 +467,17 @@ class _MoneyVisualData {
       )
       .toList();
   late final MoneyRecordDetail? nextDatedRecord = () {
-    final sorted = active
-        .expand((person) => person.records)
-        .where(
-          (item) =>
-              item.summary.remainingAmountPaise > 0 &&
-              item.record.dueDate != null &&
-              !DateUtils.dateOnly(item.record.dueDate!).isBefore(today),
-        )
-        .toList()
-      ..sort((a, b) => a.record.dueDate!.compareTo(b.record.dueDate!));
+    final sorted =
+        active
+            .expand((person) => person.records)
+            .where(
+              (item) =>
+                  item.summary.remainingAmountPaise > 0 &&
+                  item.record.dueDate != null &&
+                  !DateUtils.dateOnly(item.record.dueDate!).isBefore(today),
+            )
+            .toList()
+          ..sort((a, b) => a.record.dueDate!.compareTo(b.record.dueDate!));
     return sorted.firstOrNull;
   }();
 }
@@ -526,16 +529,17 @@ class _MoneyScreenState extends ConsumerState<MoneyScreen> {
   }
 
   Future<void> _remindPerson(_PersonBalance person) async {
-    final open = person.records
-        .where((item) => item.summary.remainingAmountPaise > 0)
-        .toList()
-      ..sort((a, b) {
-        final aDue = a.record.dueDate;
-        final bDue = b.record.dueDate;
-        if (aDue == null) return bDue == null ? 0 : 1;
-        if (bDue == null) return -1;
-        return aDue.compareTo(bDue);
-      });
+    final open =
+        person.records
+            .where((item) => item.summary.remainingAmountPaise > 0)
+            .toList()
+          ..sort((a, b) {
+            final aDue = a.record.dueDate;
+            final bDue = b.record.dueDate;
+            if (aDue == null) return bDue == null ? 0 : 1;
+            if (bDue == null) return -1;
+            return aDue.compareTo(bDue);
+          });
     if (open.isNotEmpty) await _remindRecord(open.first);
   }
 
@@ -726,7 +730,9 @@ class _MoneyScreenState extends ConsumerState<MoneyScreen> {
     MoneyDirection direction,
   ) {
     final visual = _visualFor(items, direction);
-    final reminded = ref.watch(_moneyRemindedProvider).valueOrNull ?? const <int, DateTime>{};
+    final reminded =
+        ref.watch(_moneyRemindedProvider).valueOrNull ??
+        const <int, DateTime>{};
     final people = visual.people;
     final filter = _filters[direction]!;
     final query = _queries[direction]!;
@@ -777,18 +783,14 @@ class _MoneyScreenState extends ConsumerState<MoneyScreen> {
         rows.add((null, person, 0));
       }
     }
-    if (settled.isNotEmpty) {
+    if (settled.isNotEmpty && filter == _MoneyFilter.settled) {
       rows.add((
-        filter == _MoneyFilter.settled
-            ? 'Settled'
-            : 'Settled · ${settled.length} ${settled.length == 1 ? 'person' : 'people'}',
+        'Settled',
         null,
         settled.fold<int>(0, (sum, person) => sum + person.repaid),
       ));
-      if (filter == _MoneyFilter.settled) {
-        for (final person in settled) {
-          rows.add((null, person, 0));
-        }
+      for (final person in settled) {
+        rows.add((null, person, 0));
       }
     }
     return ScrollConfiguration(
@@ -805,279 +807,310 @@ class _MoneyScreenState extends ConsumerState<MoneyScreen> {
         },
         child: Stack(
           children: [
-          CustomScrollView(
-          key: PageStorageKey('money-${direction.name}'),
-          physics: const ClampingScrollPhysics(),
-          slivers: [
-            SliverPadding(
-              padding: const EdgeInsets.only(top: 8),
-              sliver: SliverToBoxAdapter(
-                child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _MoneyHero(
-                    visual: visual,
-                    direction: direction,
-                    onInsight: (insight) => _openInsight(insight, visual),
-                  ),
-                  if (people.length >= 6)
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-                      child: TextField(
-                        controller: _searches[direction],
-                        onChanged: (value) {
-                          _searchDebounce?.cancel();
-                          _searchDebounce = Timer(
-                            const Duration(milliseconds: 180),
-                            () {
-                              if (mounted) {
-                                setState(
-                                  () => _queries[direction] = value
-                                      .trim()
-                                      .toLowerCase(),
-                                );
-                              }
-                            },
-                          );
-                        },
-                        decoration: financeFieldDecoration(
-                          context,
-                          hint: 'Search people',
-                          icon: Icons.search,
-                        ),
-                      ),
-                    ),
-                  Padding(
-                    padding: EdgeInsets.only(
-                      top: 20,
-                    ),
-                    child: Stack(
+            CustomScrollView(
+              key: PageStorageKey('money-${direction.name}'),
+              physics: const ClampingScrollPhysics(),
+              slivers: [
+                SliverPadding(
+                  padding: const EdgeInsets.only(top: 8),
+                  sliver: SliverToBoxAdapter(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        SingleChildScrollView(
-                          controller: _chipScrolls[direction],
-                          scrollDirection: Axis.horizontal,
-                          padding: const EdgeInsets.only(left: 16, right: 40),
-                          child: Row(
-                            children: [
-                              for (final entry in const [
-                                (_MoneyFilter.all, 'All'),
-                                (_MoneyFilter.unpaid, 'Unpaid'),
-                                (_MoneyFilter.partial, 'Partly paid'),
-                                (_MoneyFilter.overdue, 'Overdue'),
-                                (_MoneyFilter.settled, 'Settled'),
-                              ])
-                                Padding(
-                                  padding: const EdgeInsets.only(right: 7),
-                                  child: SizedBox(
-                                    height: 40,
-                                    child: ChoiceChip(
-                                    label: Text(entry.$2),
-                                    selected: filter == entry.$1,
-                                    showCheckmark: false,
-                                    materialTapTargetSize:
-                                        MaterialTapTargetSize.shrinkWrap,
-                                    onSelected: (_) => setState(
-                                      () => _filters[direction] = entry.$1,
-                                    ),
-                                    selectedColor:
-                                        Theme.of(context).brightness == Brightness.dark
-                                            ? const Color(0xFFF1F5F9)
-                                            : const Color(0xFF0F172A),
-                                    backgroundColor: Colors.transparent,
-                                    side: filter == entry.$1
-                                        ? BorderSide.none
-                                        : BorderSide(
-                                            color: _moneyBorder(context),
-                                          ),
-                                    labelStyle: TextStyle(
-                                      color: filter == entry.$1
-                                          ? Theme.of(context).brightness == Brightness.dark
-                                              ? const Color(0xFF0F172A)
-                                              : Colors.white
-                                          : _moneyMuted(context),
-                                      fontWeight: filter == entry.$1
-                                          ? FontWeight.w700
-                                          : FontWeight.w600,
-                                    ),
-                                    ),
-                                  ),
-                                ),
-                            ],
-                          ),
+                        _MoneyHero(
+                          visual: visual,
+                          direction: direction,
+                          onInsight: (insight) => _openInsight(insight, visual),
                         ),
-                        Positioned(
-                          top: 0,
-                          bottom: 0,
-                          right: 0,
-                          child: IgnorePointer(
-                            child: Container(
-                              width: 24,
-                              decoration: BoxDecoration(
-                                gradient: LinearGradient(
-                                  colors: [
-                                    Theme.of(context).scaffoldBackgroundColor
-                                        .withValues(alpha: 0),
-                                    Theme.of(context).scaffoldBackgroundColor,
+                        if (people.length >= 6)
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                            child: TextField(
+                              controller: _searches[direction],
+                              onChanged: (value) {
+                                _searchDebounce?.cancel();
+                                _searchDebounce = Timer(
+                                  const Duration(milliseconds: 180),
+                                  () {
+                                    if (mounted) {
+                                      setState(
+                                        () => _queries[direction] = value
+                                            .trim()
+                                            .toLowerCase(),
+                                      );
+                                    }
+                                  },
+                                );
+                              },
+                              decoration: financeFieldDecoration(
+                                context,
+                                hint: 'Search people',
+                                icon: Icons.search,
+                              ),
+                            ),
+                          ),
+                        Padding(
+                          padding: EdgeInsets.only(top: 20),
+                          child: Stack(
+                            children: [
+                              SingleChildScrollView(
+                                controller: _chipScrolls[direction],
+                                scrollDirection: Axis.horizontal,
+                                padding: const EdgeInsets.only(
+                                  left: 16,
+                                  right: 40,
+                                ),
+                                child: Row(
+                                  children: [
+                                    for (final entry in const [
+                                      (_MoneyFilter.all, 'All'),
+                                      (_MoneyFilter.unpaid, 'Unpaid'),
+                                      (_MoneyFilter.partial, 'Partly paid'),
+                                      (_MoneyFilter.overdue, 'Overdue'),
+                                      (_MoneyFilter.settled, 'Settled'),
+                                    ])
+                                      Padding(
+                                        padding: const EdgeInsets.only(
+                                          right: 7,
+                                        ),
+                                        child: SizedBox(
+                                          height: 40,
+                                          child: ChoiceChip(
+                                            label: Text(entry.$2),
+                                            selected: filter == entry.$1,
+                                            showCheckmark: false,
+                                            materialTapTargetSize:
+                                                MaterialTapTargetSize
+                                                    .shrinkWrap,
+                                            onSelected: (_) => setState(
+                                              () => _filters[direction] =
+                                                  entry.$1,
+                                            ),
+                                            selectedColor:
+                                                Theme.of(context).brightness ==
+                                                    Brightness.dark
+                                                ? const Color(0xFFF1F5F9)
+                                                : const Color(0xFF0F172A),
+                                            backgroundColor: Colors.transparent,
+                                            side: filter == entry.$1
+                                                ? BorderSide.none
+                                                : BorderSide(
+                                                    color: _moneyBorder(
+                                                      context,
+                                                    ),
+                                                  ),
+                                            labelStyle: TextStyle(
+                                              color: filter == entry.$1
+                                                  ? Theme.of(
+                                                              context,
+                                                            ).brightness ==
+                                                            Brightness.dark
+                                                        ? const Color(
+                                                            0xFF0F172A,
+                                                          )
+                                                        : Colors.white
+                                                  : _moneyMuted(context),
+                                              fontWeight: filter == entry.$1
+                                                  ? FontWeight.w700
+                                                  : FontWeight.w600,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
                                   ],
                                 ),
                               ),
-                            ),
+                              Positioned(
+                                top: 0,
+                                bottom: 0,
+                                right: 0,
+                                child: IgnorePointer(
+                                  child: Container(
+                                    width: 24,
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(
+                                        colors: [
+                                          Theme.of(context)
+                                              .scaffoldBackgroundColor
+                                              .withValues(alpha: 0),
+                                          Theme.of(
+                                            context,
+                                          ).scaffoldBackgroundColor,
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
+                        if (rows.isEmpty)
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 24, 16, 8),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  people.isEmpty
+                                      ? 'No records yet. Tap + to add money you ${direction == MoneyDirection.given ? 'gave' : 'borrowed'}.'
+                                      : filter == _MoneyFilter.all &&
+                                            settled.isNotEmpty
+                                      ? 'All balances are settled.'
+                                      : 'No matching records.',
+                                  style: Theme.of(context).textTheme.bodyMedium
+                                      ?.copyWith(color: _moneyMuted(context)),
+                                ),
+                                if (people.isEmpty)
+                                  TextButton(
+                                    onPressed: () => openFinanceSheet(
+                                      context,
+                                      MoneyFormSheet(
+                                        initialDirection: direction,
+                                      ),
+                                    ),
+                                    child: const Text('Add record'),
+                                  ),
+                                if (filter == _MoneyFilter.all &&
+                                    settled.isNotEmpty)
+                                  TextButton(
+                                    onPressed: () => setState(
+                                      () => _filters[direction] =
+                                          _MoneyFilter.settled,
+                                    ),
+                                    child: const Text('View settled'),
+                                  ),
+                              ],
+                            ),
+                          ),
                       ],
                     ),
                   ),
-                  if (visible.isEmpty)
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 24, 16, 8),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            people.isEmpty
-                                ? 'No records yet. Tap + to add money you ${direction == MoneyDirection.given ? 'gave' : 'borrowed'}.'
-                                : 'No matching records.',
-                            style: Theme.of(context).textTheme.bodyMedium
-                                ?.copyWith(color: _moneyMuted(context)),
-                          ),
-                          if (people.isEmpty)
-                            TextButton(
-                              onPressed: () => openFinanceSheet(
-                                context,
-                                MoneyFormSheet(initialDirection: direction),
-                              ),
-                              child: const Text('Add record'),
-                            ),
-                        ],
-                      ),
-                    ),
-                ],
                 ),
-              ),
-            ),
-            SliverList.builder(
-              itemCount: rows.length,
-              itemBuilder: (context, index) {
-                final row = rows[index];
-                final person = row.$2;
-                if (person == null) {
-                  final isSettled = row.$1!.startsWith('Settled');
-                  final count = isSettled
-                      ? settled.length
-                      : rows
-                            .skip(index + 1)
-                            .takeWhile((item) => item.$2 != null)
-                            .length;
-                  return InkWell(
-                    onTap: isSettled && filter != _MoneyFilter.settled
-                        ? () => setState(
-                            () => _filters[direction] = _MoneyFilter.settled,
-                          )
-                        : null,
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              row.$1!,
-                              style: Theme.of(context).textTheme.titleSmall
-                                  ?.copyWith(
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w800,
-                                    color: row.$1 == 'Overdue'
-                                        ? AppTheme.colorsOf(context).pay
-                                        : _moneyInk(context),
-                                  ),
-                            ),
-                          ),
-                          if (!isSettled || filter == _MoneyFilter.settled)
-                            Text(
-                              '$count ${count == 1 ? 'person' : 'people'} · ',
-                              style: Theme.of(context).textTheme.bodySmall
-                                  ?.copyWith(color: _moneyMuted(context)),
-                            ),
-                          AmountText(
-                            row.$3,
-                            style: Theme.of(context).textTheme.bodySmall
-                                ?.copyWith(
-                                  color: _moneyInk(context),
-                                  fontWeight: FontWeight.w700,
-                              ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
-                }
-                return Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Column(
-                    children: [
-                      _MoneyPersonTile(
-                        key: ValueKey(
-                          '${direction.name}:${person.name.toLowerCase()}',
-                        ),
-                        person: person,
-                        avatarColor:
-                            visual.personColors[person.name.toLowerCase()]!,
-                        direction: direction,
-                        lastReminded: person.records
-                            .map((item) => reminded[item.record.id])
-                            .whereType<DateTime>()
-                            .fold<DateTime?>(
-                              null,
-                              (latest, date) =>
-                                  latest == null || date.isAfter(latest)
-                                  ? date
-                                  : latest,
-                            ),
-                        onRemind: person.remaining > 0
-                            ? () => _remindPerson(person)
+                SliverList.builder(
+                  itemCount: rows.length,
+                  itemBuilder: (context, index) {
+                    final row = rows[index];
+                    final person = row.$2;
+                    if (person == null) {
+                      final isSettled = row.$1!.startsWith('Settled');
+                      final count = isSettled
+                          ? settled.length
+                          : rows
+                                .skip(index + 1)
+                                .takeWhile((item) => item.$2 != null)
+                                .length;
+                      return InkWell(
+                        onTap: isSettled && filter != _MoneyFilter.settled
+                            ? () => setState(
+                                () =>
+                                    _filters[direction] = _MoneyFilter.settled,
+                              )
                             : null,
-                        onTap: () => Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => MoneyPersonScreen(
-                              person.name,
-                              direction,
-                            ),
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  row.$1!,
+                                  style: Theme.of(context).textTheme.titleSmall
+                                      ?.copyWith(
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w800,
+                                        color: row.$1 == 'Overdue'
+                                            ? AppTheme.colorsOf(context).pay
+                                            : _moneyInk(context),
+                                      ),
+                                ),
+                              ),
+                              if (!isSettled || filter == _MoneyFilter.settled)
+                                Text(
+                                  '$count ${count == 1 ? 'person' : 'people'} · ',
+                                  style: Theme.of(context).textTheme.bodySmall
+                                      ?.copyWith(color: _moneyMuted(context)),
+                                ),
+                              AmountText(
+                                row.$3,
+                                style: Theme.of(context).textTheme.bodySmall
+                                    ?.copyWith(
+                                      color: _moneyInk(context),
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                              ),
+                            ],
                           ),
                         ),
-                        onLongPress: () => _showPersonActions(person),
+                      );
+                    }
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Column(
+                        children: [
+                          _MoneyPersonTile(
+                            key: ValueKey(
+                              '${direction.name}:${person.name.toLowerCase()}',
+                            ),
+                            person: person,
+                            avatarColor:
+                                visual.personColors[person.name.toLowerCase()]!,
+                            direction: direction,
+                            lastReminded: person.records
+                                .map((item) => reminded[item.record.id])
+                                .whereType<DateTime>()
+                                .fold<DateTime?>(
+                                  null,
+                                  (latest, date) =>
+                                      latest == null || date.isAfter(latest)
+                                      ? date
+                                      : latest,
+                                ),
+                            onRemind: person.remaining > 0
+                                ? () => _remindPerson(person)
+                                : null,
+                            onTap: () => Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) =>
+                                    MoneyPersonScreen(person.name, direction),
+                              ),
+                            ),
+                            onLongPress: () => _showPersonActions(person),
+                          ),
+                          Divider(height: 1, color: _moneyBorder(context)),
+                        ],
                       ),
-                      const SizedBox(height: 10),
-                    ],
+                    );
+                  },
+                ),
+                SliverToBoxAdapter(
+                  child: SizedBox(
+                    height: NotchedNavigationMetrics.contentPadding(context),
                   ),
-                );
-              },
+                ),
+              ],
             ),
-            SliverToBoxAdapter(
-              child: SizedBox(
-                height: NotchedNavigationMetrics.contentPadding(context),
-              ),
-            ),
-          ],
-          ),
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            height: 12,
-            child: IgnorePointer(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      Theme.of(context).colorScheme.surface,
-                      Theme.of(context).colorScheme.surface.withValues(alpha: 0),
-                    ],
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              height: 12,
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Theme.of(context).colorScheme.surface,
+                        Theme.of(
+                          context,
+                        ).colorScheme.surface.withValues(alpha: 0),
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
           ],
         ),
       ),
@@ -1111,13 +1144,6 @@ class _MoneyScreenState extends ConsumerState<MoneyScreen> {
                                       ?.copyWith(fontWeight: FontWeight.w700),
                                 ),
                               ),
-                              Tooltip(
-                                message: 'Ask AI',
-                                child: IconButton.filledTonal(
-                                  onPressed: () => openAskFinKeep(context),
-                                  icon: const Icon(Icons.auto_awesome, size: 18),
-                                ),
-                              ),
                               const SectionReminderButton(
                                 type: FinanceReminderType.money,
                               ),
@@ -1126,27 +1152,57 @@ class _MoneyScreenState extends ConsumerState<MoneyScreen> {
                         ),
                       ),
                       Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                        child: SizedBox(
-                          width: double.infinity,
-                          child: SegmentedToggle<MoneyDirection>(
-                            segments: const [
-                              ButtonSegment(
-                                value: MoneyDirection.given,
-                                label: Text('Money given'),
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Row(
+                          children: [
+                            for (final (direction, label) in const [
+                              (MoneyDirection.given, 'Money given'),
+                              (MoneyDirection.borrowed, 'Money borrowed'),
+                            ])
+                              Expanded(
+                                child: InkWell(
+                                  onTap: () => _selectDirection(direction),
+                                  child: Column(
+                                    children: [
+                                      const SizedBox(height: 8),
+                                      SizedBox(
+                                        height: 40,
+                                        child: Center(
+                                          child: Text(
+                                            label,
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .bodyMedium
+                                                ?.copyWith(
+                                                  color: _direction == direction
+                                                      ? _moneyInk(context)
+                                                      : _moneyMuted(context),
+                                                  fontWeight:
+                                                      _direction == direction
+                                                      ? FontWeight.w700
+                                                      : FontWeight.w500,
+                                                ),
+                                          ),
+                                        ),
+                                      ),
+                                      AnimatedContainer(
+                                        duration: const Duration(
+                                          milliseconds: 180,
+                                        ),
+                                        height: 3,
+                                        width: _direction == direction ? 96 : 0,
+                                        decoration: BoxDecoration(
+                                          color: _moneyAccent(context),
+                                          borderRadius: BorderRadius.circular(
+                                            2,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
                               ),
-                              ButtonSegment(
-                                value: MoneyDirection.borrowed,
-                                label: Text('Money borrowed'),
-                              ),
-                            ],
-                            selected: {_direction},
-                            filled: true,
-                            selectedBackground: _moneyAccent(context),
-                            selectedForeground: Theme.of(context).colorScheme.onPrimary,
-                            onSelectionChanged: (value) =>
-                                _selectDirection(value.single),
-                          ),
+                          ],
                         ),
                       ),
                       Container(
@@ -1242,24 +1298,15 @@ class _MoneyHero extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = AppTheme.homePaletteOf(context);
     final given = direction == MoneyDirection.given;
     final percent = visual.originalTotal == 0
         ? 0
         : (visual.repaid * 100 / visual.originalTotal).round();
-    const white = Color(0xFFF8FAF9);
-    final muted = white.withValues(alpha: 0.75);
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16),
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Theme.of(context).brightness == Brightness.dark
-            ? null : const Color(0xFF17493B),
-        gradient: Theme.of(context).brightness == Brightness.dark
-            ? const LinearGradient(colors: [
-                Color(0xFF17493B), Color(0xFF0F3328)]) : null,
-        borderRadius: BorderRadius.circular(28),
-      ),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
@@ -1269,8 +1316,10 @@ class _MoneyHero extends StatelessWidget {
                   children: [
                     Text(
                       given ? 'To get back' : 'To pay back',
-                      style: Theme.of(context).textTheme.bodySmall
-                          ?.copyWith(color: muted, fontSize: 13),
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: colors.text2,
+                        fontSize: 13,
+                      ),
                     ),
                     const SizedBox(height: 5),
                     FittedBox(
@@ -1278,12 +1327,15 @@ class _MoneyHero extends StatelessWidget {
                       alignment: Alignment.centerLeft,
                       child: AmountText(
                         visual.outstanding,
-                        style: Theme.of(context).textTheme.displaySmall?.copyWith(
-                          color: white,
-                          fontSize: 40,
-                          fontWeight: FontWeight.w800,
-                          fontFeatures: const [FontFeature.tabularFigures()],
-                        ),
+                        style: Theme.of(context).textTheme.displaySmall
+                            ?.copyWith(
+                              color: colors.text,
+                              fontSize: 40,
+                              fontWeight: FontWeight.w800,
+                              fontFeatures: const [
+                                FontFeature.tabularFigures(),
+                              ],
+                            ),
                       ),
                     ),
                   ],
@@ -1291,7 +1343,7 @@ class _MoneyHero extends StatelessWidget {
               ),
               const SizedBox(width: 12),
               SizedBox(
-                width: 84,
+                width: 76,
                 child: Column(
                   children: [
                     RepaintBoundary(
@@ -1299,15 +1351,18 @@ class _MoneyHero extends StatelessWidget {
                         progress: visual.originalTotal == 0
                             ? 0
                             : visual.repaid / visual.originalTotal,
-                        size: 84,
-                        strokeWidth: 8,
-                        color: const Color(0xFF7EE2B0),
-                        backgroundColor: white.withValues(alpha: 0.18),
+                        size: 76,
+                        strokeWidth: 7,
+                        color: _moneyAccent(context),
+                        backgroundColor: colors.line,
                         child: Center(
                           child: Text(
                             '$percent%',
                             style: Theme.of(context).textTheme.titleMedium
-                                ?.copyWith(color: white, fontWeight: FontWeight.w800),
+                                ?.copyWith(
+                                  color: colors.text,
+                                  fontWeight: FontWeight.w800,
+                                ),
                           ),
                         ),
                       ),
@@ -1315,8 +1370,10 @@ class _MoneyHero extends StatelessWidget {
                     const SizedBox(height: 3),
                     Text(
                       given ? 'recovered' : 'repaid',
-                      style: Theme.of(context).textTheme.labelSmall
-                          ?.copyWith(color: muted, fontSize: 12),
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: colors.text2,
+                        fontSize: 12,
+                      ),
                     ),
                   ],
                 ),
@@ -1324,8 +1381,6 @@ class _MoneyHero extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 18),
-          Divider(height: 1, color: white.withValues(alpha: 0.18)),
-          const SizedBox(height: 14),
           Row(
             children: [
               _MoneyHeroFigure(
@@ -1368,24 +1423,39 @@ class _MoneyHeroFigure extends StatelessWidget {
   Widget build(BuildContext context) => Expanded(
     child: InkWell(
       onTap: onTap,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(label, maxLines: 2, style: Theme.of(context).textTheme.labelSmall
-              ?.copyWith(color: const Color(0xFFBFD4CB), fontSize: 12)),
-          const SizedBox(height: 4),
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            alignment: Alignment.centerLeft,
-            child: AmountText(amount, style: Theme.of(context).textTheme.titleSmall
-                ?.copyWith(color: const Color(0xFFF8FAF9), fontSize: 15,
-                    fontWeight: FontWeight.w700)),
-          ),
-        ],
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 48),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              maxLines: 2,
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: AppTheme.homePaletteOf(context).text2,
+                fontSize: 13,
+              ),
+            ),
+            const SizedBox(height: 4),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: AmountText(
+                amount,
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  color: _moneyInk(context),
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     ),
   );
 }
+
 class _MoneyClampedScrollBehavior extends MaterialScrollBehavior {
   const _MoneyClampedScrollBehavior();
 
@@ -1540,11 +1610,9 @@ class _MoneyInsightSheetState extends State<_MoneyInsightSheet> {
                               ? 6
                               : 6 + 90 * amounts[index] / maxAmount,
                           decoration: BoxDecoration(
-                            color: index == 0
+                            color: index == _selectedMonth
                                 ? _moneyAccent(context)
-                                : const Color(
-                                    0xFF059669,
-                                  ).withValues(alpha: .65),
+                                : _moneyAccent(context).withValues(alpha: .45),
                             borderRadius: const BorderRadius.vertical(
                               top: Radius.circular(6),
                             ),
@@ -1689,39 +1757,44 @@ class _MoneyRemindButton extends StatelessWidget {
     final accent = _moneyAccent(context);
     final foreground = filled
         ? Theme.of(context).brightness == Brightness.dark
-            ? AppTheme.darkOnPrimary : Colors.white
+              ? AppTheme.darkOnPrimary
+              : Colors.white
         : accent;
     return Semantics(
-    label: 'Remind on WhatsApp',
-    button: true,
-    child: Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onPressed,
-        borderRadius: BorderRadius.circular(18),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 6),
-          child: Container(
-            height: 36,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            decoration: BoxDecoration(
-              color: filled ? accent : Colors.transparent,
-              borderRadius: BorderRadius.circular(18),
-              border: filled ? null : Border.all(color: accent),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.phone_in_talk_outlined, size: 17, color: foreground),
-                const SizedBox(width: 5),
-                Text('Remind', style: TextStyle(color: foreground)),
-              ],
+      label: 'Remind on WhatsApp',
+      button: true,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onPressed,
+          borderRadius: BorderRadius.circular(18),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Container(
+              height: 36,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              decoration: BoxDecoration(
+                color: filled ? accent : Colors.transparent,
+                borderRadius: BorderRadius.circular(18),
+                border: filled ? null : Border.all(color: accent),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.phone_in_talk_outlined,
+                    size: 17,
+                    color: foreground,
+                  ),
+                  const SizedBox(width: 5),
+                  Text('Remind', style: TextStyle(color: foreground)),
+                ],
+              ),
             ),
           ),
         ),
       ),
-    ),
-  );
+    );
   }
 }
 
@@ -1756,13 +1829,9 @@ class _MoneyPersonTileState extends State<_MoneyPersonTile> {
     final dark = Theme.of(context).brightness == Brightness.dark;
     final name = displayName(person.name);
     final due = person.nearestDue;
-    final statusRed = dark
-        ? AppTheme.darkOverdue
-        : const Color(0xFFB91C1C);
+    final statusRed = dark ? AppTheme.darkOverdue : const Color(0xFFB91C1C);
     final dateRed = dark ? AppTheme.darkDateOverdue : const Color(0xFFB42318);
-    final statusAmber = dark
-        ? AppTheme.darkUnpaid
-        : const Color(0xFF9A5700);
+    final statusAmber = dark ? AppTheme.darkUnpaid : const Color(0xFF9A5700);
     final dateAmber = dark ? AppTheme.darkDateAmber : const Color(0xFFB54708);
     final blue = dark ? AppTheme.darkPartial : const Color(0xFF1D4ED8);
     final statusColor = person.remaining == 0
@@ -1813,210 +1882,208 @@ class _MoneyPersonTileState extends State<_MoneyPersonTile> {
     final secondary = Theme.of(
       context,
     ).textTheme.bodySmall?.copyWith(fontSize: 13, color: _moneyMuted(context));
-    return Container(
-      clipBehavior: Clip.antiAlias,
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: _moneyBorder(context)),
-      ),
-      child: Column(
-        children: [
-          Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onLongPress: widget.onLongPress,
-        onTap: widget.onTap,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 72),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            child: Row(
-              children: [
-                Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    Container(
-                      width: 44,
-                      height: 44,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: widget.avatarColor,
-                        borderRadius: BorderRadius.circular(22),
-                      ),
-                      child: Text(
-                        name.characters.first.toUpperCase(),
-                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                    if (person.repaid > 0 && person.remaining > 0)
-                      Positioned.fill(
-                        child: CircularProgressIndicator(
-                          value: person.total == 0 ? 0 : person.repaid / person.total,
-                          strokeWidth: 3,
-                          color: _moneyAccent(context),
-                          backgroundColor: _moneyBorder(context),
-                        ),
-                      ),
-                    if (person.remaining == 0)
-                      Positioned(
-                        right: -3,
-                        bottom: -3,
-                        child: Icon(
-                          Icons.check_circle,
-                          size: 16,
-                          color: _moneyAccent(context),
-                        ),
-                      ),
-                  ],
+    return Column(
+      children: [
+        Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onLongPress: widget.onLongPress,
+            onTap: widget.onTap,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 72),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        flex: 2,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context).textTheme.titleSmall
-                                  ?.copyWith(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w600,
-                                  ),
+                child: Row(
+                  children: [
+                    Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        Container(
+                          width: 44,
+                          height: 44,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: widget.avatarColor,
+                            borderRadius: BorderRadius.circular(22),
+                          ),
+                          child: Text(
+                            name.characters.first.toUpperCase(),
+                            style: Theme.of(context).textTheme.titleSmall
+                                ?.copyWith(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w700,
+                                  color: Colors.white,
+                                ),
+                          ),
+                        ),
+                        if (person.repaid > 0 && person.remaining > 0)
+                          Positioned.fill(
+                            child: CircularProgressIndicator(
+                              value: person.total == 0
+                                  ? 0
+                                  : person.repaid / person.total,
+                              strokeWidth: 3,
+                              color: _moneyAccent(context),
+                              backgroundColor: _moneyBorder(context),
                             ),
-                            const SizedBox(height: 4),
-                            Wrap(
-                              crossAxisAlignment: WrapCrossAlignment.center,
-                              spacing: 4,
+                          ),
+                        if (person.remaining == 0)
+                          Positioned(
+                            right: -3,
+                            bottom: -3,
+                            child: Icon(
+                              Icons.check_circle,
+                              size: 16,
+                              color: _moneyAccent(context),
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            flex: 2,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
                               children: [
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 6,
-                                    vertical: 2,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: statusFill,
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: Text(
-                                    status,
-                                    style: secondary?.copyWith(
-                                      color: statusColor,
-                                      fontWeight: FontWeight.w600,
+                                Text(
+                                  name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: Theme.of(context).textTheme.titleSmall
+                                      ?.copyWith(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                ),
+                                const SizedBox(height: 4),
+                                Wrap(
+                                  crossAxisAlignment: WrapCrossAlignment.center,
+                                  spacing: 4,
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 6,
+                                        vertical: 2,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: statusFill,
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      child: Text(
+                                        status,
+                                        style: secondary?.copyWith(
+                                          color: statusColor,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
                                     ),
-                                  ),
+                                  ],
                                 ),
                               ],
                             ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        flex: 3,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            AmountText(
-                              person.remaining > 0
-                                  ? person.remaining
-                                  : person.repaid,
-                              maxLines: 1,
-                              style: Theme.of(context).textTheme.titleSmall
-                                  ?.copyWith(
-                                    fontSize: 17,
-                                    fontWeight: FontWeight.w700,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            flex: 3,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                AmountText(
+                                  person.remaining > 0
+                                      ? person.remaining
+                                      : person.repaid,
+                                  maxLines: 1,
+                                  style: Theme.of(context).textTheme.titleSmall
+                                      ?.copyWith(
+                                        fontSize: 17,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                ),
+                                if (person.remaining > 0 && due != null)
+                                  Text(
+                                    '${person.records.length > 1 ? 'Next due ' : ''}${_moneyDatedDue(due, DateTime.now())}',
+                                    textAlign: TextAlign.end,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: secondary?.copyWith(color: dueColor),
+                                  )
+                                else if (person.settledOn != null)
+                                  Text(
+                                    'Settled ${DateFormat('d MMM').format(person.settledOn!)}',
+                                    textAlign: TextAlign.end,
+                                    maxLines: 2,
+                                    style: secondary,
                                   ),
+                              ],
                             ),
-                            if (person.remaining > 0 && due != null)
-                              Text(
-                                '${person.records.length > 1 ? 'Next due ' : ''}${_moneyDatedDue(due, DateTime.now())}',
-                                textAlign: TextAlign.end,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: secondary?.copyWith(color: dueColor),
-                              )
-                            else if (person.settledOn != null)
-                              Text(
-                                'Settled ${DateFormat('d MMM').format(person.settledOn!)}',
-                                textAlign: TextAlign.end,
-                                maxLines: 2,
-                                style: secondary,
-                              ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
+                    ),
+                    const SizedBox(width: 8),
+                    Semantics(
+                      label: 'Open ${displayName(person.name)} records',
+                      child: Icon(
+                        Icons.chevron_right,
+                        size: 18,
+                        color: _moneyMuted(context),
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 8),
-                Semantics(
-                  label: 'Open ${displayName(person.name)} records',
-                  child: Icon(
-                    Icons.chevron_right,
-                  size: 18,
-                    color: _moneyMuted(context),
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
         ),
-      ),
-          ),
-          Divider(height: 1, thickness: 1, color: _moneyBorder(context)),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Wrap(
-                    spacing: 3,
-                    children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          child: Row(
+            children: [
+              Expanded(
+                child: Wrap(
+                  spacing: 3,
+                  children: [
+                    Text(
+                      '${person.records.length} ${person.records.length == 1 ? 'record' : 'records'} ·',
+                      style: secondary,
+                    ),
+                    if (person.repaid > 0) ...[
+                      AmountText(person.repaid, style: secondary),
+                      Text(' of ', style: secondary),
+                      AmountText(person.total, style: secondary),
+                      Text(' paid', style: secondary),
+                    ] else
                       Text(
-                        '${person.records.length} ${person.records.length == 1 ? 'record' : 'records'} ·',
+                        widget.lastReminded == null
+                            ? 'Not reminded yet'
+                            : remindedAgo(widget.lastReminded!, DateTime.now()),
                         style: secondary,
                       ),
-                      if (person.repaid > 0) ...[
-                        AmountText(person.repaid, style: secondary),
-                        Text(' of ', style: secondary),
-                        AmountText(person.total, style: secondary),
-                        Text(' paid', style: secondary),
-                      ] else
-                        Text(
-                          widget.lastReminded == null
-                              ? 'Not reminded yet'
-                              : remindedAgo(widget.lastReminded!, DateTime.now()),
-                          style: secondary,
-                        ),
-                    ],
-                  ),
+                  ],
                 ),
-                if (widget.onRemind != null) ...[
-                  const SizedBox(width: 8),
-                  _MoneyRemindButton(
-                    onPressed: widget.onRemind!,
-                    filled: person.overdue ||
-                        (due != null && DateUtils.isSameDay(due, DateTime.now())),
-                  ),
-                ],
+              ),
+              if (widget.onRemind != null) ...[
+                const SizedBox(width: 8),
+                _MoneyRemindButton(
+                  onPressed: widget.onRemind!,
+                  filled:
+                      person.overdue ||
+                      (due != null && DateUtils.isSameDay(due, DateTime.now())),
+                ),
               ],
-            ),
+            ],
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
@@ -2127,85 +2194,92 @@ class _MoneyPersonScreenState extends ConsumerState<MoneyPersonScreen> {
               : ListView(
                   padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
                   children: [
-                    Container(
-                      padding: const EdgeInsets.all(20),
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.surface,
-                        borderRadius: BorderRadius.circular(24),
-                        border: Border.all(color: _moneyBorder(context)),
-                      ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
                       child: Column(
                         children: [
                           Row(
                             children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Balance remaining',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodyMedium
+                                          ?.copyWith(
+                                            color: _moneyMuted(context),
+                                          ),
+                                    ),
+                                    AmountText(
+                                      person.remaining,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .headlineSmall
+                                          ?.copyWith(
+                                            fontSize: 32,
+                                            fontWeight: FontWeight.w800,
+                                          ),
+                                    ),
+                                    Text(
+                                      '${open.length} open · ${settled.length} settled',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodySmall
+                                          ?.copyWith(
+                                            color: _moneyMuted(context),
+                                          ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 12),
                               RepaintBoundary(
                                 child: MiniProgressRing(
                                   progress: person.total == 0
                                       ? 0
                                       : person.repaid / person.total,
-                                  size: 96,
-                                  strokeWidth: 8,
+                                  size: 76,
+                                  strokeWidth: 7,
                                   color: _moneyAccent(context),
+                                  backgroundColor: _moneyBorder(context),
                                   child: Center(
                                     child: Text(
                                       '${person.total == 0 ? 0 : (person.repaid * 100 / person.total).round()}%',
-                                      style: Theme.of(context).textTheme.titleMedium
-                                          ?.copyWith(fontWeight: FontWeight.w800),
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleSmall
+                                          ?.copyWith(
+                                            fontWeight: FontWeight.w700,
+                                          ),
                                     ),
                                   ),
-                                ),
-                              ),
-                              const SizedBox(width: 18),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    const FinanceFieldLabel('BALANCE'),
-                                    AmountText(
-                                      person.remaining,
-                                      style: Theme.of(context).textTheme.headlineSmall
-                                          ?.copyWith(fontSize: 32, fontWeight: FontWeight.w800),
-                                    ),
-                                    Text(
-                                      '${open.length} open · ${settled.length} settled',
-                                      style: Theme.of(context).textTheme.bodySmall
-                                          ?.copyWith(color: _moneyMuted(context)),
-                                    ),
-                                  ],
                                 ),
                               ),
                             ],
                           ),
-                          const SizedBox(height: 18),
+                          const SizedBox(height: 14),
                           Row(
                             children: [
                               Expanded(
-                                child: Container(
-                                  padding: const EdgeInsets.all(12),
-                                  decoration: BoxDecoration(
-                                    color: Theme.of(context).colorScheme.surfaceContainerLow,
-                                    borderRadius: BorderRadius.circular(14),
-                                  ),
-                                  child: _SummaryValue(
-                                    label: widget.direction == MoneyDirection.given
-                                        ? 'Lent'
-                                        : 'Borrowed',
-                                    value: person.total,
-                                  ),
+                                child: _SummaryValue(
+                                  label:
+                                      widget.direction == MoneyDirection.given
+                                      ? 'Lent'
+                                      : 'Borrowed',
+                                  value: person.total,
                                 ),
                               ),
                               const SizedBox(width: 10),
                               Expanded(
-                                child: Container(
-                                  padding: const EdgeInsets.all(12),
-                                  decoration: BoxDecoration(
-                                    color: Theme.of(context).colorScheme.surfaceContainerLow,
-                                    borderRadius: BorderRadius.circular(14),
-                                  ),
-                                  child: _SummaryValue(
-                                    label: 'Repaid',
-                                    value: person.repaid,
-                                  ),
+                                child: _SummaryValue(
+                                  label:
+                                      widget.direction == MoneyDirection.given
+                                      ? 'Received'
+                                      : 'Repaid',
+                                  value: person.repaid,
                                 ),
                               ),
                             ],
@@ -2275,48 +2349,57 @@ class _MoneyPersonScreenState extends ConsumerState<MoneyPersonScreen> {
               : DecoratedBox(
                   decoration: BoxDecoration(
                     color: Theme.of(context).colorScheme.surface,
-                    border: Border(top: BorderSide(color: _moneyBorder(context))),
+                    border: Border(
+                      top: BorderSide(color: _moneyBorder(context)),
+                    ),
                   ),
                   child: SafeArea(
-                  top: false,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 14),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        SizedBox(
-                          width: double.infinity,
-                          child: FilledButton.icon(
-                            style: FilledButton.styleFrom(
-                              minimumSize: const Size.fromHeight(52),
-                              backgroundColor: _moneyAccent(context),
+                    top: false,
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 8, 20, 14),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SizedBox(
+                            width: double.infinity,
+                            child: FilledButton.icon(
+                              style: FilledButton.styleFrom(
+                                minimumSize: const Size.fromHeight(52),
+                                backgroundColor: _moneyInk(context),
+                                foregroundColor: AppTheme.homePaletteOf(
+                                  context,
+                                ).bg,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(16),
+                                ),
+                              ),
+                              onPressed: () async {
+                                final detail = await _chooseRecord(open);
+                                if (mounted && detail != null) {
+                                  _addRepayment(detail);
+                                }
+                              },
+                              icon: const Icon(Icons.add),
+                              label: const Text('Add repayment'),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(
+                              minimumSize: const Size.fromHeight(48),
+                              foregroundColor: _moneyAccent(context),
+                              side: BorderSide(color: _moneyBorder(context)),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(16),
                               ),
                             ),
-                            onPressed: () async {
-                              final detail = await _chooseRecord(open);
-                              if (mounted && detail != null) _addRepayment(detail);
-                            },
-                            icon: const Icon(Icons.add),
-                            label: const Text('Add repayment'),
+                            onPressed: () => _sendReminder(repayment),
+                            icon: const Icon(Icons.phone_in_talk_outlined),
+                            label: const Text('Remind on WhatsApp'),
                           ),
-                        ),
-                        const SizedBox(height: 8),
-                        OutlinedButton.icon(
-                          style: OutlinedButton.styleFrom(
-                            minimumSize: const Size.fromHeight(48),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                          ),
-                          onPressed: () => _sendReminder(repayment),
-                          icon: const Icon(Icons.phone_in_talk_outlined),
-                          label: const Text('Remind on WhatsApp'),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
-                  ),
                   ),
                 ),
         );
@@ -2536,21 +2619,17 @@ class _PersonTimeline extends ConsumerWidget {
           ListTile(
             contentPadding: EdgeInsets.zero,
             leading: Icon(
-              event.payment == null
-                  ? Icons.arrow_upward
-                  : Icons.arrow_downward,
-              color: event.payment == null
-                  ? _moneyAccent(context)
-                  : AppTheme.colorsOf(context).receive,
+              event.payment == null ? Icons.arrow_upward : Icons.arrow_downward,
+              color: _moneyAccent(context),
             ),
             title: Text(
               event.payment == null
                   ? event.detail.record.direction == MoneyDirection.given
-                      ? 'You lent ${formatMoney(event.amount.abs())}'
-                      : 'You borrowed ${formatMoney(event.amount.abs())}'
+                        ? 'You lent ${formatMoney(event.amount.abs())}'
+                        : 'You borrowed ${formatMoney(event.amount.abs())}'
                   : event.detail.record.direction == MoneyDirection.given
-                      ? '${displayName(event.detail.record.personName)} repaid ${formatMoney(event.amount.abs())}'
-                      : 'You repaid ${formatMoney(event.amount.abs())}',
+                  ? '${displayName(event.detail.record.personName)} repaid ${formatMoney(event.amount.abs())}'
+                  : 'You repaid ${formatMoney(event.amount.abs())}',
             ),
             subtitle: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -2683,28 +2762,24 @@ class _PersonRecordRow extends StatelessWidget {
     final status = settled
         ? 'Settled'
         : summary.repaidAmountPaise > 0
-            ? 'Partly paid'
-            : detail.record.dueDate != null &&
-                    DateUtils.dateOnly(detail.record.dueDate!)
-                        .isBefore(DateUtils.dateOnly(DateTime.now()))
-                ? 'Overdue'
-                : 'Unpaid';
+        ? 'Partly paid'
+        : detail.record.dueDate != null &&
+              DateUtils.dateOnly(
+                detail.record.dueDate!,
+              ).isBefore(DateUtils.dateOnly(DateTime.now()))
+        ? 'Overdue'
+        : 'Unpaid';
     final statusColor = switch (status) {
       'Settled' => _moneyAccent(context),
       'Overdue' => AppTheme.colorsOf(context).pay,
-      'Partly paid' => Theme.of(context).brightness == Brightness.dark
-          ? const Color(0xFF93C5FD)
-          : const Color(0xFF1D4ED8),
+      'Partly paid' =>
+        Theme.of(context).brightness == Brightness.dark
+            ? const Color(0xFF93C5FD)
+            : const Color(0xFF1D4ED8),
       _ => AppTheme.colorsOf(context).emi,
     };
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _moneyBorder(context)),
-      ),
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -2713,8 +2788,9 @@ class _PersonRecordRow extends StatelessWidget {
               Expanded(
                 child: AmountText(
                   detail.record.amountPaise,
-                  style: Theme.of(context).textTheme.titleMedium
-                      ?.copyWith(fontWeight: FontWeight.w700),
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
               Container(
@@ -2723,31 +2799,42 @@ class _PersonRecordRow extends StatelessWidget {
                   color: statusColor.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: Text(status, style: Theme.of(context).textTheme.labelSmall
-                    ?.copyWith(color: statusColor, fontWeight: FontWeight.w700)),
+                child: Text(
+                  status,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: statusColor,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
               ),
             ],
           ),
           const SizedBox(height: 9),
           Text(
             'Recorded ${formatDate(detail.record.recordDate)}',
-            style: Theme.of(context).textTheme.bodySmall
-                ?.copyWith(color: _moneyMuted(context), fontSize: 13),
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: _moneyMuted(context),
+              fontSize: 13,
+            ),
           ),
           Text(
             detail.record.dueDate == null
                 ? 'No due date'
                 : 'Due ${_moneyDatedDue(detail.record.dueDate!, DateTime.now())}',
-            style: Theme.of(context).textTheme.bodySmall
-                ?.copyWith(color: _moneyMuted(context), fontSize: 13),
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: _moneyMuted(context),
+              fontSize: 13,
+            ),
           ),
           if (detail.record.notes?.trim().isNotEmpty == true)
             Text(
               detail.record.notes!,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.bodySmall
-                  ?.copyWith(color: _moneyMuted(context), fontSize: 13),
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: _moneyMuted(context),
+                fontSize: 13,
+              ),
             ),
           if (!settled) ...[
             const SizedBox(height: 12),
@@ -2756,21 +2843,31 @@ class _PersonRecordRow extends StatelessWidget {
               runSpacing: 8,
               children: [
                 OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: _moneyAccent(context),
+                    side: BorderSide(color: _moneyBorder(context)),
+                  ),
                   onPressed: onSettle,
                   child: const Text('Settle'),
                 ),
                 OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: _moneyAccent(context),
+                    side: BorderSide(color: _moneyBorder(context)),
+                  ),
                   onPressed: onExtend,
                   child: const Text('Extend due date'),
                 ),
               ],
             ),
           ],
+          Divider(height: 20, color: _moneyBorder(context)),
         ],
       ),
     );
   }
 }
+
 class MoneyDetailScreen extends ConsumerWidget {
   const MoneyDetailScreen(this.id, {super.key});
 
@@ -2860,25 +2957,14 @@ class MoneyDetailScreen extends ConsumerWidget {
                       style: Theme.of(context).textTheme.headlineSmall
                           ?.copyWith(fontWeight: FontWeight.w800),
                     ),
-                    const SizedBox(height: 22),
-                    Center(
-                      child: MiniProgressRing(
-                        progress:
-                            detail.summary.repaidAmountPaise /
-                            detail.record.amountPaise,
-                        size: 140,
-                        strokeWidth: 11,
-                        backgroundColor: Theme.of(
-                          context,
-                        ).colorScheme.outlineVariant,
-                        child: Text(
-                          '${(detail.summary.repaidAmountPaise * 100 / detail.record.amountPaise).round()}%',
-                          style: Theme.of(context).textTheme.headlineMedium
-                              ?.copyWith(fontWeight: FontWeight.w800),
-                        ),
+                    const SizedBox(height: 18),
+                    Text(
+                      'Repayment progress · ${detail.record.amountPaise == 0 ? 0 : (detail.summary.repaidAmountPaise * 100 / detail.record.amountPaise).round()}%',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: _moneyMuted(context),
                       ),
                     ),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 16),
                     Row(
                       children: [
                         Expanded(
@@ -2940,6 +3026,10 @@ class MoneyDetailScreen extends ConsumerWidget {
                             style: FilledButton.styleFrom(
                               minimumSize: const Size.fromHeight(52),
                               shape: const StadiumBorder(),
+                              backgroundColor: _moneyInk(context),
+                              foregroundColor: AppTheme.homePaletteOf(
+                                context,
+                              ).bg,
                             ),
                             onPressed: () => openFinanceSheet(
                               context,
@@ -2958,17 +3048,26 @@ class MoneyDetailScreen extends ConsumerWidget {
                           spacing: 4,
                           children: [
                             TextButton(
+                              style: TextButton.styleFrom(
+                                foregroundColor: _moneyAccent(context),
+                              ),
                               onPressed: () =>
                                   _settleFully(context, ref, detail),
                               child: const Text('Settle fully'),
                             ),
                             TextButton(
+                              style: TextButton.styleFrom(
+                                foregroundColor: _moneyAccent(context),
+                              ),
                               onPressed: () =>
                                   _extendDueDate(context, ref, detail),
                               child: const Text('Extend due date'),
                             ),
                             if (detail.record.direction == MoneyDirection.given)
                               TextButton.icon(
+                                style: TextButton.styleFrom(
+                                  foregroundColor: _moneyAccent(context),
+                                ),
                                 onPressed: () => _sendReminder(context, detail),
                                 icon: const Icon(
                                   Icons.share_outlined,
@@ -3225,18 +3324,14 @@ class _MoneyTimelineNode extends StatelessWidget {
           left: 14,
           top: 22,
           bottom: 0,
-          child: Container(width: 2, color: AppTheme.colorsOf(context).receive),
+          child: Container(width: 2, color: _moneyBorder(context)),
         ),
       Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
             width: 30,
-            child: Icon(
-              icon,
-              size: 22,
-              color: AppTheme.colorsOf(context).receive,
-            ),
+            child: Icon(icon, size: 22, color: _moneyAccent(context)),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -3426,16 +3521,20 @@ class _MoneyFormSheetState extends ConsumerState<MoneyFormSheet> {
                       ],
                       selected: {_direction},
                       filled: true,
-                      selectedBackground: Theme.of(context).brightness == Brightness.dark
+                      selectedBackground:
+                          Theme.of(context).brightness == Brightness.dark
                           ? AppTheme.darkPrimary
                           : _direction == MoneyDirection.given
-                              ? financeSelectedFill(context)
-                              : AppTheme.colorsOf(context).pay.withValues(alpha: 0.12),
-                      selectedForeground: Theme.of(context).brightness == Brightness.dark
+                          ? financeSelectedFill(context)
+                          : AppTheme.colorsOf(
+                              context,
+                            ).pay.withValues(alpha: 0.12),
+                      selectedForeground:
+                          Theme.of(context).brightness == Brightness.dark
                           ? AppTheme.darkOnPrimary
                           : _direction == MoneyDirection.given
-                              ? Theme.of(context).colorScheme.primary
-                              : AppTheme.colorsOf(context).pay,
+                          ? Theme.of(context).colorScheme.primary
+                          : AppTheme.colorsOf(context).pay,
                       onSelectionChanged: widget.record == null
                           ? (value) => setState(() => _direction = value.single)
                           : null,
@@ -3496,7 +3595,9 @@ class _MoneyFormSheetState extends ConsumerState<MoneyFormSheet> {
                           icon: Icons.phone_outlined,
                         ),
                         validator: (value) {
-                          if (value == null || value.trim().isEmpty) return null;
+                          if (value == null || value.trim().isEmpty) {
+                            return null;
+                          }
                           return _whatsAppDigits(value).length < 11
                               ? 'Enter a valid phone number'
                               : null;
@@ -3695,16 +3796,19 @@ class _MoneyFormSheetState extends ConsumerState<MoneyFormSheet> {
       closeFinanceSheetAndSave(context, () async {
         await repo.saveMoneyRecord(item);
         if (phone.isEmpty && _phoneLoaded && widget.record != null) {
-          await (db.delete(db.settings)
-                ..where((setting) => setting.key.equals(_moneyPhoneKey(personName))))
+          await (db.delete(db.settings)..where(
+                (setting) => setting.key.equals(_moneyPhoneKey(personName)),
+              ))
               .go();
         } else if (phone.isNotEmpty) {
-          await db.into(db.settings).insertOnConflictUpdate(
-            SettingsCompanion.insert(
-              key: _moneyPhoneKey(personName),
-              value: phone,
-            ),
-          );
+          await db
+              .into(db.settings)
+              .insertOnConflictUpdate(
+                SettingsCompanion.insert(
+                  key: _moneyPhoneKey(personName),
+                  value: phone,
+                ),
+              );
         }
       }, errorMessage: 'Could not save this money record.');
     } on FormatException catch (error) {

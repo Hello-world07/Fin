@@ -25,6 +25,7 @@ void main() {
     ThemeMode mode, {
     double textScale = 1,
     Size size = const Size(360, 800),
+    Key? screenKey,
   }) async {
     await tester.binding.setSurfaceSize(size);
     await tester.pumpWidget(
@@ -43,12 +44,40 @@ void main() {
             ).copyWith(textScaler: TextScaler.linear(textScale)),
             child: child!,
           ),
-          home: const EmiOverviewScreen(),
+          home: EmiOverviewScreen(key: screenKey),
         ),
       ),
     );
     await tester.pumpAndSettle();
   }
+
+  testWidgets('Back steps through EMI sections before leaving All', (
+    tester,
+  ) async {
+    final screenKey = GlobalKey<EmiOverviewScreenState>();
+    await pumpScreen(tester, ThemeMode.light, screenKey: screenKey);
+    await tester.ensureVisible(find.text('Completed'));
+    await tester.tap(find.text('Completed'));
+    await tester.pumpAndSettle();
+    expect(screenKey.currentState!.goBackWithinEmis(), isTrue);
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Add an agreement to track repayments from someone else.'),
+      findsOneWidget,
+    );
+    expect(screenKey.currentState!.goBackWithinEmis(), isTrue);
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Personal loans and credit-card installments appear here.'),
+      findsOneWidget,
+    );
+    expect(screenKey.currentState!.goBackWithinEmis(), isTrue);
+    await tester.pumpAndSettle();
+    expect(find.text('Nothing here yet'), findsOneWidget);
+    expect(screenKey.currentState!.goBackWithinEmis(), isFalse);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 1));
+  });
 
   for (final mode in [ThemeMode.light, ThemeMode.dark]) {
     testWidgets('empty categories render on a small phone in $mode', (
@@ -73,6 +102,65 @@ void main() {
       await tester.pump(const Duration(milliseconds: 1));
     });
   }
+
+  testWidgets('given EMI timing appears only after recorded payments', (
+    tester,
+  ) async {
+    final id = await repository.saveEmi(
+      EmisCompanion.insert(
+        name: 'Friend repayment',
+        principalPaise: 300000,
+        emiAmountPaise: 100000,
+        tenureMonths: 3,
+        startDate: DateTime(2026, 11, 1),
+        nextDueDate: DateTime(2026, 11, 1),
+        frequency: PaymentFrequency.monthly,
+        status: EmiStatus.active,
+        type: const Value(friendRepaymentType),
+      ),
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          databaseProvider.overrideWithValue(database),
+          financeRepositoryProvider.overrideWithValue(repository),
+        ],
+        child: MaterialApp(
+          theme: AppTheme.light(),
+          home: EmiAgreementDetailScreen(id),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final chart = find.byKey(const ValueKey('emi-payment-timing-chart'));
+    expect(chart, findsNothing);
+    for (final (number, paidOn) in [
+      (1, DateTime(2026, 11, 1)),
+      (2, DateTime(2026, 12, 3)),
+    ]) {
+      await database
+          .into(database.emiPayments)
+          .insert(
+            EmiPaymentsCompanion.insert(
+              emiId: id,
+              amountPaise: 100000,
+              paidOn: paidOn,
+              installmentNumber: number,
+            ),
+          );
+    }
+    await tester.pumpAndSettle();
+    expect(chart, findsOneWidget);
+    expect(tester.getSize(chart).width, greaterThan(0));
+    expect(tester.getSize(chart).height, greaterThan(0));
+    expect(find.text('Payment timing'), findsOneWidget);
+    expect(
+      find.textContaining('1 of 2 installments received on time'),
+      findsOneWidget,
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 1));
+  });
 
   testWidgets('tabs keep Personal and friend agreements separate', (
     tester,
@@ -154,6 +242,10 @@ void main() {
       ),
     );
     await pumpScreen(tester, ThemeMode.light);
+    final loadChart = find.byKey(const ValueKey('emi-month-load-chart'));
+    expect(loadChart, findsOneWidget);
+    expect(tester.getSize(loadChart).width, greaterThan(0));
+    expect(tester.getSize(loadChart).height, 108);
     final monthKey = ValueKey('emi-month-${due.year}-${due.month}');
     await tester.scrollUntilVisible(
       find.byKey(monthKey),
@@ -307,6 +399,43 @@ void main() {
     await tester.tap(find.text('Completed'));
     await tester.pumpAndSettle();
     expect(find.text('Paid loan'), findsOneWidget);
+    await tester.tap(find.text('Paid loan'));
+    await tester.pumpAndSettle();
+    expect(find.text('Undo'), findsNothing);
+    expect(find.text('Undo payment'), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 1));
+  });
+
+  testWidgets('Completed row shows the recorded final payment', (tester) async {
+    final due = DateTime(2026, 10, 20);
+    final id = await repository.saveEmi(
+      EmisCompanion.insert(
+        name: 'Finished loan',
+        principalPaise: 100000,
+        emiAmountPaise: 100000,
+        tenureMonths: 1,
+        startDate: due,
+        nextDueDate: due,
+        frequency: PaymentFrequency.monthly,
+        status: EmiStatus.active,
+      ),
+    );
+    expect(
+      await repository.recordEmiPayment(
+        id,
+        expectedDueDate: due,
+        paidOn: DateTime(2026, 10, 25),
+      ),
+      isTrue,
+    );
+    await pumpScreen(tester, ThemeMode.dark, textScale: 1.3);
+    await tester.ensureVisible(find.text('Completed'));
+    await tester.tap(find.text('Completed'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Completed 25 Oct 2026'), findsOneWidget);
+    expect(find.textContaining('Last payment ₹1,000'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(milliseconds: 1));
@@ -436,7 +565,7 @@ void main() {
     );
     await tester.tap(find.text('Note agreement').last);
     await tester.pumpAndSettle();
-    expect(find.text('Notes'), findsOneWidget);
+    expect(find.text('Your note'), findsOneWidget);
     expect(find.text('Reference ABC-123'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());

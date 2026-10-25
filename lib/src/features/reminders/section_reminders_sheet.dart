@@ -38,7 +38,8 @@ class _SectionReminderButtonState extends ConsumerState<SectionReminderButton> {
       child: IconButton(
         tooltip: '${_label(widget.type)} reminders',
         onPressed: () async {
-          if (widget.type == FinanceReminderType.emi) {
+          if (widget.type == FinanceReminderType.emi ||
+              widget.type == FinanceReminderType.money) {
             await showDialog<void>(
               context: context,
               builder: (dialog) => Dialog(
@@ -178,7 +179,8 @@ class _SectionReminderSheetState extends ConsumerState<_SectionReminderSheet> {
   @override
   Widget build(BuildContext context) {
     final settings = _settings;
-    if (widget.type == FinanceReminderType.emi) {
+    if (widget.type == FinanceReminderType.emi ||
+        widget.type == FinanceReminderType.money) {
       final colors = AppTheme.homePaletteOf(context);
       final theme = Theme.of(context);
       final neutralTheme = AppTheme.neutralControlTheme(context);
@@ -216,14 +218,16 @@ class _SectionReminderSheetState extends ConsumerState<_SectionReminderSheet> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'EMI reminders',
+                              '${_label(widget.type)} reminders',
                               style: theme.textTheme.titleMedium?.copyWith(
                                 color: colors.text,
                                 fontWeight: FontWeight.w800,
                               ),
                             ),
                             Text(
-                              'Stay ahead of each installment',
+                              widget.type == FinanceReminderType.emi
+                                  ? 'Stay ahead of each installment'
+                                  : 'Stay ahead of money due',
                               style: TextStyle(
                                 color: colors.text2,
                                 fontSize: 13,
@@ -240,18 +244,22 @@ class _SectionReminderSheetState extends ConsumerState<_SectionReminderSheet> {
                   else ...[
                     _ReminderSettingRow(
                       title: 'Payment reminders',
-                      subtitle: 'Notify me before an installment is due',
+                      subtitle: widget.type == FinanceReminderType.emi
+                          ? 'Notify me before an installment is due'
+                          : 'Notify me before money is due',
                       value: settings.enabled,
                       onChanged: (value) =>
                           _save(settings.copyWith(enabled: value)),
                     ),
-                    const Divider(height: 1),
-                    _ReminderSettingRow(
-                      title: 'Auto-debit balance check',
-                      subtitle: '6 PM the day before, grouped by lender',
-                      value: _keepBalance,
-                      onChanged: settings.enabled ? _saveKeepBalance : null,
-                    ),
+                    if (widget.type == FinanceReminderType.emi) ...[
+                      const Divider(height: 1),
+                      _ReminderSettingRow(
+                        title: 'Auto-debit balance check',
+                        subtitle: '6 PM the day before, grouped by lender',
+                        value: _keepBalance,
+                        onChanged: settings.enabled ? _saveKeepBalance : null,
+                      ),
+                    ],
                     if (_denied)
                       Padding(
                         padding: const EdgeInsets.only(top: 12),
