@@ -77,8 +77,8 @@ class UpcomingScreen extends ConsumerWidget {
               }
               final color = switch (item!.entityType) {
                 'emi' => AppTheme.colorsOf(context).emi,
-                'money' => AppTheme.colorsOf(context).receive,
-                _ => AppTheme.colorsOf(context).subscriptions,
+                'money' => Theme.of(context).colorScheme.primary,
+                _ => AppTheme.colorsOf(context).pay,
               };
               final days = dateOnly(item.dueAt).difference(today).inDays;
               return ListTile(

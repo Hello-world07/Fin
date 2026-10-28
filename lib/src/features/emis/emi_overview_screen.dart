@@ -29,15 +29,12 @@ enum _OverviewTab { all, personal, friends, completed }
 enum _EmiCardAction { history, remind, pay, edit, delete }
 
 Color _incomeInk(BuildContext context) =>
-    Theme.of(context).brightness == Brightness.dark
-    ? AppTheme.darkColors.receive
-    : AppTheme.heroEnd;
+    AppTheme.homePaletteOf(context).incoming.text;
 
 Color _expenseInk(BuildContext context) =>
     AppTheme.homePaletteOf(context).out.text;
 
-Color _accentInk(BuildContext context) =>
-    AppTheme.homePaletteOf(context).owe.text;
+Color _accentInk(BuildContext context) => AppTheme.homePaletteOf(context).brand;
 
 String _signedAmount(int amount, {required bool incoming}) =>
     '${incoming ? '+' : '−'}${formatMoney(amount)}';
@@ -483,14 +480,11 @@ class EmiOverviewScreenState extends ConsumerState<EmiOverviewScreen> {
               (sum, item) => sum + item.remainingBalancePaise,
             );
             final collapsedTitle = switch (tab) {
-              _OverviewTab.personal => _signedAmount(
-                personalLeft,
-                incoming: false,
-              ),
-              _OverviewTab.friends => _signedAmount(friendLeft, incoming: true),
+              _OverviewTab.personal => formatMoney(personalLeft),
+              _OverviewTab.friends => formatMoney(friendLeft),
               _OverviewTab.completed => 'Completed',
               _OverviewTab.all =>
-                '${_signedAmount(personalLeft, incoming: false)}  ${_signedAmount(friendLeft, incoming: true)}',
+                '${formatMoney(personalLeft)}  ${formatMoney(friendLeft)}',
             };
             return Column(
               children: [
@@ -519,20 +513,14 @@ class EmiOverviewScreenState extends ConsumerState<EmiOverviewScreen> {
                                         TextSpan(
                                           children: [
                                             TextSpan(
-                                              text: _signedAmount(
-                                                personalLeft,
-                                                incoming: false,
-                                              ),
+                                              text: formatMoney(personalLeft),
                                               style: TextStyle(
                                                 color: _expenseInk(context),
                                               ),
                                             ),
                                             const TextSpan(text: '  '),
                                             TextSpan(
-                                              text: _signedAmount(
-                                                friendLeft,
-                                                incoming: true,
-                                              ),
+                                              text: formatMoney(friendLeft),
                                               style: TextStyle(
                                                 color: _incomeInk(context),
                                               ),
@@ -548,6 +536,7 @@ class EmiOverviewScreenState extends ConsumerState<EmiOverviewScreen> {
                                             ?.copyWith(
                                               color: colors.text,
                                               fontWeight: FontWeight.w800,
+                                              fontSize: 22,
                                               fontFeatures: const [
                                                 FontFeature.tabularFigures(),
                                               ],
@@ -576,6 +565,9 @@ class EmiOverviewScreenState extends ConsumerState<EmiOverviewScreen> {
                                                         : colors.text
                                                   : colors.text,
                                               fontWeight: FontWeight.w800,
+                                              fontSize: _summaryScrolled
+                                                  ? 22
+                                                  : 26,
                                             ),
                                       ),
                               ),
@@ -664,72 +656,191 @@ class EmiOverviewScreenState extends ConsumerState<EmiOverviewScreen> {
                                             ? payment
                                             : latest,
                                       );
-                                return ListTile(
-                                  isThreeLine: true,
-                                  contentPadding: const EdgeInsets.symmetric(
-                                    vertical: 5,
-                                  ),
-                                  leading: CircleAvatar(
-                                    backgroundColor: _accentInk(
+                                return Material(
+                                  color: colors.bg,
+                                  child: InkWell(
+                                    onTap: () => Navigator.push(
                                       context,
-                                    ).withValues(alpha: .1),
-                                    child: Icon(
-                                      Icons.check_rounded,
-                                      color: _accentInk(context),
-                                    ),
-                                  ),
-                                  title: Text(
-                                    detail.emi.name,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      color: received
-                                          ? _incomeInk(context)
-                                          : _accentInk(context),
-                                      fontWeight: FontWeight.w800,
-                                    ),
-                                  ),
-                                  subtitle: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        '${received ? 'Received in full' : 'Paid in full'}'
-                                        '${detail.emi.provider == null || detail.emi.provider!.isEmpty ? '' : ' · ${detail.emi.provider}'}',
-                                        style: TextStyle(color: colors.text2),
+                                      MaterialPageRoute<void>(
+                                        builder: (_) =>
+                                            EmiAgreementDetailScreen(
+                                              detail.emi.id,
+                                            ),
                                       ),
-                                      Text(
-                                        lastPayment == null
-                                            ? 'Completion date not recorded'
-                                            : 'Completed ${DateFormat('d MMM yyyy').format(lastPayment.paidOn)}',
-                                        style: TextStyle(color: colors.text2),
-                                      ),
-                                      Text(
-                                        lastPayment == null
-                                            ? 'Last payment not recorded'
-                                            : 'Last payment ${formatMoney(lastPayment.amountPaise)}',
-                                        style: TextStyle(color: colors.text2),
-                                      ),
-                                    ],
-                                  ),
-                                  trailing: AmountText(
-                                    detail.paidPaise,
-                                    style: TextStyle(
-                                      color: received
-                                          ? _incomeInk(context)
-                                          : _expenseInk(context),
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w800,
-                                      fontFeatures: const [
-                                        FontFeature.tabularFigures(),
-                                      ],
                                     ),
-                                  ),
-                                  onTap: () => Navigator.push(
-                                    context,
-                                    MaterialPageRoute<void>(
-                                      builder: (_) => EmiAgreementDetailScreen(
-                                        detail.emi.id,
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 13,
+                                      ),
+                                      child: Row(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          SizedBox(
+                                            width: 42,
+                                            height: 42,
+                                            child: Stack(
+                                              children: [
+                                                Container(
+                                                  width: 40,
+                                                  height: 40,
+                                                  alignment: Alignment.center,
+                                                  decoration: BoxDecoration(
+                                                    shape: BoxShape.circle,
+                                                    border: Border.all(
+                                                      color: colors.line,
+                                                    ),
+                                                  ),
+                                                  child: Text(
+                                                    detail.emi.name.isEmpty
+                                                        ? '?'
+                                                        : detail.emi.name[0]
+                                                              .toUpperCase(),
+                                                    style: TextStyle(
+                                                      color: colors.text,
+                                                      fontWeight:
+                                                          FontWeight.w700,
+                                                    ),
+                                                  ),
+                                                ),
+                                                Positioned(
+                                                  right: 0,
+                                                  bottom: 0,
+                                                  child: Container(
+                                                    width: 18,
+                                                    height: 18,
+                                                    decoration: BoxDecoration(
+                                                      shape: BoxShape.circle,
+                                                      color: _incomeInk(
+                                                        context,
+                                                      ),
+                                                      border: Border.all(
+                                                        color: colors.bg,
+                                                        width: 2,
+                                                      ),
+                                                    ),
+                                                    child: Icon(
+                                                      Icons.check_rounded,
+                                                      size: 12,
+                                                      color: colors.bg,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                          const SizedBox(width: 12),
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  detail.emi.name,
+                                                  maxLines: 2,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  style: TextStyle(
+                                                    color: colors.text,
+                                                    fontSize: 15,
+                                                    fontWeight: FontWeight.w700,
+                                                  ),
+                                                ),
+                                                if (detail.emi.provider
+                                                        ?.trim()
+                                                        .isNotEmpty ==
+                                                    true)
+                                                  Text(
+                                                    detail.emi.provider!.trim(),
+                                                    maxLines: 1,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                    style: TextStyle(
+                                                      color: colors.text2,
+                                                      fontSize: 12,
+                                                    ),
+                                                  ),
+                                                const SizedBox(height: 7),
+                                                Text(
+                                                  received
+                                                      ? 'Received in full'
+                                                      : 'Paid in full',
+                                                  style: TextStyle(
+                                                    color: _incomeInk(context),
+                                                    fontSize: 13,
+                                                    fontWeight: FontWeight.w700,
+                                                  ),
+                                                ),
+                                                Text(
+                                                  lastPayment == null
+                                                      ? 'Completion date not recorded'
+                                                      : 'Completed ${DateFormat('d MMM yyyy').format(lastPayment.paidOn)}',
+                                                  style: TextStyle(
+                                                    color: _accentInk(context),
+                                                    fontSize: 13,
+                                                    fontWeight: FontWeight.w700,
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 3),
+                                                Text(
+                                                  lastPayment == null
+                                                      ? 'Last payment not recorded'
+                                                      : 'Last payment ${formatMoney(lastPayment.amountPaise)}',
+                                                  style: TextStyle(
+                                                    color: colors.text2,
+                                                    fontSize: 12,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.end,
+                                            children: [
+                                              ConstrainedBox(
+                                                constraints:
+                                                    const BoxConstraints(
+                                                      maxWidth: 100,
+                                                    ),
+                                                child: FittedBox(
+                                                  fit: BoxFit.scaleDown,
+                                                  child: AmountText(
+                                                    detail.paidPaise,
+                                                    style: TextStyle(
+                                                      color: received
+                                                          ? _incomeInk(context)
+                                                          : _expenseInk(
+                                                              context,
+                                                            ),
+                                                      fontSize: 16,
+                                                      fontWeight:
+                                                          FontWeight.w800,
+                                                      fontFeatures: const [
+                                                        FontFeature.tabularFigures(),
+                                                      ],
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                              Text(
+                                                received
+                                                    ? 'Total received'
+                                                    : 'Total paid',
+                                                style: TextStyle(
+                                                  color: colors.text2,
+                                                  fontSize: 12,
+                                                ),
+                                              ),
+                                              Icon(
+                                                Icons.chevron_right,
+                                                size: 18,
+                                                color: colors.text2,
+                                              ),
+                                            ],
+                                          ),
+                                        ],
                                       ),
                                     ),
                                   ),
@@ -914,6 +1025,7 @@ class EmiOverviewScreenState extends ConsumerState<EmiOverviewScreen> {
                                   return _AgreementCard(
                                     key: ValueKey(detail.emi.id),
                                     detail: detail,
+                                    showSign: false,
                                     onActions: () => _showCardActions(detail),
                                     onLongPress: () => _showCardActions(
                                       detail,
@@ -963,50 +1075,81 @@ class _CategoryTabs extends StatelessWidget {
     final colors = AppTheme.homePaletteOf(context);
     const labels = ['All', 'Personal', 'Given to others', 'Completed'];
     return SizedBox(
-      height: 44,
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: [
-            for (final (index, tab) in _OverviewTab.values.indexed)
-              SizedBox(
-                width: switch (tab) {
-                  _OverviewTab.all => 64,
-                  _OverviewTab.personal => 94,
-                  _OverviewTab.friends => 132,
-                  _OverviewTab.completed => 104,
-                },
-                child: Semantics(
-                  selected: tab == value,
-                  button: true,
-                  child: InkWell(
-                    onTap: () => onChanged(tab),
-                    child: Container(
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        border: Border(
-                          bottom: BorderSide(
-                            color: tab == value ? colors.text : colors.line,
-                            width: tab == value ? 2 : 1,
+      height: 48,
+      child: Stack(
+        children: [
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: ColoredBox(
+              color: colors.line,
+              child: const SizedBox(height: 1),
+            ),
+          ),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                for (final (index, tab) in _OverviewTab.values.indexed)
+                  SizedBox(
+                    width: switch (tab) {
+                      _OverviewTab.all => 64,
+                      _OverviewTab.personal => 94,
+                      _OverviewTab.friends => 132,
+                      _OverviewTab.completed => 104,
+                    },
+                    child: Semantics(
+                      selected: tab == value,
+                      button: true,
+                      child: InkWell(
+                        onTap: () => onChanged(tab),
+                        child: Center(
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: IntrinsicWidth(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.end,
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Text(
+                                    labels[index],
+                                    textAlign: TextAlign.center,
+                                    maxLines: 1,
+                                    softWrap: false,
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: tab == value
+                                          ? FontWeight.w700
+                                          : FontWeight.w500,
+                                      color: tab == value
+                                          ? colors.text
+                                          : colors.text2,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 10),
+                                  AnimatedContainer(
+                                    duration: const Duration(milliseconds: 180),
+                                    height: 3,
+                                    decoration: BoxDecoration(
+                                      color: tab == value
+                                          ? colors.text
+                                          : Colors.transparent,
+                                      borderRadius: BorderRadius.circular(2),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
                           ),
-                        ),
-                      ),
-                      child: Text(
-                        labels[index],
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: tab == value
-                              ? FontWeight.w700
-                              : FontWeight.w500,
-                          color: tab == value ? colors.text : colors.text2,
                         ),
                       ),
                     ),
                   ),
-                ),
-              ),
-          ],
-        ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1090,17 +1233,91 @@ class _OverviewSummary extends ConsumerWidget {
                         label: 'To pay',
                         amount: personalTotal,
                         incoming: false,
+                        showSign: false,
                       ),
                     ),
                   if (tab == _OverviewTab.all) const SizedBox(width: 12),
                   if (tab != _OverviewTab.personal)
                     Expanded(
+                      flex: tab == _OverviewTab.friends ? 4 : 1,
                       child: _SummaryFigure(
                         label: 'To receive',
                         amount: friendTotal,
                         incoming: true,
+                        showSign: false,
                       ),
                     ),
+                  if (tab == _OverviewTab.friends && receivedTotal > 0) ...[
+                    const SizedBox(width: 12),
+                    Expanded(
+                      flex: 5,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Row(
+                            key: const ValueKey('given-received-progress'),
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              SizedBox(
+                                width: 46,
+                                height: 46,
+                                child: Stack(
+                                  alignment: Alignment.center,
+                                  children: [
+                                    SizedBox.expand(
+                                      child: CircularProgressIndicator(
+                                        value: received / receivedTotal,
+                                        strokeWidth: 4,
+                                        color: _incomeInk(context),
+                                        backgroundColor: colors.line,
+                                      ),
+                                    ),
+                                    Text(
+                                      '${(received * 100 / receivedTotal).round()}%',
+                                      style: TextStyle(
+                                        color: colors.text,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 7),
+                              Flexible(
+                                child: FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  alignment: Alignment.centerRight,
+                                  child: Text(
+                                    'received',
+                                    style: TextStyle(
+                                      color: _incomeInk(context),
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            '${formatMoney(received)} of ${formatMoney(receivedTotal)}',
+                            textAlign: TextAlign.end,
+                            softWrap: true,
+                            style: TextStyle(
+                              color: colors.text,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              fontFeatures: const [
+                                FontFeature.tabularFigures(),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ],
               ),
               if (tab == _OverviewTab.personal && personalTotal > 0) ...[
@@ -1133,34 +1350,6 @@ class _OverviewSummary extends ConsumerWidget {
                         '+${personal.length - 3} more',
                         style: TextStyle(color: colors.text2, fontSize: 12),
                       ),
-                  ],
-                ),
-              ],
-              if (tab == _OverviewTab.friends && receivedTotal > 0) ...[
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    SizedBox(
-                      width: 40,
-                      height: 40,
-                      child: CircularProgressIndicator(
-                        value: received / receivedTotal,
-                        strokeWidth: 5,
-                        color: _incomeInk(context),
-                        backgroundColor: colors.line,
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        '${(received * 100 / receivedTotal).round()}% received · ${formatMoney(received)} of ${formatMoney(receivedTotal)}',
-                        style: TextStyle(
-                          color: _incomeInk(context),
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
                   ],
                 ),
               ],
@@ -1223,9 +1412,17 @@ class _OverviewSummary extends ConsumerWidget {
                   ),
                 ),
                 if (nextPay != null)
-                  _NextDueLine(detail: nextPay, incoming: false),
+                  _NextDueLine(
+                    detail: nextPay,
+                    incoming: false,
+                    showSign: false,
+                  ),
                 if (nextReceive != null)
-                  _NextDueLine(detail: nextReceive, incoming: true),
+                  _NextDueLine(
+                    detail: nextReceive,
+                    incoming: true,
+                    showSign: false,
+                  ),
               ],
             ),
           ),
@@ -1247,9 +1444,14 @@ class _OverviewSummary extends ConsumerWidget {
 }
 
 class _NextDueLine extends StatelessWidget {
-  const _NextDueLine({required this.detail, required this.incoming});
+  const _NextDueLine({
+    required this.detail,
+    required this.incoming,
+    required this.showSign,
+  });
   final EmiDetail detail;
   final bool incoming;
+  final bool showSign;
 
   @override
   Widget build(BuildContext context) {
@@ -1261,6 +1463,7 @@ class _NextDueLine extends StatelessWidget {
       child: Row(
         children: [
           Expanded(
+            flex: 4,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -1307,9 +1510,33 @@ class _NextDueLine extends StatelessWidget {
               ],
             ),
           ),
-          Text(
-            '${_signedAmount(detail.unpaidAmountForInstallment(next.number), incoming: incoming)} ${incoming ? 'Receive' : 'Pay'}',
-            style: TextStyle(color: ink, fontWeight: FontWeight.w700),
+          const SizedBox(width: 8),
+          Expanded(
+            flex: 3,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerRight,
+                  child: Text(
+                    showSign
+                        ? _signedAmount(
+                            detail.unpaidAmountForInstallment(next.number),
+                            incoming: incoming,
+                          )
+                        : formatMoney(
+                            detail.unpaidAmountForInstallment(next.number),
+                          ),
+                    style: TextStyle(color: ink, fontWeight: FontWeight.w700),
+                  ),
+                ),
+                Text(
+                  incoming ? 'Receive' : 'Pay',
+                  style: TextStyle(color: ink, fontSize: 12),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -1518,7 +1745,7 @@ class _EmiMonthlyScheduleState extends State<_EmiMonthlySchedule> {
                       ),
                       if (month.incoming > 0)
                         Text(
-                          '+${_chartAmount(month.incoming)}',
+                          _chartAmount(month.incoming),
                           maxLines: 1,
                           style: TextStyle(
                             color: _incomeInk(context),
@@ -1528,7 +1755,7 @@ class _EmiMonthlyScheduleState extends State<_EmiMonthlySchedule> {
                         ),
                       if (month.outgoing > 0)
                         Text(
-                          '−${_chartAmount(month.outgoing)}',
+                          _chartAmount(month.outgoing),
                           maxLines: 1,
                           style: TextStyle(
                             color: _expenseInk(context),
@@ -1576,7 +1803,7 @@ class _EmiMonthlyScheduleState extends State<_EmiMonthlySchedule> {
                         ),
                         if (selected.outgoing > 0)
                           TextSpan(
-                            text: '−${formatMoney(selected.outgoing)} Pay',
+                            text: '${formatMoney(selected.outgoing)} Pay',
                             style: TextStyle(color: _expenseInk(context)),
                           ),
                         if (selected.incoming > 0 && selected.outgoing > 0)
@@ -1586,13 +1813,13 @@ class _EmiMonthlyScheduleState extends State<_EmiMonthlySchedule> {
                           ),
                         if (selected.incoming > 0)
                           TextSpan(
-                            text: '+${formatMoney(selected.incoming)} Receive',
+                            text: '${formatMoney(selected.incoming)} Receive',
                             style: TextStyle(color: _incomeInk(context)),
                           ),
                         if (selected.incoming > 0 && selected.outgoing > 0)
                           TextSpan(
                             text:
-                                ' · Net ${net < 0 ? '−' : '+'}${formatMoney(net.abs())}',
+                                ' · Net ${net < 0 ? 'Pay' : 'Receive'} ${formatMoney(net.abs())}',
                             style: TextStyle(color: _accentInk(context)),
                           ),
                         if (selected.incoming == 0 && selected.outgoing == 0)
@@ -1671,10 +1898,10 @@ class _EmiMonthlyScheduleState extends State<_EmiMonthlySchedule> {
                         const SizedBox(height: 4),
                         Text(
                           mixed
-                              ? '${net < 0 ? '−' : '+'}${formatMoney(net.abs())}'
+                              ? '${net < 0 ? 'Pay' : 'Receive'} ${formatMoney(net.abs())}'
                               : hasIncoming
-                              ? _signedAmount(month.incoming, incoming: true)
-                              : _signedAmount(month.outgoing, incoming: false),
+                              ? formatMoney(month.incoming)
+                              : formatMoney(month.outgoing),
                           style: Theme.of(sheetContext).textTheme.headlineMedium
                               ?.copyWith(
                                 color: mixed
@@ -1697,14 +1924,14 @@ class _EmiMonthlyScheduleState extends State<_EmiMonthlySchedule> {
                             runSpacing: 4,
                             children: [
                               Text(
-                                '${_signedAmount(month.incoming, incoming: true)} Receive',
+                                '${formatMoney(month.incoming)} Receive',
                                 style: TextStyle(
                                   color: _incomeInk(sheetContext),
                                   fontWeight: FontWeight.w700,
                                 ),
                               ),
                               Text(
-                                '${_signedAmount(month.outgoing, incoming: false)} Pay',
+                                '${formatMoney(month.outgoing)} Pay',
                                 style: TextStyle(
                                   color: _expenseInk(sheetContext),
                                   fontWeight: FontWeight.w700,
@@ -1759,7 +1986,7 @@ class _EmiMonthlyScheduleState extends State<_EmiMonthlySchedule> {
                                 style: TextStyle(color: colors.text2),
                               ),
                               trailing: Text(
-                                '${due.incoming ? '+' : '−'}${formatMoney(due.amount)}',
+                                formatMoney(due.amount),
                                 style: TextStyle(
                                   color: due.incoming
                                       ? _incomeInk(sheetContext)
@@ -1795,10 +2022,12 @@ class _SummaryFigure extends StatelessWidget {
     required this.label,
     required this.amount,
     required this.incoming,
+    required this.showSign,
   });
   final String label;
   final int amount;
   final bool incoming;
+  final bool showSign;
 
   @override
   Widget build(BuildContext context) {
@@ -1821,7 +2050,9 @@ class _SummaryFigure extends StatelessWidget {
             fit: BoxFit.scaleDown,
             alignment: Alignment.centerLeft,
             child: Text(
-              _signedAmount(amount, incoming: incoming),
+              showSign
+                  ? _signedAmount(amount, incoming: incoming)
+                  : formatMoney(amount),
               maxLines: 1,
               style: TextStyle(
                 color: incoming ? _incomeInk(context) : _expenseInk(context),
@@ -1856,11 +2087,13 @@ class _AgreementCard extends StatelessWidget {
   const _AgreementCard({
     super.key,
     required this.detail,
+    required this.showSign,
     required this.onActions,
     required this.onLongPress,
     this.onRemind,
   });
   final EmiDetail detail;
+  final bool showSign;
   final VoidCallback onActions;
   final VoidCallback onLongPress;
   final void Function(BuildContext)? onRemind;
@@ -1970,7 +2203,7 @@ class _AgreementCard extends StatelessWidget {
                     child: FittedBox(
                       fit: BoxFit.scaleDown,
                       child: Text(
-                        '${friend ? '+' : '−'}${formatMoney(nextAmount)}',
+                        '${showSign ? (friend ? '+' : '−') : ''}${formatMoney(nextAmount)}',
                         style: TextStyle(
                           color: directionInk,
                           fontSize: 15,
@@ -2053,6 +2286,7 @@ class _AgreementCard extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Expanded(
+                          flex: 3,
                           child: Text(
                             friend
                                 ? '${formatMoney(detail.paidPaise)} of ${formatMoney(detail.totalRepaymentPaise)} received'
@@ -2071,14 +2305,26 @@ class _AgreementCard extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(width: 8),
-                        Text(
-                          '${formatMoney(detail.remainingBalancePaise)} left',
-                          textAlign: TextAlign.right,
-                          style: TextStyle(
-                            color: colors.text,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w800,
-                            fontFeatures: const [FontFeature.tabularFigures()],
+                        Expanded(
+                          flex: 2,
+                          child: Align(
+                            alignment: Alignment.centerRight,
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              alignment: Alignment.centerRight,
+                              child: Text(
+                                '${formatMoney(detail.remainingBalancePaise)} left',
+                                textAlign: TextAlign.right,
+                                style: TextStyle(
+                                  color: colors.text,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w800,
+                                  fontFeatures: const [
+                                    FontFeature.tabularFigures(),
+                                  ],
+                                ),
+                              ),
+                            ),
                           ),
                         ),
                       ],

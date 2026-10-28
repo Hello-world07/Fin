@@ -423,6 +423,7 @@ Future<void> showRestoreBackupFlow(BuildContext context, WidgetRef ref) async {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: const Text('Backup restored.'),
+        persist: false,
         action: SnackBarAction(
           label: 'Undo',
           onPressed: () async {

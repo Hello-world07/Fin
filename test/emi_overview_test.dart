@@ -186,6 +186,8 @@ void main() {
     await pumpScreen(tester, ThemeMode.light);
     expect(find.text('Bank loan'), findsWidgets);
     expect(find.text('Ravi'), findsWidgets);
+    expect(find.textContaining('−₹'), findsNothing);
+    expect(find.textContaining('+₹'), findsNothing);
     await tester.tap(find.text('Personal'));
     await tester.pumpAndSettle();
     expect(find.text('Bank loan'), findsWidgets);
@@ -223,6 +225,48 @@ void main() {
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(milliseconds: 1));
+  });
+
+  testWidgets('received progress stays on the right on small phones', (
+    tester,
+  ) async {
+    await repository.saveEmi(
+      EmisCompanion.insert(
+        name: 'Ravi',
+        principalPaise: 20000000,
+        emiAmountPaise: 10000000,
+        tenureMonths: 2,
+        startDate: DateTime(2026, 11, 1),
+        nextDueDate: DateTime(2026, 11, 1),
+        frequency: PaymentFrequency.monthly,
+        status: EmiStatus.active,
+        type: const Value(friendRepaymentType),
+      ),
+    );
+    for (final mode in [ThemeMode.light, ThemeMode.dark]) {
+      for (final width in [320.0, 360.0, 430.0]) {
+        await pumpScreen(
+          tester,
+          mode,
+          size: Size(width, 800),
+          textScale: 1.3,
+          screenKey: ValueKey('$mode-$width'),
+        );
+        await tester.tap(find.text('Given to others'));
+        await tester.pumpAndSettle();
+        final progress = find.byKey(const ValueKey('given-received-progress'));
+        expect(progress, findsOneWidget);
+        expect(
+          tester.getTopLeft(progress).dx,
+          greaterThan(tester.getTopLeft(find.text('To receive')).dx),
+        );
+        expect(tester.getBottomRight(progress).dx, lessThan(width));
+        expect(tester.takeException(), isNull);
+      }
+    }
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 1));
+    await tester.binding.setSurfaceSize(null);
   });
 
   testWidgets('monthly schedule opens the selected month details', (

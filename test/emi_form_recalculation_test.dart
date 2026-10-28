@@ -11,6 +11,45 @@ import 'package:personal_finance/src/features/emis/emis_screen.dart';
 import 'package:personal_finance/src/shared/finance_form_widgets.dart';
 
 void main() {
+  testWidgets(
+    'editing an EMI saves from Agreement without visiting later steps',
+    (tester) async {
+      final db = AppDatabase.test(NativeDatabase.memory());
+      addTearDown(db.close);
+      final repo = FinanceRepository(db);
+      final id = await repo.saveEmi(
+        EmisCompanion.insert(
+          name: 'Original loan',
+          principalPaise: 1000000,
+          emiAmountPaise: 500000,
+          tenureMonths: 2,
+          startDate: DateTime(2026, 11, 1),
+          nextDueDate: DateTime(2026, 11, 1),
+          frequency: PaymentFrequency.monthly,
+          status: EmiStatus.active,
+        ),
+      );
+      final emi = (await repo.emiDetail(id)).emi;
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [financeRepositoryProvider.overrideWithValue(repo)],
+          child: MaterialApp(
+            theme: AppTheme.light(),
+            home: Scaffold(body: EmiFormSheet(emi: emi)),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextFormField).first, 'Renamed loan');
+      await tester.tap(find.text('Save changes'));
+      await tester.pumpAndSettle();
+      expect((await repo.emiDetail(id)).emi.name, 'Renamed loan');
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(milliseconds: 1));
+    },
+  );
+
   testWidgets('method and monthly rate recalculate the EMI in the form', (
     tester,
   ) async {

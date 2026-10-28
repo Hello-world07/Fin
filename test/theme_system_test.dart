@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -7,6 +8,50 @@ import 'package:personal_finance/src/core/app_theme.dart';
 import 'package:personal_finance/src/shared/finance_display_widgets.dart';
 
 void main() {
+  test('finance palette is shared across light and dark themes', () {
+    const navy = Color(0xFF17243A);
+    const blue = Color(0xFF2563EB);
+    const teal = Color(0xFF0E7F6C);
+    const red = Color(0xFFB83240);
+    final light = AppTheme.light();
+    final dark = AppTheme.dark();
+
+    expect(light.colorScheme.primary, blue);
+    expect(light.scaffoldBackgroundColor, const Color(0xFFF4F6F9));
+    expect(AppTheme.lightColors.text, navy);
+    expect(AppTheme.lightHomePalette.incoming.text, teal);
+    expect(AppTheme.lightHomePalette.out.text, red);
+    expect(AppTheme.lightNetCard.greenBar, teal);
+    expect(AppTheme.lightNetCard.redBar, red);
+    expect(dark.colorScheme.primary, AppTheme.darkPrimary);
+    expect(AppTheme.darkHomePalette.incoming.text, AppTheme.darkColors.receive);
+    expect(AppTheme.darkHomePalette.out.text, AppTheme.darkColors.pay);
+  });
+
+  test('finance text and amount colors meet readable contrast', () {
+    double contrast(Color a, Color b) {
+      final high = math.max(a.computeLuminance(), b.computeLuminance());
+      final low = math.min(a.computeLuminance(), b.computeLuminance());
+      return (high + .05) / (low + .05);
+    }
+
+    for (final tokens in [AppTheme.lightColors, AppTheme.darkColors]) {
+      for (final background in [tokens.background, tokens.surface]) {
+        expect(contrast(tokens.text, background), greaterThanOrEqualTo(4.5));
+        expect(
+          contrast(tokens.secondaryText, background),
+          greaterThanOrEqualTo(4.5),
+        );
+        expect(contrast(tokens.receive, background), greaterThanOrEqualTo(4.5));
+        expect(contrast(tokens.pay, background), greaterThanOrEqualTo(4.5));
+      }
+      expect(
+        contrast(tokens.mutedText, tokens.fieldFill),
+        greaterThanOrEqualTo(4.5),
+      );
+    }
+  });
+
   testWidgets('bundles every Plus Jakarta Sans weight', (tester) async {
     final manifest =
         jsonDecode(await rootBundle.loadString('FontManifest.json'))

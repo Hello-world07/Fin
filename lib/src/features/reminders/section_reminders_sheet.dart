@@ -62,7 +62,7 @@ class _SectionReminderButtonState extends ConsumerState<SectionReminderButton> {
           clipBehavior: Clip.none,
           children: [
             const Icon(Icons.notifications_outlined),
-            if (widget.type != FinanceReminderType.emi &&
+            if (widget.type == FinanceReminderType.subscription &&
                 snapshot.data?.enabled == true)
               Positioned(
                 top: 0,
@@ -193,7 +193,12 @@ class _SectionReminderSheetState extends ConsumerState<_SectionReminderSheet> {
               maxHeight: MediaQuery.sizeOf(context).height * .66,
             ),
             child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(20, 4, 20, 18),
+              padding: EdgeInsets.fromLTRB(
+                20,
+                widget.type == FinanceReminderType.emi ? 18 : 4,
+                20,
+                18,
+              ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,

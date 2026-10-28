@@ -1,6 +1,7 @@
 package com.pranith.finance.personal_finance
 
 import android.app.Activity
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -60,6 +61,31 @@ class MainActivity : FlutterFragmentActivity() {
                         result.success(null)
                     }
                     else -> result.notImplemented()
+                }
+            }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "finkeep/upi")
+            .setMethodCallHandler { call, result ->
+                if (call.method != "openChooser") {
+                    result.notImplemented()
+                    return@setMethodCallHandler
+                }
+                val uri = call.argument<String>("uri")
+                if (uri == null || !uri.startsWith("upi://pay?")) {
+                    result.error("INVALID_UPI_URI", "A valid UPI payment link is required.", null)
+                    return@setMethodCallHandler
+                }
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(uri))
+                try {
+                    if (packageManager.queryIntentActivities(intent, 0).isEmpty()) {
+                        result.error("NO_UPI_APP", "No installed app accepts UPI payments.", null)
+                        return@setMethodCallHandler
+                    }
+                    startActivity(Intent.createChooser(intent, "Pay with UPI"))
+                    result.success(true)
+                } catch (_: ActivityNotFoundException) {
+                    result.error("NO_UPI_APP", "No installed app accepts UPI payments.", null)
+                } catch (error: SecurityException) {
+                    result.error("UPI_BLOCKED", error.message ?: "Android blocked the UPI app.", null)
                 }
             }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "finkeep/backup_folder")

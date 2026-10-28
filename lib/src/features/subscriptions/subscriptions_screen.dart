@@ -539,7 +539,7 @@ class _SubscriptionRow extends StatelessWidget {
         ? theme.colorScheme.error
         : days < 7
         ? AppTheme.colorsOf(context).emi
-        : AppTheme.colorsOf(context).receive;
+        : theme.colorScheme.onSurfaceVariant;
     return Dismissible(
       key: ValueKey(item.id),
       background: _swipeBackground(
@@ -1233,8 +1233,8 @@ Future<({bool atCycleEnd, String? reason})?> _cancelChoice(
 Color _categoryColor(BuildContext context, String? category) => switch (category
     ?.toLowerCase()) {
   'entertainment' || 'streaming' => AppTheme.colorsOf(context).subscriptions,
-  'utilities' => AppTheme.colorsOf(context).emi,
-  'education' => AppTheme.colorsOf(context).receive,
+  'utilities' => AppTheme.colorsOf(context).subscriptions,
+  'education' => AppTheme.colorsOf(context).subscriptions,
   'software' => Theme.of(context).colorScheme.primary,
   _ => Theme.of(context).colorScheme.primary,
 };

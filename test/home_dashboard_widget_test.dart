@@ -64,6 +64,13 @@ void main() {
         ),
       );
       await tester.pump(const Duration(milliseconds: 300));
+      final homeContext = tester.element(find.text('FinKeep'));
+      final palette = AppTheme.homePaletteOf(homeContext);
+      expect(
+        palette.brand,
+        mode == ThemeMode.dark ? AppTheme.darkPrimary : AppTheme.seed,
+      );
+      expect(AppTheme.colorsOf(homeContext).background, palette.bg);
       expect(find.text('Personal EMI debt'), findsOneWidget);
       expect(find.text('Given-to-others EMI'), findsOneWidget);
       await tester.scrollUntilVisible(

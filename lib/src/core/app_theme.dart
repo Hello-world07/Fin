@@ -262,53 +262,62 @@ class NetCardPalette {
 
 class AppTheme {
   static const fontFamily = 'Plus Jakarta Sans';
-  static const emiIdentityFill = Color(0xFF715169);
+  static const emiIdentityFill = Color(0xFF2563EB);
   static Color emiIdentityInkOf(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark
-      ? const Color(0xFFD8BCD3)
+      ? const Color(0xFF8EB4FF)
       : emiIdentityFill;
   static const motionDuration = Duration(milliseconds: 225);
-  static const seed = Color(0xFF059669);
-  static const heroStart = Color(0xFF0B3D3A);
-  static const heroEnd = Color(0xFF0F6B5C);
-  static const accent = Color(0xFFC6F432);
-  static const receive = Color(0xFF10B981);
-  static const pay = Color(0xFFF43F5E);
-  static const emi = Color(0xFFF59E0B);
-  static const subscriptions = Color(0xFF7C3AED);
-  static const pageBackground = Color(0xFFF6F8F7);
-  static const homeCardOutline = Color(0xFFE6ECE9);
-  static const primaryText = Color(0xFF0F172A);
-  static const mutedText = Color(0xFF64748B);
-  static const fieldFill = Color(0xFFF0F4F9);
-  static const selectedFill = Color(0xFFECFDF5);
-  static const darkBackground = Color(0xFF0B1110);
-  static const darkPrimary = Color(0xFF3DDC97);
-  static const darkOnPrimary = Color(0xFF04251A);
-  static const darkDateAmber = Color(0xFFFBBF24);
-  static const darkDateMuted = Color(0xFF9AA7A1);
-  static const darkDateOverdue = Color(0xFFFCA5A5);
-  static const darkUnpaid = Color(0xFFFBBF24);
-  static const darkUnpaidFill = Color(0xFF3B2A07);
-  static const darkPartial = Color(0xFF93C5FD);
-  static const darkPartialFill = Color(0xFF1E3A5F);
-  static const darkOverdue = Color(0xFFFCA5A5);
-  static const darkOverdueFill = Color(0xFF4A1D1D);
-  static const darkSettled = Color(0xFF86EFAC);
-  static const darkSettledFill = Color(0xFF123524);
+  static const seed = Color(0xFF2563EB);
+  static const heroStart = Color(0xFF17243A);
+  static const heroEnd = Color(0xFF233955);
+  static const accent = Color(0xFF2563EB);
+  static const receive = Color(0xFF0E7F6C);
+  static const pay = Color(0xFFB83240);
+  static const emi = pay;
+  static const subscriptions = seed;
+  static const pageBackground = Color(0xFFF4F6F9);
+  static const homeCardOutline = Color(0xFFE2E8F0);
+  static const primaryText = Color(0xFF17243A);
+  static const mutedText = Color(0xFF607188);
+  static const fieldMutedText = Color(0xFF586A82);
+  static const fieldFill = Color(0xFFEAF1FC);
+  static const selectedFill = fieldFill;
+  static const darkBackground = Color(0xFF0D1624);
+  static const darkPrimary = Color(0xFF8EB4FF);
+  static const darkOnPrimary = Color(0xFF091629);
+  static const darkDateAmber = Color(0xFFAFC9FF);
+  static const darkDateMuted = Color(0xFFACBAD0);
+  static const darkDateOverdue = Color(0xFFFF929B);
+  static const darkUnpaid = Color(0xFFAFC9FF);
+  static const darkUnpaidFill = Color(0xFF20365A);
+  static const darkPartial = Color(0xFF8EB4FF);
+  static const darkPartialFill = Color(0xFF20365A);
+  static const darkOverdue = Color(0xFFFF929B);
+  static const darkOverdueFill = Color(0xFF43242E);
+  static const darkSettled = Color(0xFF65D9C1);
+  static const darkSettledFill = Color(0xFF153A35);
   static const onHero = Color(0xFFFFFFFF);
   static const onHeroMuted = Color(0xB3FFFFFF);
   static const transparent = Color(0x00000000);
+  static const avatarColors = <Color>[
+    Color(0xFF17243A),
+    Color(0xFF2563EB),
+    Color(0xFF28496B),
+    Color(0xFF36516F),
+    Color(0xFF345A83),
+    Color(0xFF1E466C),
+  ];
 
   static const lightColors = AppColors(
     background: pageBackground,
     surface: Color(0xFFFFFFFF),
     surfaceContainer: fieldFill,
     surfaceHigh: Color(0xFFFFFFFF),
-    outline: Color(0xFFDDE5E1),
+    outline: homeCardOutline,
     text: primaryText,
     secondaryText: mutedText,
-    mutedText: mutedText,
+    mutedText: fieldMutedText,
     fieldFill: fieldFill,
     selectedFill: selectedFill,
     receive: receive,
@@ -317,66 +326,66 @@ class AppTheme {
     subscriptions: subscriptions,
     lime: accent,
     navInactive: mutedText,
-    navShadow: Color(0x09000000),
+    navShadow: Color(0x1017243A),
   );
   static const darkColors = AppColors(
     background: darkBackground,
-    surface: Color(0xFF121A17),
-    surfaceContainer: Color(0xFF18231F),
-    surfaceHigh: Color(0xFF18231F),
-    outline: Color(0xFF24312C),
-    text: Color(0xFFE8EEEB),
-    secondaryText: Color(0xFFB7C3BD),
-    mutedText: Color(0xFFA2AFA9),
-    fieldFill: Color(0xFF1C2622),
-    selectedFill: Color(0xFF12372A),
-    receive: Color(0xFF4ADE80),
-    pay: Color(0xFFF87171),
-    emi: Color(0xFFFBBF24),
-    subscriptions: Color(0xFFA78BFA),
-    lime: accent,
-    navInactive: Color(0xFF9AA7A1),
+    surface: Color(0xFF152236),
+    surfaceContainer: Color(0xFF1C2C43),
+    surfaceHigh: Color(0xFF22334A),
+    outline: Color(0xFF304158),
+    text: Color(0xFFF3F7FC),
+    secondaryText: Color(0xFFB8C5D8),
+    mutedText: Color(0xFFAEBBD0),
+    fieldFill: Color(0xFF1C2C43),
+    selectedFill: Color(0xFF20365A),
+    receive: Color(0xFF65D9C1),
+    pay: Color(0xFFFF929B),
+    emi: Color(0xFFFF929B),
+    subscriptions: darkPrimary,
+    lime: darkPrimary,
+    navInactive: Color(0xFFAEBBD0),
     navShadow: transparent,
   );
 
   static const lightHomePalette = HomePalette(
-    bg: Color(0xFFF5F6F8),
+    bg: pageBackground,
     surface: Color(0xFFFFFFFF),
-    surfaceAlt: Color(0xFFEEF0F4),
-    line: Color(0xFFE4E7EC),
-    text: Color(0xFF0E1525),
-    text2: Color(0xFF4B5565),
-    text3: Color(0xFF667085),
-    brand: Color(0xFF1D4ED8),
+    surfaceAlt: fieldFill,
+    line: homeCardOutline,
+    text: primaryText,
+    text2: mutedText,
+    text3: fieldMutedText,
+    brand: seed,
     onBrand: Color(0xFFFFFFFF),
-    incoming: AppTone(Color(0xFF1D4ED8), Color(0xFF2563EB), Color(0xFFEFF6FF)),
-    emiTone: AppTone(Color(0xFFB45309), Color(0xFFD97706), Color(0xFFFEF3E2)),
-    owe: AppTone(Color(0xFF4F46E5), Color(0xFF4F46E5), Color(0xFFECEBFD)),
-    bills: AppTone(Color(0xFF0369A1), Color(0xFF0284C7), Color(0xFFE6F3FA)),
-    out: AppTone(Color(0xFFB91C1C), Color(0xFFDC2626), Color(0xFFFEF2F2)),
-    heroStart: Color(0xFF0E1525),
-    heroEnd: Color(0xFF1B2640),
+    incoming: AppTone(receive, receive, Color(0xFFE7F5F0)),
+    emiTone: AppTone(pay, pay, Color(0xFFFCEBEC)),
+    owe: AppTone(pay, pay, Color(0xFFFCEBEC)),
+    bills: AppTone(seed, seed, fieldFill),
+    out: AppTone(pay, pay, Color(0xFFFCEBEC)),
+    heroStart: heroStart,
+    heroEnd: heroEnd,
     heroText: Color(0xFFFFFFFF),
     heroText2: Color(0xFFB6C0D2),
     heroOut: Color(0xFFCBD5E1),
   );
   static const darkHomePalette = HomePalette(
-    bg: Color(0xFF0B1020),
-    surface: Color(0xFF121A2C),
-    surfaceAlt: Color(0xFF1A2338),
-    line: Color(0xFF243049),
-    text: Color(0xFFF2F5FA),
-    text2: Color(0xFFBDC7D9),
-    text3: Color(0xFFA2AEC3),
-    brand: Color(0xFF60A5FA),
-    onBrand: Color(0xFF071F3D),
-    incoming: AppTone(Color(0xFF93C5FD), Color(0xFF60A5FA), Color(0xFF172B48)),
-    emiTone: AppTone(Color(0xFFFBBF24), Color(0xFFFBBF24), Color(0xFF2E2A1C)),
-    owe: AppTone(Color(0xFF818CF8), Color(0xFF818CF8), Color(0xFF1E2347)),
-    bills: AppTone(Color(0xFF38BDF8), Color(0xFF38BDF8), Color(0xFF0F2A3A)),
-    out: AppTone(Color(0xFFFCA5A5), Color(0xFFF87171), Color(0xFF3A1F22)),
-    heroStart: Color(0xFF1A2338),
-    heroEnd: Color(0xFF121A2C),
+    bg: darkBackground,
+    surface: Color(0xFF152236),
+    surfaceAlt: Color(0xFF1C2C43),
+    line: Color(0xFF304158),
+    text: Color(0xFFF3F7FC),
+    text2: Color(0xFFB8C5D8),
+    text3: Color(0xFFAEBBD0),
+    brand: darkPrimary,
+    onBrand: darkOnPrimary,
+    incoming: AppTone(Color(0xFF65D9C1), Color(0xFF65D9C1), Color(0xFF153A35)),
+    emiTone: AppTone(Color(0xFFFF929B), Color(0xFFFF929B), Color(0xFF43242E)),
+    owe: AppTone(Color(0xFFFF929B), Color(0xFFFF929B), Color(0xFF43242E)),
+    bills: AppTone(darkPrimary, darkPrimary, Color(0xFF20365A)),
+    out: AppTone(Color(0xFFFF929B), Color(0xFFFF929B), Color(0xFF43242E)),
+    heroStart: Color(0xFF203149),
+    heroEnd: Color(0xFF17243A),
     heroText: Color(0xFFFFFFFF),
     heroText2: Color(0xFFB6C0D2),
     heroOut: Color(0xFFCBD5E1),
@@ -384,35 +393,35 @@ class AppTheme {
 
   static const lightNetCard = NetCardPalette(
     surface: Color(0xFFFFFFFF),
-    border: Color(0xFFE6E8EF),
-    text: Color(0xFF0F1320),
-    muted: Color(0xFF667085),
-    greenBar: Color(0xFF2563EB),
-    greenText: Color(0xFF1D4ED8),
-    redBar: Color(0xFFDC2626),
-    redText: Color(0xFFB91C1C),
-    mutedRedBar: Color(0xFFFCA5A5),
-    lentBg: Color(0xFFEFF6FF),
-    borrowedBg: Color(0xFFFEF2F2),
-    debtBg: Color(0xFFF6F7FA),
-    selectedBg: Color(0xFFFEF2F2),
-    shadow: Color(0x14101828),
+    border: homeCardOutline,
+    text: primaryText,
+    muted: mutedText,
+    greenBar: receive,
+    greenText: receive,
+    redBar: pay,
+    redText: pay,
+    mutedRedBar: Color(0xFFE09BA2),
+    lentBg: Color(0xFFE7F5F0),
+    borrowedBg: Color(0xFFFCEBEC),
+    debtBg: fieldFill,
+    selectedBg: Color(0xFFFCEBEC),
+    shadow: Color(0x1017243A),
   );
 
   static const darkNetCard = NetCardPalette(
-    surface: Color(0xFF151A22),
+    surface: Color(0xFF152236),
     border: Color(0x14FFFFFF),
-    text: Color(0xFFF4F6FA),
-    muted: Color(0xFF8F98A8),
-    greenBar: Color(0xFF60A5FA),
-    greenText: Color(0xFF93C5FD),
-    redBar: Color(0xFFF87171),
-    redText: Color(0xFFFCA5A5),
-    mutedRedBar: Color(0x80F87171),
-    lentBg: Color(0x1F60A5FA),
-    borrowedBg: Color(0x1FF87171),
-    debtBg: Color(0x0AFFFFFF),
-    selectedBg: Color(0x1AF87171),
+    text: Color(0xFFF3F7FC),
+    muted: Color(0xFFB8C5D8),
+    greenBar: Color(0xFF65D9C1),
+    greenText: Color(0xFF65D9C1),
+    redBar: Color(0xFFFF929B),
+    redText: Color(0xFFFF929B),
+    mutedRedBar: Color(0x80FF929B),
+    lentBg: Color(0xFF153A35),
+    borrowedBg: Color(0xFF43242E),
+    debtBg: Color(0xFF1C2C43),
+    selectedBg: Color(0xFF43242E),
     shadow: Color(0x40000000),
   );
 
@@ -432,20 +441,20 @@ class AppTheme {
     final palette = homePaletteOf(context);
     return theme.copyWith(
       colorScheme: theme.colorScheme.copyWith(
-        primary: palette.text,
-        onPrimary: palette.bg,
+        primary: palette.brand,
+        onPrimary: palette.onBrand,
         primaryContainer: palette.surfaceAlt,
         onPrimaryContainer: palette.text,
       ),
       switchTheme: SwitchThemeData(
         thumbColor: WidgetStateProperty.resolveWith(
           (states) => states.contains(WidgetState.selected)
-              ? palette.bg
+              ? palette.onBrand
               : palette.text2,
         ),
         trackColor: WidgetStateProperty.resolveWith(
           (states) => states.contains(WidgetState.selected)
-              ? palette.text
+              ? palette.brand
               : palette.surfaceAlt,
         ),
         trackOutlineColor: WidgetStatePropertyAll(palette.line),
@@ -453,8 +462,8 @@ class AppTheme {
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
           minimumSize: const Size(48, 48),
-          backgroundColor: palette.text,
-          foregroundColor: palette.bg,
+          backgroundColor: palette.brand,
+          foregroundColor: palette.onBrand,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         ),
       ),
@@ -481,26 +490,28 @@ class AppTheme {
     final home = dark ? darkHomePalette : lightHomePalette;
     final scheme = ColorScheme.fromSeed(seedColor: seed, brightness: brightness)
         .copyWith(
-          primary: dark ? darkPrimary : null,
-          onPrimary: dark ? darkOnPrimary : null,
-          secondary: dark ? accent : null,
-          onSecondary: dark ? darkOnPrimary : null,
-          secondaryContainer: dark ? tokens.selectedFill : null,
-          onSecondaryContainer: dark ? tokens.text : null,
-          surface: dark ? tokens.surface : null,
-          onSurface: dark ? tokens.text : null,
-          onSurfaceVariant: dark ? tokens.secondaryText : null,
-          surfaceContainerLowest: dark ? tokens.background : null,
-          surfaceContainerLow: dark ? tokens.surface : null,
-          surfaceContainer: dark ? tokens.surfaceContainer : null,
-          surfaceContainerHigh: dark ? tokens.surfaceHigh : null,
-          surfaceContainerHighest: dark ? tokens.surfaceHigh : null,
-          outline: dark ? tokens.outline : null,
-          outlineVariant: dark ? tokens.outline : null,
-          primaryContainer: dark ? tokens.selectedFill : null,
-          onPrimaryContainer: dark ? tokens.text : null,
-          error: dark ? const Color(0xFFFF6B6B) : null,
-          onError: dark ? darkBackground : null,
+          primary: dark ? darkPrimary : seed,
+          onPrimary: dark ? darkOnPrimary : onHero,
+          primaryContainer: tokens.selectedFill,
+          onPrimaryContainer: tokens.text,
+          secondary: tokens.receive,
+          onSecondary: dark ? darkOnPrimary : onHero,
+          secondaryContainer: home.incoming.tint,
+          onSecondaryContainer: tokens.text,
+          tertiary: tokens.emi,
+          onTertiary: dark ? darkOnPrimary : onHero,
+          surface: tokens.surface,
+          onSurface: tokens.text,
+          onSurfaceVariant: tokens.secondaryText,
+          surfaceContainerLowest: tokens.background,
+          surfaceContainerLow: tokens.surface,
+          surfaceContainer: tokens.surfaceContainer,
+          surfaceContainerHigh: tokens.surfaceHigh,
+          surfaceContainerHighest: tokens.surfaceHigh,
+          outline: tokens.outline,
+          outlineVariant: tokens.outline,
+          error: tokens.pay,
+          onError: dark ? darkOnPrimary : onHero,
         );
     final textColor = tokens.text;
     final textTheme = _textTheme(
@@ -512,9 +523,9 @@ class AppTheme {
       fontFamily: fontFamily,
       colorScheme: scheme,
       extensions: [tokens, home],
-      scaffoldBackgroundColor: home.bg,
-      canvasColor: dark ? tokens.background : null,
-      disabledColor: dark ? tokens.mutedText : null,
+      scaffoldBackgroundColor: tokens.background,
+      canvasColor: tokens.background,
+      disabledColor: tokens.mutedText,
       appBarTheme: AppBarTheme(
         centerTitle: false,
         backgroundColor: tokens.background,
@@ -536,89 +547,80 @@ class AppTheme {
           fontWeight: FontWeight.w700,
         ),
       ),
-      cardTheme: const CardThemeData(elevation: 0, margin: EdgeInsets.zero),
+      cardTheme: CardThemeData(
+        elevation: 0,
+        margin: EdgeInsets.zero,
+        color: tokens.surface,
+      ),
       textTheme: textTheme,
       primaryTextTheme: textTheme,
       inputDecorationTheme: InputDecorationTheme(
-        fillColor: dark ? tokens.fieldFill : null,
-        hintStyle: dark ? TextStyle(color: tokens.mutedText) : null,
+        fillColor: tokens.fieldFill,
+        hintStyle: TextStyle(color: tokens.mutedText),
+        enabledBorder: OutlineInputBorder(
+          borderSide: BorderSide(color: tokens.outline),
+          borderRadius: BorderRadius.circular(8),
+        ),
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
       ),
-      snackBarTheme: dark
-          ? SnackBarThemeData(
-              backgroundColor: tokens.surfaceHigh,
-              contentTextStyle: TextStyle(
-                color: tokens.text,
-                fontFamily: fontFamily,
-              ),
-              actionTextColor: scheme.primary,
-            )
-          : null,
-      dialogTheme: dark
-          ? DialogThemeData(
-              backgroundColor: tokens.surfaceHigh,
-              titleTextStyle: TextStyle(
-                color: tokens.text,
-                fontFamily: fontFamily,
-                fontSize: 20,
-                fontWeight: FontWeight.w700,
-              ),
-              contentTextStyle: TextStyle(
-                color: tokens.secondaryText,
-                fontFamily: fontFamily,
-              ),
-            )
-          : null,
-      datePickerTheme: dark
-          ? DatePickerThemeData(
-              backgroundColor: tokens.surfaceHigh,
-              headerForegroundColor: tokens.text,
-            )
-          : null,
-      bottomSheetTheme: dark
-          ? BottomSheetThemeData(
-              backgroundColor: tokens.surface,
-              modalBackgroundColor: tokens.surface,
-              surfaceTintColor: transparent,
-            )
-          : null,
-      popupMenuTheme: dark
-          ? PopupMenuThemeData(
-              color: tokens.surfaceHigh,
-              textStyle: TextStyle(color: tokens.text, fontFamily: fontFamily),
-            )
-          : null,
-      chipTheme: dark
-          ? ChipThemeData(
-              backgroundColor: tokens.surfaceContainer,
-              selectedColor: tokens.selectedFill,
-              labelStyle: TextStyle(color: tokens.text, fontFamily: fontFamily),
-              secondaryLabelStyle: TextStyle(
-                color: tokens.text,
-                fontFamily: fontFamily,
-              ),
-              side: BorderSide(color: tokens.outline),
-            )
-          : null,
-      switchTheme: dark
-          ? SwitchThemeData(
-              thumbColor: WidgetStateProperty.resolveWith(
-                (states) => states.contains(WidgetState.selected)
-                    ? scheme.onPrimary
-                    : tokens.secondaryText,
-              ),
-              trackColor: WidgetStateProperty.resolveWith(
-                (states) => states.contains(WidgetState.selected)
-                    ? scheme.primary
-                    : tokens.surfaceContainer,
-              ),
-            )
-          : null,
+      snackBarTheme: SnackBarThemeData(
+        backgroundColor: tokens.surfaceHigh,
+        contentTextStyle: TextStyle(color: tokens.text, fontFamily: fontFamily),
+        actionTextColor: scheme.primary,
+      ),
+      dialogTheme: DialogThemeData(
+        backgroundColor: tokens.surfaceHigh,
+        titleTextStyle: TextStyle(
+          color: tokens.text,
+          fontFamily: fontFamily,
+          fontSize: 20,
+          fontWeight: FontWeight.w700,
+        ),
+        contentTextStyle: TextStyle(
+          color: tokens.secondaryText,
+          fontFamily: fontFamily,
+        ),
+      ),
+      datePickerTheme: DatePickerThemeData(
+        backgroundColor: tokens.surfaceHigh,
+        headerForegroundColor: tokens.text,
+      ),
+      bottomSheetTheme: BottomSheetThemeData(
+        backgroundColor: tokens.surface,
+        modalBackgroundColor: tokens.surface,
+        surfaceTintColor: transparent,
+      ),
+      popupMenuTheme: PopupMenuThemeData(
+        color: tokens.surfaceHigh,
+        textStyle: TextStyle(color: tokens.text, fontFamily: fontFamily),
+      ),
+      chipTheme: ChipThemeData(
+        backgroundColor: tokens.surfaceContainer,
+        selectedColor: tokens.selectedFill,
+        labelStyle: TextStyle(color: tokens.text, fontFamily: fontFamily),
+        secondaryLabelStyle: TextStyle(
+          color: tokens.text,
+          fontFamily: fontFamily,
+        ),
+        side: BorderSide(color: tokens.outline),
+      ),
+      switchTheme: SwitchThemeData(
+        thumbColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.selected)
+              ? scheme.onPrimary
+              : tokens.secondaryText,
+        ),
+        trackColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.selected)
+              ? scheme.primary
+              : tokens.surfaceContainer,
+        ),
+      ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
           minimumSize: const Size(48, 48),
-          backgroundColor: dark ? darkPrimary : null,
-          foregroundColor: dark ? darkOnPrimary : null,
+          backgroundColor: scheme.primary,
+          foregroundColor: scheme.onPrimary,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         ),
       ),

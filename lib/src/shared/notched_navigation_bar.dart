@@ -884,7 +884,7 @@ class NotchedNavigationBar extends StatelessWidget {
                                 height: 48,
                                 child: DecoratedBox(
                                   decoration: BoxDecoration(
-                                    color: tokens.text,
+                                    color: tokens.brand,
                                     borderRadius: BorderRadius.circular(24),
                                   ),
                                 ),
@@ -917,8 +917,8 @@ class NotchedNavigationBar extends StatelessWidget {
               size: 44,
               icon: Icons.auto_awesome_outlined,
               fill: tokens.surfaceAlt,
-              iconColor: tokens.text,
-              glow: tokens.text,
+              iconColor: tokens.brand,
+              glow: tokens.brand,
               onTap: () {
                 HapticFeedback.lightImpact();
                 if (onAsk != null) {
@@ -933,9 +933,9 @@ class NotchedNavigationBar extends StatelessWidget {
               label: 'Add record',
               size: addSize,
               icon: Icons.add,
-              fill: tokens.text,
-              iconColor: tokens.surface,
-              glow: tokens.text,
+              fill: tokens.brand,
+              iconColor: tokens.onBrand,
+              glow: tokens.brand,
               rotateOnPress: true,
               onTap: () {
                 HapticFeedback.lightImpact();
@@ -984,7 +984,7 @@ class NotchedNavigationBar extends StatelessWidget {
                 Icon(
                   _dockIcon(index, selected),
                   size: 24,
-                  color: selected ? tokens.surface : ink,
+                  color: selected ? tokens.onBrand : ink,
                 ),
                 if (selected && showLabel) ...[
                   const SizedBox(width: 5),
@@ -996,7 +996,7 @@ class NotchedNavigationBar extends StatelessWidget {
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w700,
-                        color: tokens.surface,
+                        color: tokens.onBrand,
                       ),
                     ),
                   ),

@@ -436,6 +436,7 @@ class _EmisScreenState extends ConsumerState<EmisScreen> {
     }
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
+        persist: false,
         duration: const Duration(seconds: 6),
         content: Text(
           '${recorded.length} ${recorded.length == 1 ? 'EMI' : 'EMIs'} marked paid.',
@@ -459,7 +460,9 @@ class _EmisScreenState extends ConsumerState<EmisScreen> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => _buildContent(context);
+
+  Widget _buildContent(BuildContext context) {
     final tokens = AppTheme.colorsOf(context);
     final dark = Theme.of(context).brightness == Brightness.dark;
     return AnnotatedRegion<SystemUiOverlayStyle>(
@@ -917,9 +920,7 @@ class _EmisScreenState extends ConsumerState<EmisScreen> {
                         Container(
                           height: 1,
                           margin: const EdgeInsets.only(left: 48),
-                          color: Theme.of(context).brightness == Brightness.dark
-                              ? AppTheme.colorsOf(context).outline
-                              : AppTheme.homeCardOutline,
+                          color: AppTheme.colorsOf(context).outline,
                         ),
                       tile,
                     ],
@@ -1216,7 +1217,6 @@ class _EmiInsightsState extends ConsumerState<_EmiInsights> {
   Widget build(BuildContext context) {
     final income = ref.watch(personalEmiIncomeProvider).valueOrNull;
     final tokens = AppTheme.colorsOf(context);
-    final accent = Theme.of(context).colorScheme.primary;
     final data = ref.watch(_emiLoadProvider(_emiLoadKey(widget.items)));
     final current = data.months.isEmpty ? 0 : data.months.first.amountPaise;
     final next = data.months.length > 1 ? data.months[1].amountPaise : 0;
@@ -1241,13 +1241,13 @@ class _EmiInsightsState extends ConsumerState<_EmiInsights> {
                             ?.copyWith(
                               fontSize: 18,
                               fontWeight: FontWeight.w700,
-                              color: change < 0 ? accent : tokens.pay,
+                              color: change < 0 ? tokens.receive : tokens.pay,
                             ),
                       ),
                     ],
                   ),
             color: change < 0
-                ? accent
+                ? tokens.receive
                 : change > 0
                 ? tokens.pay
                 : tokens.text,
@@ -1687,7 +1687,7 @@ class _EmiMonthSheetState extends ConsumerState<_EmiMonthSheet> {
                           padding: const EdgeInsets.symmetric(horizontal: 14),
                           decoration: BoxDecoration(
                             color: index == _selected
-                                ? const Color(0xFF0F6B5C)
+                                ? Theme.of(context).colorScheme.primary
                                 : AppTheme.colorsOf(context).surfaceContainer,
                             borderRadius: BorderRadius.circular(20),
                           ),
@@ -1704,7 +1704,7 @@ class _EmiMonthSheetState extends ConsumerState<_EmiMonthSheet> {
                             style: Theme.of(context).textTheme.labelMedium
                                 ?.copyWith(
                                   color: index == _selected
-                                      ? Colors.white
+                                      ? Theme.of(context).colorScheme.onPrimary
                                       : AppTheme.colorsOf(context).text,
                                   fontWeight: index == _selected
                                       ? FontWeight.w700
@@ -2120,7 +2120,7 @@ class _EmiLoadContentState extends ConsumerState<_EmiLoadContent> {
                     alignment: Alignment.center,
                     decoration: BoxDecoration(
                       color: _mode == index
-                          ? const Color(0xFF0F6B5C)
+                          ? Theme.of(context).colorScheme.primary
                           : tokens.surface,
                       borderRadius: BorderRadius.circular(20),
                       border: _mode == index
@@ -2130,7 +2130,9 @@ class _EmiLoadContentState extends ConsumerState<_EmiLoadContent> {
                     child: Text(
                       const ['Months', 'Steps', 'Total debt'][index],
                       style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                        color: _mode == index ? Colors.white : tokens.text,
+                        color: _mode == index
+                            ? Theme.of(context).colorScheme.onPrimary
+                            : tokens.text,
                         fontWeight: _mode == index
                             ? FontWeight.w700
                             : FontWeight.w500,
@@ -2163,9 +2165,8 @@ class _EmiLoadContentState extends ConsumerState<_EmiLoadContent> {
                   ? 0
                   : (month.amountPaise * 4 / maxAmount).round().clamp(0, 4);
               final tint = [.12, .24, .36, .50, .65][level];
-              const green = Color(0xFF0F6B5C);
-              final tileText = tint > .45 ? Colors.white : tokens.text;
-              final isDark = Theme.of(context).brightness == Brightness.dark;
+              final green = Theme.of(context).colorScheme.primary;
+              final tileText = tokens.text;
               return Tooltip(
                 triggerMode: TooltipTriggerMode.longPress,
                 message: _monthTooltip(month, change),
@@ -2243,12 +2244,8 @@ class _EmiLoadContentState extends ConsumerState<_EmiLoadContent> {
                               _changeLabel(change),
                               style: Theme.of(context).textTheme.labelSmall
                                   ?.copyWith(
-                                    color: tint > .45
-                                        ? Colors.white
-                                        : change.netPaise < 0
-                                        ? isDark
-                                              ? tokens.receive
-                                              : const Color(0xFF047857)
+                                    color: change.netPaise < 0
+                                        ? tokens.receive
                                         : tokens.pay,
                                     fontSize: 10,
                                   ),
@@ -2280,7 +2277,9 @@ class _EmiLoadContentState extends ConsumerState<_EmiLoadContent> {
                   height: 8,
                   margin: const EdgeInsets.only(right: 2),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF0F6B5C).withValues(alpha: alpha),
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.primary.withValues(alpha: alpha),
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
@@ -3002,7 +3001,7 @@ class _EmiAvatar extends StatelessWidget {
                   style: Theme.of(context).textTheme.titleSmall?.copyWith(
                     fontSize: 16,
                     fontWeight: FontWeight.w700,
-                    color: Colors.white,
+                    color: AppTheme.onHero,
                   ),
                 ),
               ),
@@ -3043,14 +3042,7 @@ String _emiLenderName(String name) => name
     .join(' ');
 int _wholeRupees(int paise) => (paise / 100).round() * 100;
 
-const _emiAgendaPalette = <Color>[
-  Color(0xFF0F766E),
-  Color(0xFF1D4ED8),
-  Color(0xFF6D28D9),
-  Color(0xFF0E7490),
-  Color(0xFFBE185D),
-  Color(0xFF4338CA),
-];
+const _emiAgendaPalette = AppTheme.avatarColors;
 
 Map<int, Color> _emiAgendaColors(List<EmiDetail> items) {
   final ordered = [...items]
@@ -3083,16 +3075,10 @@ class _EmiGroupHeader extends StatelessWidget {
     final tokens = AppTheme.colorsOf(context);
     final days = day.difference(dateOnly(DateTime.now())).inDays;
     final urgency = days < 0
-        ? (Theme.of(context).brightness == Brightness.dark
-              ? tokens.pay
-              : const Color(0xFFB91C1C))
+        ? tokens.pay
         : days <= 7
-        ? (Theme.of(context).brightness == Brightness.dark
-              ? tokens.emi
-              : const Color(0xFFB45309))
-        : Theme.of(context).brightness == Brightness.dark
-        ? tokens.secondaryText
-        : const Color(0xFF475569);
+        ? tokens.emi
+        : tokens.secondaryText;
     final count = '${items.length} ${items.length == 1 ? 'EMI' : 'EMIs'}';
     final when = days < 0
         ? 'overdue by ${-days} days'
@@ -3773,9 +3759,7 @@ class _EmiIncomeCardState extends ConsumerState<_EmiIncomeCard> {
 Color _incomeRiskColor(BuildContext context, int percent) {
   final palette = AppTheme.homePaletteOf(context);
   if (percent < 30) {
-    return Theme.of(context).brightness == Brightness.dark
-        ? AppTheme.darkColors.receive
-        : AppTheme.heroEnd;
+    return palette.incoming.text;
   }
   if (percent < 40) return palette.emiTone.text;
   return palette.out.text;
@@ -4349,12 +4333,7 @@ class _EmiTileBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tokens = AppTheme.colorsOf(context);
-    final dark = Theme.of(context).brightness == Brightness.dark;
-    final foreground = urgent
-        ? (dark ? tokens.pay : const Color(0xFFB91C1C))
-        : dark
-        ? tokens.emi
-        : const Color(0xFFB45309);
+    final foreground = urgent ? tokens.pay : tokens.emi;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -4404,7 +4383,7 @@ class _EmiRow extends StatelessWidget {
     final dark = Theme.of(context).brightness == Brightness.dark;
     final color = arcColor ?? tokens.emi;
     final nameColor = Color.lerp(color, tokens.text, dark ? .58 : 0)!;
-    final outstandingColor = AppTheme.homePaletteOf(context).emiTone.text;
+    final outstandingColor = AppTheme.homePaletteOf(context).brand;
     final next = detail.nextUnpaidInstallment;
     final amount = completed
         ? detail.paidPaise
@@ -4432,18 +4411,17 @@ class _EmiRow extends StatelessWidget {
     final subtitle = _emiLenderName(
       emi.provider?.isNotEmpty == true ? emi.provider! : emi.type,
     );
-    final secondary = Theme.of(context).textTheme.bodySmall?.copyWith(
-      fontSize: 13,
-      color: dark ? tokens.secondaryText : const Color(0xFF475569),
-    );
+    final secondary = Theme.of(
+      context,
+    ).textTheme.bodySmall?.copyWith(fontSize: 13, color: tokens.secondaryText);
     final statusTextStyle = Theme.of(context).textTheme.bodySmall?.copyWith(
       fontSize: 13,
       fontWeight: FontWeight.w700,
-      color: dark ? tokens.text : const Color(0xFF0F172A),
+      color: tokens.text,
     );
     final greenTextStyle = statusTextStyle?.copyWith(
       fontWeight: FontWeight.w600,
-      color: dark ? Theme.of(context).colorScheme.primary : AppTheme.heroEnd,
+      color: AppTheme.homePaletteOf(context).incoming.text,
     );
     final avatar = _EmiAvatar(
       color: color,
@@ -5163,7 +5141,10 @@ class _HoldToPayButtonState extends State<_HoldToPayButton>
                     child: FractionallySizedBox(
                       alignment: Alignment.centerLeft,
                       widthFactor: _controller.value,
-                      child: Container(height: 4, color: AppTheme.accent),
+                      child: Container(
+                        height: 4,
+                        color: AppTheme.homePaletteOf(context).brand,
+                      ),
                     ),
                   ),
                 ),
@@ -5446,7 +5427,7 @@ class _EmiCelebration extends StatelessWidget {
                     width: 8,
                     height: 16,
                     color: [
-                      AppTheme.accent,
+                      AppTheme.homePaletteOf(context).brand,
                       AppTheme.colorsOf(context).receive,
                       AppTheme.colorsOf(context).emi,
                       AppTheme.colorsOf(context).subscriptions,
@@ -5799,6 +5780,7 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
         _tenure.text = detail.emi.tenureMonths.toString();
         _due = detail.nextUnpaidInstallment?.dueDate ?? detail.emi.nextDueDate;
         _loadedNextDue = _due;
+        _scheduleError = null;
         _paid.text = detail.paidInstallments.toString();
         _friendTermsLocked =
             _isFriend &&
@@ -5840,8 +5822,8 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
   Widget build(BuildContext context) {
     final palette = AppTheme.homePaletteOf(context);
     final formColors = AppTheme.colorsOf(context);
-    final accent = AppTheme.emiIdentityInkOf(context);
-    final onAccent = formColors.background;
+    final accent = AppTheme.homePaletteOf(context).brand;
+    final onAccent = palette.onBrand;
     final previousNames = <String>[];
     if (widget.emi == null) {
       final previous = [...?ref.watch(allEmiDetailsProvider).valueOrNull]
@@ -5986,7 +5968,18 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
                   if (_scheduleError != null)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 8),
-                      child: _ValidationMessage(_scheduleError!),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _ValidationMessage(_scheduleError!),
+                          if (widget.emi != null && _loadedNextDue == null)
+                            TextButton.icon(
+                              onPressed: _loadExistingSchedule,
+                              icon: const Icon(Icons.refresh),
+                              label: const Text('Retry loading schedule'),
+                            ),
+                        ],
+                      ),
                     ),
                   Flexible(
                     fit: FlexFit.loose,
@@ -6653,17 +6646,25 @@ class _EmiFormSheetState extends ConsumerState<EmiFormSheet> {
                           ),
                           onPressed: _saving
                               ? null
+                              : widget.emi != null && _loadedNextDue == null
+                              ? null
+                              : widget.emi != null
+                              ? _save
                               : _formStep == 3
                               ? _save
                               : _continueForm,
                           icon: Icon(
-                            _formStep == 3
+                            widget.emi != null || _formStep == 3
                                 ? Icons.save_outlined
                                 : Icons.arrow_forward,
                           ),
                           label: Text(
                             _saving
                                 ? 'Saving...'
+                                : widget.emi != null && _loadedNextDue == null
+                                ? 'Loading schedule...'
+                                : widget.emi != null
+                                ? 'Save changes'
                                 : _formStep == 3
                                 ? 'Save EMI'
                                 : 'Continue',

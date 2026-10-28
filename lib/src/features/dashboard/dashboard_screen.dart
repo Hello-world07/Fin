@@ -88,17 +88,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
       ),
     );
     final private = ref.watch(privacyModeProvider.select((s) => s.enabled));
-    final baseHome = AppTheme.homePaletteOf(context);
-    final appColors = AppTheme.colorsOf(context);
-    final home = baseHome.copyWith(
-      incoming: AppTone(
-        Theme.of(context).brightness == Brightness.dark
-            ? appColors.receive
-            : AppTheme.heroEnd,
-        appColors.receive,
-        appColors.selectedFill,
-      ),
-    );
+    final home = AppTheme.homePaletteOf(context);
     final sections = <Widget>[
       _Header(
         private: private,
@@ -149,47 +139,27 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
         },
       ),
     ];
-    final theme = Theme.of(context);
-    return Theme(
-      data: theme.copyWith(
-        extensions: [...theme.extensions.values, home.homeColors, home],
-        colorScheme: theme.colorScheme.copyWith(
-          primary: home.brand,
-          onPrimary: home.onBrand,
-          surface: home.surface,
-          onSurface: home.text,
-          onSurfaceVariant: home.text2,
-          surfaceContainerLow: home.surfaceAlt,
-          surfaceContainer: home.surfaceAlt,
-          outline: home.line,
-        ),
-        textTheme: theme.textTheme.apply(
-          bodyColor: home.text,
-          displayColor: home.text,
-        ),
-      ),
-      child: Scaffold(
-        backgroundColor: home.bg,
-        body: Stack(
-          children: [
-            Positioned.fill(
-              child: ListView.builder(
-                padding: EdgeInsets.only(
-                  bottom: NotchedNavigationMetrics.tabContentPadding(context),
-                ),
-                itemCount: sections.length,
-                itemBuilder: (context, index) => sections[index],
+    return Scaffold(
+      backgroundColor: home.bg,
+      body: Stack(
+        children: [
+          Positioned.fill(
+            child: ListView.builder(
+              padding: EdgeInsets.only(
+                bottom: NotchedNavigationMetrics.tabContentPadding(context),
               ),
+              itemCount: sections.length,
+              itemBuilder: (context, index) => sections[index],
             ),
-            Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              height: MediaQuery.paddingOf(context).top,
-              child: ColoredBox(color: home.bg),
-            ),
-          ],
-        ),
+          ),
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            height: MediaQuery.paddingOf(context).top,
+            child: ColoredBox(color: home.bg),
+          ),
+        ],
       ),
     );
   }
@@ -284,16 +254,14 @@ class _Band extends StatelessWidget {
   final Widget child;
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+    padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
     child: RepaintBoundary(child: child),
   );
 }
 
 Color _dashboardSurface(BuildContext context) {
   final palette = AppTheme.homePaletteOf(context);
-  return Theme.of(context).brightness == Brightness.dark
-      ? palette.surface
-      : Color.lerp(palette.bg, palette.surface, .55)!;
+  return Color.lerp(palette.bg, palette.surface, .48)!;
 }
 
 class _Card extends StatelessWidget {
@@ -317,7 +285,7 @@ class _Card extends StatelessWidget {
             ? BorderSide(
                 color: AppTheme.homePaletteOf(
                   context,
-                ).line.withValues(alpha: .55),
+                ).line.withValues(alpha: .28),
               )
             : BorderSide.none,
       ),
@@ -457,7 +425,7 @@ class _TodayStrip extends StatelessWidget {
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
         side: Theme.of(context).brightness == Brightness.dark
-            ? BorderSide(color: palette.line.withValues(alpha: .55))
+            ? BorderSide(color: palette.line.withValues(alpha: .28))
             : BorderSide.none,
       ),
       child: InkWell(
@@ -552,6 +520,7 @@ class _TodayFlowLine extends StatelessWidget {
               fit: BoxFit.scaleDown,
               child: _SignedAmount(
                 incoming ? amount : -amount,
+                showSign: false,
                 style: _label(
                   context,
                 )?.copyWith(fontSize: 14, fontWeight: FontWeight.w700),
@@ -622,12 +591,21 @@ class _EmiCategorySummaries extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 10),
-              AmountText(
-                amount,
-                style: TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.w800,
-                  color: colors.text,
+              Align(
+                alignment: Alignment.centerLeft,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: AmountText(
+                    amount,
+                    style: TextStyle(
+                      fontSize: 25,
+                      fontWeight: FontWeight.w800,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                      color: category == EmiCategory.personal
+                          ? colors.out.text
+                          : colors.incoming.text,
+                    ),
+                  ),
                 ),
               ),
               if (overdue > 0) ...[
@@ -664,7 +642,7 @@ class _EmiCategorySummaries extends StatelessWidget {
           amount: data.emiRemaining,
           overdue: data.personalOverdue,
         ),
-        const SizedBox(width: 10),
+        const SizedBox(width: 6),
         summary(
           category: EmiCategory.givenToFriends,
           title: 'Given-to-others EMI',
@@ -711,8 +689,8 @@ class _IncomeRecovery extends ConsumerWidget {
                           ? 'Add income'
                           : '$percent% · ${personalEmiIncomeZone(percent)}',
                       style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
                         color: colors.text,
                       ),
                     ),
@@ -744,21 +722,28 @@ class _IncomeRecovery extends ConsumerWidget {
                     ),
                   ),
                   const SizedBox(height: 4),
-                  Text(
-                    '${(data.friendPaid * 100 / data.friendTotal).round()}% received',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                      color: colors.incoming.text,
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      '${(data.friendPaid * 100 / data.friendTotal).round()}% received',
+                      textAlign: TextAlign.left,
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                        color: colors.incoming.text,
+                      ),
                     ),
                   ),
-                  AmountText(
-                    data.friendPaid,
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w800,
-                      color: colors.text,
-                      fontFeatures: const [FontFeature.tabularFigures()],
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: AmountText(
+                      data.friendPaid,
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                        color: colors.text,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
                     ),
                   ),
                 ],
@@ -863,12 +848,10 @@ class _MonthlyProjection extends StatelessWidget {
                     ),
                   )
                 else
-                  SizedBox(
-                    height: math.min(
-                      month.items.length * 64.0,
-                      MediaQuery.sizeOf(sheetContext).height * .44,
-                    ),
+                  Flexible(
+                    fit: FlexFit.loose,
                     child: ListView.builder(
+                      shrinkWrap: true,
                       itemCount: month.items.length,
                       itemBuilder: (_, index) {
                         final item = month.items[index];
@@ -1005,7 +988,7 @@ class _MoneyBalance extends StatelessWidget {
     final net = data.toCollect - data.toPay;
     return Container(
       decoration: BoxDecoration(
-        color: card.surface,
+        color: Color.lerp(palette.bg, card.surface, .48),
         borderRadius: BorderRadius.circular(24),
       ),
       child: Padding(
@@ -1178,6 +1161,7 @@ class _MoneyBalance extends StatelessWidget {
                       fit: BoxFit.scaleDown,
                       child: _SignedAmount(
                         -data.totalDebt,
+                        showSign: false,
                         color: card.redText,
                         style: Theme.of(context).textTheme.titleLarge?.copyWith(
                           fontSize: 20,
@@ -1702,13 +1686,28 @@ class _Next30 extends StatelessWidget {
             Row(
               children: [
                 Expanded(
+                  flex: 3,
                   child: Text('Next 30 days · to pay', style: _title(context)),
                 ),
-                _SignedAmount(
-                  -total,
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w800,
-                    fontFeatures: const [FontFeature.tabularFigures()],
+                Expanded(
+                  flex: 2,
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: _SignedAmount(
+                        -total,
+                        showSign: false,
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w800,
+                              fontFeatures: const [
+                                FontFeature.tabularFigures(),
+                              ],
+                            ),
+                      ),
+                    ),
                   ),
                 ),
               ],
@@ -1731,6 +1730,7 @@ class _Next30 extends StatelessWidget {
                     ),
                     _SignedAmount(
                       -part.$3,
+                      showSign: false,
                       style: _label(context)?.copyWith(
                         fontSize: 13,
                         fontFeatures: const [FontFeature.tabularFigures()],
@@ -1983,8 +1983,8 @@ class _ToCollect extends StatelessWidget {
         due,
       ).difference(DateUtils.dateOnly(data.today)).inDays;
       if (days < 0) return palette.out.text;
-      if (days <= 7) return palette.emiTone.text;
-      return palette.incoming.text;
+      if (days <= 7) return palette.incoming.text;
+      return palette.text2;
     }
 
     String receivableStatus(String name) {
@@ -2037,6 +2037,7 @@ class _ToCollect extends StatelessWidget {
                           alignment: Alignment.centerLeft,
                           child: _SignedAmount(
                             data.toCollect,
+                            showSign: false,
                             style: Theme.of(context).textTheme.headlineSmall
                                 ?.copyWith(
                                   color: palette.incoming.text,
@@ -2109,6 +2110,7 @@ class _ToCollect extends StatelessWidget {
                         fit: BoxFit.scaleDown,
                         child: _SignedAmount(
                           totals[name]!,
+                          showSign: false,
                           style: _label(context)?.copyWith(
                             color: palette.text,
                             fontWeight: FontWeight.w700,
@@ -2125,7 +2127,11 @@ class _ToCollect extends StatelessWidget {
                   padding: const EdgeInsets.only(top: 4),
                   child: Row(
                     children: [
-                      _SignedAmount(later, style: _label(context)),
+                      _SignedAmount(
+                        later,
+                        showSign: false,
+                        style: _label(context),
+                      ),
                       Text(' later', style: _label(context)),
                     ],
                   ),
@@ -2273,6 +2279,7 @@ class _NextPay extends StatelessWidget {
                           ),
                           _SignedAmount(
                             -total,
+                            showSign: false,
                             style: _label(
                               context,
                             )?.copyWith(fontWeight: FontWeight.w700),
@@ -2670,12 +2677,14 @@ class _SignedAmount extends StatelessWidget {
     this.style,
     this.compact = false,
     this.color,
+    this.showSign = true,
   });
 
   final int value;
   final TextStyle? style;
   final bool compact;
   final Color? color;
+  final bool showSign;
 
   @override
   Widget build(BuildContext context) {
@@ -2694,7 +2703,7 @@ class _SignedAmount extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (value != 0 && !privacyAmountsHidden)
+        if (showSign && value != 0 && !privacyAmountsHidden)
           Text(value > 0 ? '+' : '−', style: amountStyle),
         AmountText(value.abs(), compact: compact, style: amountStyle),
       ],

@@ -327,24 +327,47 @@ class DateTile extends StatelessWidget {
         if (context.mounted && date != null) onChanged(date);
       },
       child: InputDecorator(
-        decoration: financeFieldDecoration(
-          context,
-          hint: value == null ? 'Not set' : null,
-          icon: Icons.calendar_month_outlined,
-        ),
+        decoration:
+            financeFieldDecoration(
+              context,
+              hint: value == null ? 'Not set' : null,
+              icon: Icons.calendar_month_outlined,
+            ).copyWith(
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 6,
+              ),
+              prefixIconConstraints: const BoxConstraints(
+                minWidth: 44,
+                minHeight: 44,
+              ),
+            ),
         child: Row(
           children: [
             Expanded(
-              child: Text(value == null ? 'Not set' : formatDate(value!)),
+              child: Text(
+                value == null ? 'Not set' : formatDate(value!),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
             if (allowClear && value != null)
               IconButton(
                 tooltip: 'Clear date',
                 onPressed: () => onChanged(null),
+                constraints: const BoxConstraints.tightFor(
+                  width: 44,
+                  height: 44,
+                ),
+                padding: EdgeInsets.zero,
                 icon: const Icon(Icons.close),
               )
             else
-              const Icon(Icons.keyboard_arrow_down),
+              const SizedBox(
+                width: 44,
+                height: 48,
+                child: Center(child: Icon(Icons.keyboard_arrow_down)),
+              ),
           ],
         ),
       ),
